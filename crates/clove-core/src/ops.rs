@@ -624,7 +624,7 @@ impl Clove {
         let mut failed = vec![];
         let mut setup_commit = None;
         if !opts.no_setup {
-            failed = self.setup(r, &mut timings, &wt, &name, Some(&golden.commit));
+            failed = self.setup(r, &mut timings, &wt, &name, Some((&golden.commit, "golden")));
             setup_commit = git::head_commit(&wt).ok();
         }
 
@@ -669,14 +669,14 @@ impl Clove {
         timings: &mut Vec<Timing>,
         wt: &Path,
         name: &str,
-        since: Option<&str>,
+        since: Option<(&str, &str)>,
     ) -> Vec<String> {
         let env = self.step_env(wt, name);
         let mut failed = vec![];
         for step in &self.config.steps {
             let Some(cmd) = &step.setup else { continue };
             let label = format!("setup {}", step.name);
-            if let Some(since) = since
+            if let Some((since, since_label)) = since
                 && !step.watch.is_empty()
             {
                 let mut args = vec!["diff", "--quiet", since, "HEAD", "--"];
@@ -684,7 +684,7 @@ impl Clove {
                 if git::ok(wt, &args) {
                     r.event(Event::Skip {
                         step: label,
-                        reason: "unchanged".into(),
+                        reason: format!("unchanged since {since_label}"),
                     });
                     continue;
                 }
@@ -1170,16 +1170,12 @@ impl Clove {
                 self.copy_into(&wt, &files).map(|_| ())
             })?;
         }
-        let since = if all {
-            None
-        } else {
-            Some(
-                meta.setup_commit
-                    .clone()
-                    .unwrap_or_else(|| meta.golden_commit.clone()),
-            )
-        };
-        meta.failed_steps = self.setup(r, &mut timings, &wt, name, since.as_deref());
+        let since = meta
+            .setup_commit
+            .clone()
+            .unwrap_or_else(|| meta.golden_commit.clone());
+        let since = (!all).then_some((since.as_str(), "last setup"));
+        meta.failed_steps = self.setup(r, &mut timings, &wt, name, since);
         meta.setup_commit = git::head_commit(&wt).ok();
         write_json(&self.clone_dir(name).join("meta.json"), &meta)?;
         self.info(name, false)
