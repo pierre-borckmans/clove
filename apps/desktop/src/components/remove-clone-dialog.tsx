@@ -37,8 +37,8 @@ export function RemoveCloneDialog() {
             Remove <span className="font-mono">{c?.name}</span>?
           </AlertDialogTitle>
           <AlertDialogDescription className="text-[13px] leading-relaxed">
-            Unmounts the volume, deletes the image (frees {c ? bytes(c.own_bytes ?? c.image_bytes) : ""}) and the git worktree registration.
-            Commits on the branch stay in the repository.
+            Unmounts the volume, deletes the image (frees {c ? bytes(c.own_bytes ?? c.image_bytes) : ""}) and the git
+            worktree registration. Commits on the branch stay in the repository.
           </AlertDialogDescription>
         </AlertDialogHeader>
 
