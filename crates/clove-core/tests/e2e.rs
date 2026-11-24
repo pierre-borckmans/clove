@@ -1,0 +1,205 @@
+//! End-to-end on real disk images (macOS only). One scenario, because the env
+//! vars that point clove at a temp state dir are process-wide.
+
+#![cfg(target_os = "macos")]
+
+use clove_core::{Clove, NewOptions, RemoveOptions, Silent};
+use std::path::Path;
+use std::process::Command;
+use std::time::Instant;
+
+fn sh(dir: &Path, script: &str) {
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(script)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{script}\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+const CONFIG: &str = r#"
+image_size = "2G"
+[[step]]
+name = "deps"
+warm = "mkdir -p deps && cp lock.txt deps/installed && echo warmed > deps/warm-ran"
+setup = "cp lock.txt deps/installed && echo ran >> deps/setup-ran"
+watch = ["lock.txt"]
+"#;
+
+#[test]
+fn full_lifecycle() {
+    let tmp = tempfile::Builder::new()
+        .prefix("clove-e2e")
+        .tempdir_in(std::env::temp_dir())
+        .unwrap();
+    let t = tmp.path().canonicalize().unwrap();
+    // SAFETY: single-threaded at this point; the only test in this binary.
+    unsafe {
+        std::env::set_var("CLOVE_HOME", t.join("state"));
+        std::env::set_var("CLOVE_CLONE_ROOT", t.join("clones"));
+        std::env::set_var("CLOVE_CONFIG", t.join("no-user-config.toml"));
+        std::env::set_var("GIT_CONFIG_GLOBAL", "/dev/null");
+        std::env::set_var("GIT_AUTHOR_NAME", "t");
+        std::env::set_var("GIT_AUTHOR_EMAIL", "t@t");
+        std::env::set_var("GIT_COMMITTER_NAME", "t");
+        std::env::set_var("GIT_COMMITTER_EMAIL", "t@t");
+    }
+
+    // origin + a checkout of it
+    let remote = t.join("remote.git");
+    sh(&t, &format!("git init -q --bare -b main {}", remote.display()));
+    let seed = t.join("seed");
+    sh(&t, &format!("git clone -q {} seed", remote.display()));
+    std::fs::write(seed.join(".clove.toml"), CONFIG).unwrap();
+    std::fs::write(seed.join(".gitignore"), "deps/\n").unwrap();
+    std::fs::write(seed.join("lock.txt"), "v1\n").unwrap();
+    std::fs::write(seed.join("app.txt"), "hello\n").unwrap();
+    sh(
+        &seed,
+        "git add -A && git commit -qm init && git push -q origin main",
+    );
+    let root = t.join("app");
+    sh(&t, &format!("git clone -q {} app", remote.display()));
+
+    let c = Clove::discover(&root).unwrap();
+    assert_eq!(c.config.base, "origin/main");
+
+    // init
+    let g = c.init(&Silent).expect("init");
+    assert_eq!(g.generation, 1);
+    assert!(!g.dirty, "golden should be clean");
+
+    // new: O(1) clone, setup skipped because lock.txt is unchanged
+    let start = Instant::now();
+    let a = c
+        .new_clone(
+            &NewOptions {
+                branch: Some("feat/a".into()),
+                ..Default::default()
+            },
+            &Silent,
+        )
+        .expect("new a");
+    let took = start.elapsed();
+    eprintln!("new feat/a took {took:?}: {:?}", a.timings);
+    assert_eq!(a.name, "feat-a");
+    assert!(a.mounted);
+    assert_eq!(a.branch.as_deref(), Some("feat/a"));
+    assert_eq!(
+        std::fs::read_to_string(a.path.join("deps/installed")).unwrap(),
+        "v1\n"
+    );
+    assert!(!a.path.join("deps/setup-ran").exists(), "setup should be skipped");
+    assert_eq!(git(&a.path, &["status", "--porcelain"]), "", "clone starts clean");
+    assert!(git(&root, &["worktree", "list"]).contains(&a.path.display().to_string()));
+    let clone_ms = a.timings.iter().find(|t| t.step == "clone image").unwrap().ms;
+    assert!(clone_ms < 1000.0, "clone image took {clone_ms}ms");
+
+    // a commit in the clone is visible from the main checkout
+    std::fs::write(a.path.join("app.txt"), "changed\n").unwrap();
+    sh(&a.path, "git commit -qam change");
+    assert!(git(&root, &["log", "--oneline", "feat/a"]).contains("change"));
+
+    // second clone from a base where lock.txt changed: setup runs
+    sh(
+        &seed,
+        "echo v2 > lock.txt && git commit -qam bump && git push -q origin main:bump",
+    );
+    let b = c
+        .new_clone(
+            &NewOptions {
+                branch: Some("feat-b".into()),
+                base: Some("origin/bump".into()),
+                ..Default::default()
+            },
+            &Silent,
+        )
+        .expect("new b");
+    assert_eq!(
+        std::fs::read_to_string(b.path.join("deps/installed")).unwrap(),
+        "v2\n"
+    );
+    assert!(b.path.join("deps/setup-ran").exists(), "setup should run");
+
+    // isolation between clones
+    std::fs::write(a.path.join("deps/only-a"), "x").unwrap();
+    assert!(!b.path.join("deps/only-a").exists());
+
+    // unmount / mount round trip keeps state
+    c.unmount("feat-a", false).unwrap();
+    assert!(!c.info("feat-a", false).unwrap().mounted);
+    let p = c.mount("feat-a").unwrap();
+    assert!(p.join("deps/only-a").exists());
+
+    // refresh picks up the new base; clones are unaffected
+    sh(
+        &seed,
+        "git push -q origin main:main --force && echo more >> app.txt && git commit -qam more && git push -q origin HEAD:main",
+    );
+    let g2 = c.refresh(&Silent).expect("refresh");
+    assert_eq!(g2.generation, 2);
+    assert_eq!(g2.commit, git(&root, &["rev-parse", "origin/main"]));
+    assert!(c.info("feat-a", true).unwrap().mounted);
+    let n = c
+        .new_clone(
+            &NewOptions {
+                detach: true,
+                name: Some("peek".into()),
+                ..Default::default()
+            },
+            &Silent,
+        )
+        .unwrap();
+    assert!(
+        std::fs::read_to_string(n.path.join("app.txt"))
+            .unwrap()
+            .contains("more")
+    );
+
+    // remove refuses dirty clones without --force
+    std::fs::write(a.path.join("app.txt"), "dirty\n").unwrap();
+    assert!(c.remove("feat-a", &RemoveOptions::default(), &Silent).is_err());
+    c.remove(
+        "feat-a",
+        &RemoveOptions {
+            force: true,
+            delete_branch: true,
+        },
+        &Silent,
+    )
+    .unwrap();
+    assert!(!git(&root, &["branch", "--list", "feat/a"]).contains("feat/a"));
+    c.remove("feat-b", &RemoveOptions::default(), &Silent).unwrap();
+    c.remove("peek", &RemoveOptions::default(), &Silent).unwrap();
+    assert!(c.list(false).unwrap().is_empty());
+    assert!(
+        c.gc(false).unwrap().is_empty(),
+        "nothing left behind: {:?}",
+        c.gc(false).unwrap()
+    );
+    assert!(!git(&root, &["worktree", "list"]).contains("clones"));
+
+    c.deinit(&Silent).unwrap();
+    assert!(!t.join("state/repos").join(&c.id).exists());
+}
