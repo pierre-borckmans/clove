@@ -20,6 +20,7 @@ clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
 clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
 anstream = "0.6"
 anstyle = "1"
+libc.workspace = true
 
 [lints]
 workspace = true

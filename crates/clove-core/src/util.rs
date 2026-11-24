@@ -92,6 +92,45 @@ pub fn allocated_bytes(path: &Path) -> u64 {
     std::fs::metadata(path).map(|m| m.blocks() * 512).unwrap_or(0)
 }
 
+/// Bytes of `path` not shared with any clone: what deleting it would free.
+/// Uses APFS's ATTR_CMNEXT_PRIVATESIZE; falls back to allocated size.
+#[cfg(target_os = "macos")]
+pub fn private_bytes(path: &Path) -> u64 {
+    let Ok(c) = CString::new(path.as_os_str().as_bytes()) else {
+        return 0;
+    };
+    // SAFETY: zeroed attrlist is valid; we set the fields getattrlist reads.
+    let mut al: libc::attrlist = unsafe { std::mem::zeroed() };
+    al.bitmapcount = libc::ATTR_BIT_MAP_COUNT;
+    al.forkattr = libc::ATTR_CMNEXT_PRIVATESIZE;
+    #[repr(C, packed(4))]
+    struct Buf {
+        len: u32,
+        private: libc::off_t,
+    }
+    let mut buf = Buf { len: 0, private: 0 };
+    // SAFETY: buf is large enough for the one attribute requested.
+    let rc = unsafe {
+        libc::getattrlist(
+            c.as_ptr(),
+            (&mut al as *mut libc::attrlist).cast(),
+            (&mut buf as *mut Buf).cast(),
+            std::mem::size_of::<Buf>(),
+            libc::FSOPT_ATTR_CMN_EXTENDED,
+        )
+    };
+    if rc != 0 {
+        return allocated_bytes(path);
+    }
+    let private = buf.private;
+    private.max(0) as u64
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn private_bytes(path: &Path) -> u64 {
+    allocated_bytes(path)
+}
+
 pub fn now_unix() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -196,5 +235,23 @@ mod tests {
         assert_eq!(human_bytes(512), "512B");
         assert_eq!(human_bytes(3 * 1024 * 1024 * 1024 / 2), "1.5G");
         assert_eq!(human_age(7200), "2h");
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod private_size_tests {
+    #[test]
+    fn clone_shares_blocks() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a");
+        std::fs::write(&a, vec![7u8; 4 << 20]).unwrap();
+        let b = d.path().join("b");
+        super::clonefile(&a, &b).unwrap();
+        assert!(
+            super::private_bytes(&b) < 1 << 20,
+            "fresh clone shares its blocks"
+        );
+        std::fs::write(&b, vec![9u8; 4 << 20]).unwrap();
+        assert!(super::private_bytes(&b) >= 4 << 20);
     }
 }

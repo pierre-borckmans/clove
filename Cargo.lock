@@ -166,6 +166,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "clove-core",
+ "libc",
  "serde",
  "serde_json",
 ]

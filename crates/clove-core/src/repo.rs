@@ -51,6 +51,9 @@ pub struct CloneMeta {
     pub golden_generation: u32,
     pub created_at: u64,
     pub timings: Vec<Timing>,
+    /// Wall-clock time of `new` (fetch overlaps the mount, so not the sum of timings).
+    #[serde(default)]
+    pub total_ms: f64,
     #[serde(default)]
     pub failed_steps: Vec<String>,
 }
@@ -67,10 +70,14 @@ pub struct CloneInfo {
     pub dirty: Option<bool>,
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
+    /// Allocated size of the image, mostly blocks shared with the golden image.
     pub image_bytes: u64,
+    /// Bytes this clone does not share: what removing it frees.
+    pub own_bytes: u64,
     pub created_at: u64,
     pub golden_generation: u32,
     pub timings: Vec<Timing>,
+    pub total_ms: f64,
     pub failed_steps: Vec<String>,
 }
 

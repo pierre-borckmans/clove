@@ -22,11 +22,14 @@ pub struct FileConfig {
     pub image_size: Option<String>,
     /// Fetch the base ref before creating a clone.
     pub fetch: Option<bool>,
+    /// Skip that fetch when the repo was fetched less than this many seconds ago.
+    pub fetch_interval: Option<u64>,
     /// Detect steps from repo files when none are configured.
     pub detect: Option<bool>,
     /// Wrap step commands in an environment: auto, direnv, mise or none.
     pub exec: Option<Exec>,
     /// Extra environment for every step and `clove run`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
     #[serde(rename = "step")]
     pub steps: Vec<Step>,
@@ -48,23 +51,40 @@ pub enum Exec {
 /// to be slow. `setup` runs in each new clone and should be incremental; it is
 /// skipped when none of the `watch` paths differ between the golden commit and
 /// the clone's HEAD.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Step {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub warm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub setup: Option<String>,
     /// Pathspecs; empty means setup always runs.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub watch: Vec<String>,
     /// Run inside the `exec` environment (direnv/mise). Off for steps that set it up.
-    #[serde(default = "yes")]
+    #[serde(skip_serializing_if = "is_true")]
     pub wrap: bool,
     /// Extra environment for this step only.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
 }
 
-fn yes() -> bool {
-    true
+impl Default for Step {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            warm: None,
+            setup: None,
+            watch: vec![],
+            wrap: true,
+            env: BTreeMap::new(),
+        }
+    }
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
 }
 
 /// Fully resolved configuration for one repository.
@@ -74,6 +94,7 @@ pub struct Config {
     pub clone_root: PathBuf,
     pub image_size: String,
     pub fetch: bool,
+    pub fetch_interval: u64,
     pub exec: Exec,
     pub env: BTreeMap<String, String>,
     pub steps: Vec<Step>,
@@ -149,6 +170,7 @@ impl Config {
                 .or(user.image_size)
                 .unwrap_or_else(|| "300G".into()),
             fetch: repo.fetch.or(user.fetch).unwrap_or(true),
+            fetch_interval: repo.fetch_interval.or(user.fetch_interval).unwrap_or(300),
             exec: detect::resolve_exec(exec, repo_root),
             env,
             steps,
@@ -198,5 +220,24 @@ mod tests {
     #[test]
     fn rejects_unknown_keys() {
         assert!(toml::from_str::<FileConfig>("nope = 1").is_err());
+    }
+}
+
+#[cfg(test)]
+mod default_tests {
+    use super::*;
+
+    #[test]
+    fn detected_steps_wrap_by_default() {
+        assert!(Step::default().wrap);
+        let out = toml::to_string(&FileConfig {
+            steps: vec![Step {
+                name: "x".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(!out.contains("wrap"), "{out}");
     }
 }

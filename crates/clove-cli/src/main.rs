@@ -1,5 +1,6 @@
 mod complete;
 mod render;
+mod service;
 mod shell;
 
 use anstream::{eprintln, println};
@@ -78,7 +79,11 @@ enum Cmd {
         command: Vec<String>,
     },
     /// Update the golden image to the latest base. Existing clones are untouched.
-    Refresh,
+    Refresh {
+        /// Every repo clove knows about (used by the nightly service).
+        #[arg(long)]
+        all_repos: bool,
+    },
     /// Golden image and clone summary for this repo.
     #[command(visible_alias = "info")]
     Status,
@@ -114,10 +119,29 @@ enum Cmd {
     },
     /// Delete the golden image and clove's state for this repo.
     Deinit,
+    /// Background agents: remount clones at login, refresh golden images nightly.
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
     /// Print shell integration: `eval "$(clove shell-init zsh)"`.
     ShellInit { shell: shell::Shell },
     /// Interactive terminal UI.
     Ui,
+}
+
+#[derive(Subcommand)]
+enum ServiceAction {
+    /// Install the launchd agents.
+    Install {
+        /// Nightly refresh time, HH:MM.
+        #[arg(long, default_value = "04:30")]
+        at: String,
+    },
+    /// Remove the launchd agents.
+    Uninstall,
+    /// Show whether the agents are installed.
+    Status,
 }
 
 #[derive(Args)]
@@ -139,8 +163,11 @@ struct NewArgs {
     #[arg(long)]
     no_setup: bool,
     /// Do not fetch the base first.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "fetch")]
     no_fetch: bool,
+    /// Fetch the base even if the repo was fetched recently.
+    #[arg(long)]
+    fetch: bool,
     /// Stay in the current directory (with shell integration, `new` cds by default).
     #[arg(long)]
     no_cd: bool,
@@ -211,19 +238,52 @@ fn run(cli: Cli) -> Result<()> {
                 paint(BOLD, "clove new <branch>")
             );
         }
-        Cmd::Refresh => {
-            let c = repo(&cli)?;
-            let meta = c.refresh(r)?;
-            if cli.json {
-                return emit(&meta);
+        Cmd::Refresh { all_repos } => {
+            let targets: Vec<Clove> = if *all_repos {
+                clove_core::known_repos()
+                    .into_iter()
+                    .filter_map(|r| Clove::open(&r.root).ok())
+                    .collect()
+            } else {
+                vec![repo(&cli)?]
+            };
+            let mut metas = vec![];
+            let mut failed = false;
+            for c in &targets {
+                if !cli.json {
+                    eprintln!("{} {}", paint(BOLD, "refresh"), c.name);
+                }
+                match c.refresh(r) {
+                    Ok(meta) => {
+                        if !cli.json {
+                            eprintln!(
+                                "{} golden gen {} at {} ({})\n",
+                                paint(GREEN, "●"),
+                                meta.generation,
+                                &meta.commit[..10],
+                                secs(total_ms(&meta.timings))
+                            );
+                        }
+                        metas.push(serde_json::json!({ "repo": c.name, "golden": meta }));
+                    }
+                    Err(e) if *all_repos => {
+                        failed = true;
+                        eprintln!("{} {}: {e:#}", paint(RED, "error:"), c.name);
+                        metas.push(serde_json::json!({ "repo": c.name, "error": format!("{e:#}") }));
+                    }
+                    Err(e) => return Err(e),
+                }
             }
-            eprintln!(
-                "\n{} golden gen {} at {} ({})",
-                paint(GREEN, "●"),
-                meta.generation,
-                &meta.commit[..10],
-                secs(total_ms(&meta.timings))
-            );
+            if cli.json {
+                emit(&if *all_repos {
+                    serde_json::json!(metas)
+                } else {
+                    metas[0]["golden"].clone()
+                })?;
+            }
+            if failed {
+                std::process::exit(1);
+            }
         }
         Cmd::New(a) => cmd_new(&cli, a, r)?,
         Cmd::List { fast } => cmd_list(&cli, !fast)?,
@@ -234,11 +294,31 @@ fn run(cli: Cli) -> Result<()> {
             } else {
                 a.clones.iter().map(|q| c.resolve(q)).collect::<Result<_>>()?
             };
-            // Leaving a clone you are standing in: go back to the main checkout.
+            // The shell's cwd keeps a volume busy. With shell integration, the
+            // wrapper cds to the main checkout and then removes that clone.
             let cwd = std::env::current_dir().ok();
+            let inside = |n: &String| cwd.as_ref().is_some_and(|d| d.starts_with(c.clone_mount(n)));
             let mut removed = vec![];
             for n in &names {
-                let mount = c.clone_mount(n);
+                if inside(n) && !a.force {
+                    let mut args = vec!["rm".to_string()];
+                    if a.delete_branch {
+                        args.push("-D".into());
+                    }
+                    args.push(n.clone());
+                    if shell::request_cd_then(&c.root, &args) {
+                        eprintln!(
+                            "{} {} {}",
+                            paint(MAGENTA, "−"),
+                            paint(BOLD, n),
+                            paint(DIM, "(after leaving it)")
+                        );
+                        continue;
+                    }
+                    bail!(
+                        "you are inside `{n}`; cd out first (or set up `clove shell-init`, which does it for you)"
+                    );
+                }
                 if !cli.json {
                     eprintln!("{} {}", paint(MAGENTA, "−"), paint(BOLD, n));
                 }
@@ -250,7 +330,7 @@ fn run(cli: Cli) -> Result<()> {
                     },
                     r,
                 )?;
-                if cwd.as_ref().is_some_and(|d| d.starts_with(&mount)) {
+                if inside(n) {
                     shell::request_cd(&c.root);
                 }
                 removed.push(n.clone());
@@ -403,6 +483,38 @@ fn run(cli: Cli) -> Result<()> {
                 return emit(&serde_json::json!({ "deinit": c.name }));
             }
         }
+        Cmd::Service { action } => match action {
+            ServiceAction::Install { at } => {
+                let (h, m) = at
+                    .split_once(':')
+                    .and_then(|(h, m)| Some((h.parse::<u8>().ok()?, m.parse::<u8>().ok()?)))
+                    .filter(|(h, m)| *h < 24 && *m < 60)
+                    .context("--at takes HH:MM")?;
+                for p in service::install(h, m)? {
+                    eprintln!("{} {}", paint(GREEN, "✓"), tilde(&p));
+                }
+                eprintln!("clones remount at login; golden images refresh daily at {at}");
+            }
+            ServiceAction::Uninstall => {
+                for p in service::uninstall()? {
+                    eprintln!("{} removed {}", paint(GREEN, "✓"), tilde(&p));
+                }
+            }
+            ServiceAction::Status => {
+                let st = service::installed();
+                if cli.json {
+                    return emit(&st);
+                }
+                for (label, on) in st {
+                    let dot = if on {
+                        paint(GREEN, "●")
+                    } else {
+                        paint(DIM, "○")
+                    };
+                    println!("  {dot} {label}");
+                }
+            }
+        },
         Cmd::ShellInit { shell } => print!("{}", shell::init(*shell)),
         Cmd::Ui => {
             bail!("the terminal UI is not built into this binary yet");
@@ -447,7 +559,13 @@ fn cmd_new(cli: &Cli, a: &NewArgs, r: &dyn clove_core::Reporter) -> Result<()> {
         name: a.name.clone(),
         detach: a.detach,
         no_setup: a.no_setup,
-        fetch: a.no_fetch.then_some(false),
+        fetch: if a.no_fetch {
+            Some(false)
+        } else if a.fetch {
+            Some(true)
+        } else {
+            None
+        },
     };
     if !cli.json {
         let label = a
@@ -465,7 +583,7 @@ fn cmd_new(cli: &Cli, a: &NewArgs, r: &dyn clove_core::Reporter) -> Result<()> {
             "\n{} {} {} {}",
             paint(GREEN, "●"),
             paint(BOLD, &info.name),
-            paint(DIM, format!("ready in {}", secs(total_ms(&info.timings)))),
+            paint(DIM, format!("ready in {}", secs(info.total_ms))),
             tilde(&info.path)
         );
         if !info.failed_steps.is_empty() {
@@ -532,7 +650,7 @@ fn cmd_list(cli: &Cli, status: bool) -> Result<()> {
         eprintln!("no clones yet. {}", paint(BOLD, hint));
         return Ok(());
     }
-    let mut t = Table::new(&["", "NAME", "BRANCH", "CHANGES", "AGE", "SIZE", "PATH"]);
+    let mut t = Table::new(&["", "NAME", "BRANCH", "CHANGES", "AGE", "OWN", "PATH"]);
     let now = clove_core::util::now_unix();
     let cwd = std::env::current_dir().unwrap_or_default();
     for i in &clones {
@@ -571,7 +689,7 @@ fn cmd_list(cli: &Cli, status: bool) -> Result<()> {
             branch,
             changes,
             cell(clove_core::util::human_age(now.saturating_sub(i.created_at))),
-            cell(clove_core::util::human_bytes(i.image_bytes)),
+            cell(clove_core::util::human_bytes(i.own_bytes)),
             styled(DIM, tilde(&i.path)),
         ]);
     }

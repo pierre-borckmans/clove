@@ -35,7 +35,8 @@ pub struct NewOptions {
     pub detach: bool,
     /// Skip setup steps.
     pub no_setup: bool,
-    /// Override config `fetch`.
+    /// `Some(true)` always fetches, `Some(false)` never; `None` follows config
+    /// and skips a fetch made less than `fetch_interval` ago.
     pub fetch: Option<bool>,
 }
 
@@ -137,7 +138,7 @@ impl Clove {
         // Keep Spotlight off the volume; clones inherit the marker.
         let _ = std::fs::write(mount.join(".metadata_never_index"), "");
 
-        self.fetch_base(r, &mut timings, &self.config.base, None)?;
+        self.fetch_base(r, &mut timings, &self.config.base, Some(self.config.fetch))?;
         let wt = self.golden_worktree();
         self.drop_registration(&wt)?;
         timed(r, &mut timings, "checkout", || {
@@ -174,7 +175,7 @@ impl Clove {
         self.save_record(&record)?;
 
         let meta = self.warm_and_snapshot(r, &mut timings, generation, &gen_dir)?;
-        timed(r, &mut timings, "unmount", || backend::detach(&mount, false))?;
+        timed(r, &mut timings, "unmount", || self.unmount_golden(r, &mount))?;
         guard.armed = false;
         self.set_current_generation(generation)?;
         Ok(GoldenMeta { timings, ..meta })
@@ -217,7 +218,7 @@ impl Clove {
                 &cur_dir,
                 "clove golden image (detached between refreshes)",
             )?;
-            self.fetch_base(r, &mut timings, &self.config.base, None)?;
+            self.fetch_base(r, &mut timings, &self.config.base, Some(self.config.fetch))?;
             timed(r, &mut timings, "checkout", || {
                 git::run_ok(
                     &wt,
@@ -225,7 +226,7 @@ impl Clove {
                 )
             })?;
             let meta = self.warm_and_snapshot(r, &mut timings, next, &next_dir)?;
-            timed(r, &mut timings, "unmount", || backend::detach(&mount, false))?;
+            timed(r, &mut timings, "unmount", || self.unmount_golden(r, &mount))?;
             guard.armed = false;
             Ok(meta)
         })();
@@ -249,6 +250,18 @@ impl Clove {
                 Err(e)
             }
         }
+    }
+
+    /// Unmounts the golden volume, stopping daemons the warm steps left behind.
+    fn unmount_golden(&self, r: &dyn Reporter, mount: &Path) -> Result<()> {
+        let stopped = backend::stop_users(mount, std::time::Duration::from_secs(10));
+        if !stopped.is_empty() {
+            let names: Vec<_> = stopped.iter().map(|u| u.command.as_str()).collect();
+            r.event(Event::Warn {
+                message: format!("stopped processes a warm step left running: {}", names.join(", ")),
+            });
+        }
+        backend::detach(mount, false)
     }
 
     fn prune_generations(&self, keep: u32) {
@@ -331,6 +344,21 @@ impl Clove {
         let Some((remote, branch)) = git::split_remote_ref(&self.root, base) else {
             return Ok(());
         };
+        // A base we do not have yet (a new remote branch) is always fetched.
+        if enabled.is_none() && git::ref_exists(&self.root, base) {
+            let age = std::fs::metadata(self.common_dir.join("FETCH_HEAD"))
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .map(|d| d.as_secs());
+            if let Some(age) = age.filter(|a| *a < self.config.fetch_interval) {
+                r.event(Event::Skip {
+                    step: "fetch".into(),
+                    reason: format!("fetched {} ago (--fetch to force)", crate::util::human_age(age)),
+                });
+                return Ok(());
+            }
+        }
         let res = timed(r, timings, "fetch", || {
             git::run_ok(&self.root, &["fetch", "--quiet", &remote, &branch])
         });
@@ -347,6 +375,7 @@ impl Clove {
     /// Creates a clone: O(1) image copy, mount, git registration, branch checkout,
     /// then only the setup steps whose inputs changed since the golden commit.
     pub fn new_clone(&self, opts: &NewOptions, r: &dyn Reporter) -> Result<CloneInfo> {
+        let started = std::time::Instant::now();
         let record = self.require_record()?;
         let branch = match (&opts.branch, opts.detach) {
             (Some(b), _) => Some(b.clone()),
@@ -447,6 +476,7 @@ impl Clove {
             golden_generation: golden.generation,
             created_at: now_unix(),
             timings,
+            total_ms: started.elapsed().as_secs_f64() * 1000.0,
             failed_steps: failed,
         };
         write_json(&dir.join("meta.json"), &meta)?;
@@ -614,7 +644,10 @@ impl Clove {
         if opts.delete_branch
             && let Some(b) = branch
         {
-            let flag = if opts.force { "-D" } else { "-d" };
+            // A branch whose tip is already in its base loses nothing; `-d` would
+            // still refuse when the main checkout's branch is behind that base.
+            let merged = git::ok(&self.root, &["merge-base", "--is-ancestor", &b, &meta.base]);
+            let flag = if opts.force || merged { "-D" } else { "-d" };
             if let Err(e) = git::run_ok(&self.root, &["branch", flag, &b]) {
                 r.event(Event::Warn {
                     message: format!("kept branch {b}: {e:#}"),
@@ -693,9 +726,11 @@ impl Clove {
             ahead,
             behind,
             image_bytes: allocated_bytes(&image),
+            own_bytes: crate::util::private_bytes(&image),
             created_at: meta.created_at,
             golden_generation: meta.golden_generation,
             timings: meta.timings,
+            total_ms: meta.total_ms,
             failed_steps: meta.failed_steps,
         })
     }

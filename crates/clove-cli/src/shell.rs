@@ -18,30 +18,40 @@ pub fn init(shell: Shell) -> String {
             } else {
                 "bash"
             };
+            // zsh completion needs compinit; skip quietly where it is not loaded.
+            let completion = if matches!(shell, Shell::Zsh) {
+                "if (( $+functions[compdef] )); then source <(COMPLETE=zsh command clove); fi".to_string()
+            } else {
+                format!("source <(COMPLETE={complete} command clove)")
+            };
             format!(
                 r#"# clove shell integration
 clove() {{
   local __clove_cd
-  __clove_cd="$(mktemp -t clove-cd.XXXXXX)" || return
+  __clove_cd="$(mktemp "${{TMPDIR:-/tmp}}/clove-cd.XXXXXX")" || return
   CLOVE_CD_FILE="$__clove_cd" command clove "$@"
   local __clove_rc=$?
   if [ -s "$__clove_cd" ]; then builtin cd -- "$(cat "$__clove_cd")" || __clove_rc=$?; fi
-  command rm -f "$__clove_cd"
+  if [ -s "$__clove_cd.then" ]; then command clove $(cat "$__clove_cd.then") || __clove_rc=$?; fi
+  command rm -f "$__clove_cd" "$__clove_cd.then"
   return $__clove_rc
 }}
-source <(COMPLETE={complete} command clove)
+{completion}
 "#
             )
         }
         Shell::Fish => r#"# clove shell integration
 function clove
-    set -l __clove_cd (mktemp -t clove-cd.XXXXXX); or return
+    set -l __clove_cd (mktemp (set -q TMPDIR; and echo $TMPDIR; or echo /tmp)/clove-cd.XXXXXX); or return
     CLOVE_CD_FILE=$__clove_cd command clove $argv
     set -l __clove_rc $status
     if test -s $__clove_cd
         builtin cd (cat $__clove_cd)
     end
-    command rm -f $__clove_cd
+    if test -s $__clove_cd.then
+        command clove (cat $__clove_cd.then | string split ' '); or set __clove_rc $status
+    end
+    command rm -f $__clove_cd $__clove_cd.then
     return $__clove_rc
 end
 COMPLETE=fish command clove | source
@@ -56,4 +66,16 @@ pub fn request_cd(path: &std::path::Path) -> bool {
         Some(f) => std::fs::write(f, path.as_os_str().as_encoded_bytes()).is_ok(),
         None => false,
     }
+}
+
+/// Asks the wrapper to cd to `path`, then run `clove <args>` from there.
+/// Used to remove the clone the shell is standing in.
+pub fn request_cd_then(path: &std::path::Path, args: &[String]) -> bool {
+    let Some(f) = std::env::var_os("CLOVE_CD_FILE") else {
+        return false;
+    };
+    let mut then = std::path::PathBuf::from(&f).into_os_string();
+    then.push(".then");
+    std::fs::write(&f, path.as_os_str().as_encoded_bytes()).is_ok()
+        && std::fs::write(then, args.join(" ")).is_ok()
 }

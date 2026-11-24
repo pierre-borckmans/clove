@@ -100,9 +100,18 @@ pub fn detach(mount_point: &Path, force: bool) -> Result<()> {
         return Ok(());
     }
     if !force {
-        return plain.map(|_| ()).context(
-            "the volume is busy (a shell, editor or dev server is using it); close it or pass --force",
-        );
+        let who = users(mount_point);
+        let detail = if who.is_empty() {
+            "a shell, editor or dev server is using it".to_string()
+        } else {
+            who.iter()
+                .map(|u| format!("{} (pid {})", u.command, u.pid))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        return plain
+            .map(|_| ())
+            .with_context(|| format!("the volume is busy: {detail}; close it or pass --force"));
     }
     let dev = mounted_device(mount_point).unwrap_or_default();
     run(Command::new("diskutil")
@@ -169,4 +178,67 @@ pub fn fs_type(_: &Path) -> Option<String> {
 pub fn volume_id(path: &Path) -> Option<u64> {
     use std::os::unix::fs::MetadataExt;
     std::fs::metadata(path).ok().map(|m| m.dev())
+}
+
+/// A process with files (or its cwd) open on a volume.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VolumeUser {
+    pub pid: i32,
+    pub command: String,
+}
+
+/// Processes using the filesystem mounted at `mount_point`.
+pub fn users(mount_point: &Path) -> Vec<VolumeUser> {
+    let Ok(out) = Command::new("lsof")
+        .args(["-n", "-P", "-F", "pc", "+f", "--"])
+        .arg(mount_point)
+        .output()
+    else {
+        return vec![];
+    };
+    let me = std::process::id() as i32;
+    let mut users: Vec<VolumeUser> = vec![];
+    let mut pid = 0;
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        if let Some(p) = line.strip_prefix('p') {
+            pid = p.parse().unwrap_or(0);
+        } else if let Some(c) = line.strip_prefix('c')
+            && pid != 0
+            && pid != me
+            && !users.iter().any(|u| u.pid == pid)
+        {
+            users.push(VolumeUser {
+                pid,
+                command: c.to_string(),
+            });
+        }
+    }
+    users
+}
+
+/// Stops every process using the volume: SIGTERM, then SIGKILL after `grace`.
+/// Only for volumes clove owns outright (the golden image while warming), where
+/// anything still running is a daemon a warm step started (bazel, gradle, turbo).
+pub fn stop_users(mount_point: &Path, grace: std::time::Duration) -> Vec<VolumeUser> {
+    let users = users(mount_point);
+    if users.is_empty() {
+        return users;
+    }
+    for u in &users {
+        // SAFETY: kill(2) with a pid we just read; no memory involved.
+        unsafe { libc::kill(u.pid, libc::SIGTERM) };
+    }
+    let deadline = std::time::Instant::now() + grace;
+    while std::time::Instant::now() < deadline {
+        // SAFETY: signal 0 only checks existence.
+        if users.iter().all(|u| unsafe { libc::kill(u.pid, 0) } != 0) {
+            return users;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    for u in &users {
+        // SAFETY: as above.
+        unsafe { libc::kill(u.pid, libc::SIGKILL) };
+    }
+    users
 }
