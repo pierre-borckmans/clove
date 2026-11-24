@@ -19,6 +19,7 @@ Getting started:
   clove new feat/login       a ready worktree in ~1s, deps and env included
   clove ls                   list clones
   clove rm feat/login        unmount and delete it
+  clove ui                   all of the above, interactively
 
 Shell integration (cd into new clones, completions):
   eval \"$(clove shell-init zsh)\"     # or bash; fish: clove shell-init fish | source
@@ -533,7 +534,11 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Hook { action } => cmd_hook(action)?,
         Cmd::ShellInit { shell } => print!("{}", shell::init(*shell)),
         Cmd::Ui => {
-            bail!("the terminal UI is not built into this binary yet");
+            let dir = match &cli.dir {
+                Some(d) => d.clone(),
+                None => std::env::current_dir()?,
+            };
+            clove_tui::run(&dir)?;
         }
     }
     Ok(())

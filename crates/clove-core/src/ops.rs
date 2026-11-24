@@ -113,11 +113,17 @@ impl Clove {
         let backend = Backend::detect()?;
         let mut timings = vec![];
         std::fs::create_dir_all(&self.state)?;
-        // Time Machine would back up every image; they are caches.
-        let _ = Command::new("tmutil")
+        // Time Machine would back up every image; they are caches. tmutil can
+        // take 10s+, so don't hold init (and its progress UI) on it.
+        if let Ok(mut child) = Command::new("tmutil")
             .arg("addexclusion")
             .arg(&self.state)
-            .output();
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            std::thread::spawn(move || child.wait());
+        }
 
         let generation = 1;
         let gen_dir = self.golden_gen_dir(generation);

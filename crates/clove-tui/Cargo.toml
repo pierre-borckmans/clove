@@ -1,0 +1,20 @@
+[package]
+name = "clove-tui"
+description = "Terminal UI for clove"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+clove-core.workspace = true
+anyhow.workspace = true
+ratatui = "0.30"
+unicode-width = "0.2"
+
+[dev-dependencies]
+insta = "1"
+
+[lints]
+workspace = true

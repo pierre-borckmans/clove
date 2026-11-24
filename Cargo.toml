@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/clove-core", "crates/clove-cli"]
+members = ["crates/clove-core", "crates/clove-cli", "crates/clove-tui"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,6 +11,7 @@ rust-version = "1.88"
 
 [workspace.dependencies]
 clove-core = { path = "crates/clove-core" }
+clove-tui = { path = "crates/clove-tui" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

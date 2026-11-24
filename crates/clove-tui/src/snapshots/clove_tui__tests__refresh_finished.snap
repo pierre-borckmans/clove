@@ -1,0 +1,30 @@
+---
+source: crates/clove-tui/src/tests.rs
+expression: s
+---
+╭ ◆ clove ────────────────────────────────────────────────────────────────────  app   mono   web  ─╮
+│ app  /work/app                                                              5 clones · 4 mounted │
+│ go╭ ✓ refresh golden image  app · 4.2s ──────────────────────────────────────────────────────╮   │
+╰───│                                                                                          │───╯
+╭ cl│  ✓ fetch                                                                          412ms  │───╮
+│   │  ✓ clone image                                                                      7ms  │   │
+│ ● │  ✓ mount                                                                          640ms  │pp │
+│ ● │  ✓ checkout                                                                       233ms  │pp │
+│ ○ │  ✓ warm deps                                                                       4.2s  │pp │
+│ ● │                                                                                          │pp │
+│ ● │  golden gen 4 at 0badc0ffee in 4.2s                                                      │pp │
+│   │                                                                                          │   │
+│   │  ╭ output 41 ─────────────────────────────────────────────────────────────────────────╮  │   │
+│   │  │ deps │ Progress: resolved 1221 reused 1155, downloaded 0                           │  │   │
+│   │  │ deps │ Progress: resolved 1258 reused 1190, downloaded 0                           │  │   │
+│   │  │ deps │ Progress: resolved 1295 reused 1225, downloaded 0                           │  │   │
+│   │  │ deps │ Progress: resolved 1332 reused 1260, downloaded 0                           │  │   │
+│   │  │ deps │ Progress: resolved 1369 reused 1295, downloaded 0                           │  │   │
+│   │  │ deps │ Progress: resolved 1406 reused 1330, downloaded 0                           │  │   │
+│   │  │ deps │ Progress: resolved 1443 reused 1365, downloaded 0                           │  │   │
+│   │  │      │ finished in 4.2s                                                            ┃  │   │
+│   │  ╰────────────────────────────────────────────────────────────────────────────────────╯  │   │
+│   │                                                                                          │   │
+│   ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ scroll  end follow  esc hide
