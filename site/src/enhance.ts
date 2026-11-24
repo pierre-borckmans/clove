@@ -127,7 +127,16 @@ function replay() {
   io.observe(term);
 }
 
+// Full-page screenshots never scroll, so lazy images would stay blank there.
+function eagerImages() {
+  if (!new URLSearchParams(location.search).has("eager")) return;
+  for (const img of document.querySelectorAll<HTMLImageElement>("img[loading=lazy]")) {
+    img.loading = "eager";
+  }
+}
+
 export function enhance() {
+  eagerImages();
   copyButtons();
   themeToggle();
   replay();

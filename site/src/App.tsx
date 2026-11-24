@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Desktop, TuiScreen } from "./Apps";
 import {
   accent,
   CopyCommand,
@@ -21,6 +22,7 @@ function Nav() {
     ["#how", "How it works"],
     ["#numbers", "Numbers"],
     ["#cli", "CLI"],
+    ["#app", "App"],
     ["#agents", "Agents"],
     ["#limits", "Limits"],
   ];
@@ -438,6 +440,12 @@ function Cli() {
     ["clove gc", "Find leftovers from interrupted runs."],
     ["clove mount --all-repos", "Remount everything after a reboot."],
     ["clove new --fetch", "Fetch the base even if it was fetched in the last 5 minutes."],
+    ["clove new pr:123", "Check out pull request 123 as the local branch pr/123."],
+    [
+      "clove ui",
+      "Terminal UI with mouse support and live progress. Quitting cds into the selected clone.",
+    ],
+    ["clove hook claude", "Print the Claude Code hooks that turn its worktrees into clones."],
     [
       "clove service install",
       "launchd agents: remount at login, refresh --all-repos nightly at 04:30.",
@@ -453,12 +461,19 @@ function Cli() {
           </div>
         ))}
       </dl>
-      <Prose className="mt-5 text-[1rem]">
-        <p>
-          In progress, not in the current binary: a terminal UI, <code>clove ui</code>, and a
-          desktop app.
-        </p>
-      </Prose>
+      <div className="mt-14">
+        <h3 className="text-[1.4rem] font-medium">
+          <code className="font-mono text-[1.15rem]">clove ui</code>
+        </h3>
+        <Prose className="mt-3 mb-6 text-[1rem]">
+          <p>
+            Everything above, in one screen: clones with their branch and changes, the golden image,
+            and per-step timings for the selected clone. <code>clove new</code> and{" "}
+            <code>clove refresh</code> show their steps live, and it works with the mouse.
+          </p>
+        </Prose>
+        <TuiScreen />
+      </div>
       <div className="mt-14 grid grid-cols-[minmax(0,1fr)] gap-8">
         <div className="prose-body max-w-[34rem] text-[1rem] text-ink-2">
           <h3 className="text-[1.4rem] font-medium text-ink">Shell integration</h3>
@@ -502,7 +517,7 @@ function Cli() {
 function Agents() {
   return (
     <Section id="agents" label="agents" title="One clone per agent.">
-      <div className="grid grid-cols-[minmax(0,1fr)] gap-12 xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-12">
         <Prose>
           <p>
             Each agent gets its own volume with its own <code>node_modules</code> and dev shell. One
@@ -514,12 +529,18 @@ function Agents() {
             environment. <code>clove new agent/parser -x claude</code> starts Claude Code there.
           </p>
           <p>
+            For Claude Code's own worktrees, <code>clove hook claude</code> prints a{" "}
+            <code>settings.json</code> block with <code>WorktreeCreate</code> and{" "}
+            <code>WorktreeRemove</code> hooks. With it, <code>claude --worktree</code> and the
+            worktrees Claude Code makes for subagents become clones.
+          </p>
+          <p>
             Every command takes <code>--json</code> and prints machine-readable output on stdout,
             with progress on stderr. clove holds its repo lock only while copying the image, so
             several <code>clove new</code> calls can run at once.
           </p>
         </Prose>
-        <div className="min-w-0 space-y-6">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-2">
           <Term title="~/src/mono">
             <Prompt />
             {"clove new agent/parser -x claude\n"}
@@ -537,6 +558,11 @@ function Agents() {
                 branch: "agent/parser",
               }}
             />
+          </Term>
+          <Term title="~/src/mono" className="xl:col-span-2">
+            <Prompt />
+            {"clove hook claude\n"}
+            <Json text={CLAUDE_HOOKS} />
           </Term>
         </div>
       </div>
@@ -559,6 +585,25 @@ name = "pnpm"
 warm = "pnpm install --frozen-lockfile"
 setup = "pnpm install --prefer-offline --frozen-lockfile"
 watch = ["pnpm-lock.yaml", "pnpm-workspace.yaml"]`;
+
+// Verbatim output of `clove hook claude` (CLAUDE_HOOKS in clove-cli).
+const CLAUDE_HOOKS = `{
+  "hooks": {
+    "WorktreeCreate": [
+      { "hooks": [{ "type": "command", "command": "clove hook worktree-create" }] }
+    ],
+    "WorktreeRemove": [
+      { "hooks": [{ "type": "command", "command": "clove hook worktree-remove" }] }
+    ]
+  }
+}`;
+
+const PERSONAL = `# ~/.config/clove/repos/mono.toml
+[[add_step]]
+name = "build-deps"
+warm = "pnpm run build-deps"
+setup = "pnpm run build-deps"
+watch = ["common/javascript"]`;
 
 function Config() {
   const keys: [string, string][] = [
@@ -596,6 +641,30 @@ function Config() {
             <p>
               <code>fetch_interval</code> is in seconds: <code>clove new</code> skips fetching the
               base if the repo was fetched more recently than that. The default is 300.
+            </p>
+          </Prose>
+        </div>
+      </div>
+
+      <div className="mt-16 grid grid-cols-[minmax(0,1fr)] gap-12 xl:grid-cols-[minmax(0,6fr)_minmax(0,5fr)]">
+        <div className="min-w-0 xl:order-2">
+          <Term title="~/.config/clove/repos/mono.toml">
+            <Toml src={PERSONAL} />
+          </Term>
+        </div>
+        <div className="xl:order-1">
+          <h3 className="text-[1.4rem] font-medium">Your own steps on top</h3>
+          <Prose className="mt-3 text-[1rem]">
+            <p>
+              Config comes in three layers, later ones winning:{" "}
+              <code>~/.config/clove/config.toml</code>, then the repo's <code>.clove.toml</code>,
+              then <code>~/.config/clove/repos/&lt;repo&gt;.toml</code> for what only you need.{" "}
+              <code>[[add_step]]</code> appends to the steps instead of replacing them.
+            </p>
+            <p>
+              On the monorepo I added a <code>build-deps</code> step that builds the shared
+              JavaScript packages. <code>clove refresh</code> took 22.5s with it, a new clone still
+              took 1.02s, and the frontend typecheck inside that clone passed with 0 errors in 18s.
             </p>
           </Prose>
         </div>
@@ -698,6 +767,7 @@ export function App() {
         <How />
         <Numbers />
         <Cli />
+        <Desktop />
         <Agents />
         <Config />
         <Limits />

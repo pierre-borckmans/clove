@@ -179,8 +179,8 @@ export function Toml({ src }: { src: string }) {
 }
 
 /** Minimal JSON highlighting: keys plain, strings green, the rest dim. */
-export function Json({ value }: { value: unknown }) {
-  const text = JSON.stringify(value, null, 2);
+export function Json({ value, text: raw }: { value?: unknown; text?: string }) {
+  const text = raw ?? JSON.stringify(value, null, 2);
   const parts = text.split(/("(?:[^"\\]|\\.)*"(?:\s*:)?)/g);
   return (
     <>

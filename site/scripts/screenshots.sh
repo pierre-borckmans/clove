@@ -11,7 +11,7 @@ trap 'kill $server' EXIT
 for _ in $(seq 50); do curl -sf http://localhost:4317 >/dev/null && break; sleep 0.1; done
 shot() {
   pnpm dlx playwright@1 screenshot --browser chromium --full-page --wait-for-timeout 8000 \
-    --viewport-size "$2" --color-scheme "$3" http://localhost:4317/ "$out/$1-$3.png" >/dev/null
+    --viewport-size "$2" --color-scheme "$3" http://localhost:4317/?eager "$out/$1-$3.png" >/dev/null
 }
 shot desktop 1440,900 light
 shot desktop 1440,900 dark
