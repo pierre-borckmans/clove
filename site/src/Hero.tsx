@@ -91,11 +91,11 @@ export function Hero() {
           <p>On the monorepo I work in, a new worktree went from 72 seconds to about one.</p>
           <CopyCommand cmd={INSTALL} wrap className="mt-8" />
           <p className="mt-4! text-[0.95rem] text-muted">
-            macOS only for now. Not on Homebrew yet.{" "}
+            macOS only. Not on Homebrew yet.{" "}
             <a href={REPO} className="text-ink!">
-              Source on GitHub
-            </a>{" "}
-            (private while I finish it).
+              The source is on GitHub
+            </a>
+            , private while I finish it.
           </p>
         </div>
         <div className="min-w-0">

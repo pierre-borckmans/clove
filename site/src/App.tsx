@@ -140,8 +140,8 @@ function How() {
   const checks = [
     "Adding a dependency in one clone leaves the others alone.",
     "Editing the nix flake in one clone leaves the other clones' shells alone.",
-    "File watchers (Vite, tsgo) see edits inside a clone.",
-    "Docker bind mounts from a clone work (tested with OrbStack).",
+    "Vite and tsgo file watchers pick up edits inside a clone.",
+    "Docker bind mounts from a clone work in OrbStack.",
     "Go and Rust builds work inside a clone.",
   ];
   return (
@@ -173,8 +173,9 @@ function How() {
         </Step>
         <Step n={3} title="The mount becomes a real git worktree">
           <p>
-            clove registers it with your repo and copies the golden index, so git doesn't rehash 35k
-            files on the first <code>git status</code> (0.09s). Then it switches to your branch.
+            clove registers it with your repo and copies the golden index, so the first{" "}
+            <code>git status</code> takes 0.09s instead of rehashing 35k files. Then it switches to
+            your branch.
           </p>
         </Step>
         <Step n={4} title="Setup reruns only what changed">
@@ -266,7 +267,7 @@ function Numbers() {
     ["git switch", "0.21s", "check out your branch"],
     ["git status", "0.09s", "index copied, no rehash"],
     ["direnv", "0.24s", "nix cache hit"],
-    ["pnpm", "2.76s", "install check (see below)"],
+    ["pnpm", "2.76s", "install check"],
   ];
   return (
     <Section id="numbers" label="the numbers" title="72 seconds down to about one.">
@@ -285,7 +286,7 @@ function Numbers() {
           ]}
         />
         <Bar
-          label="clove, first prototype (bash, pnpm check included)"
+          label="clove, bash prototype with the pnpm check"
           total="~6s"
           segments={[{ s: 6, cls: "bg-sage" }]}
         />
