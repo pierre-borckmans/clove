@@ -405,7 +405,11 @@ fn run(cli: Cli) -> Result<()> {
         }
         Cmd::ShellInit { shell } => print!("{}", shell::init(*shell)),
         Cmd::Ui => {
-            bail!("the terminal UI is not built into this binary yet");
+            let dir = match &cli.dir {
+                Some(d) => d.clone(),
+                None => std::env::current_dir()?,
+            };
+            clove_tui::run(&dir)?;
         }
     }
     Ok(())
