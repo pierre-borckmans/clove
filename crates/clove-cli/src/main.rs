@@ -124,10 +124,25 @@ enum Cmd {
         #[command(subcommand)]
         action: ServiceAction,
     },
+    /// Hooks for other tools. `clove hook claude` prints the Claude Code settings.
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
     /// Print shell integration: `eval "$(clove shell-init zsh)"`.
     ShellInit { shell: shell::Shell },
     /// Interactive terminal UI.
     Ui,
+}
+
+#[derive(Subcommand)]
+enum HookAction {
+    /// Print the settings.json block that makes Claude Code use clove for worktrees.
+    Claude,
+    /// Claude Code WorktreeCreate hook: JSON on stdin, prints the clone path.
+    WorktreeCreate,
+    /// Claude Code WorktreeRemove hook: JSON on stdin with worktree_path.
+    WorktreeRemove,
 }
 
 #[derive(Subcommand)]
@@ -147,7 +162,7 @@ enum ServiceAction {
 #[derive(Args)]
 struct NewArgs {
     /// Branch to check out. Created from --base if it does not exist.
-    /// Omit for a generated name.
+    /// `pr:123` checks out a pull request. Omit for a generated name.
     #[arg(add = ArgValueCompleter::new(complete::branches))]
     branch: Option<String>,
     /// Start point for a new branch.
@@ -515,6 +530,7 @@ fn run(cli: Cli) -> Result<()> {
                 }
             }
         },
+        Cmd::Hook { action } => cmd_hook(action)?,
         Cmd::ShellInit { shell } => print!("{}", shell::init(*shell)),
         Cmd::Ui => {
             bail!("the terminal UI is not built into this binary yet");
@@ -762,6 +778,78 @@ fn cmd_doctor(cli: &Cli) -> Result<()> {
     }
     if checks.iter().any(|c| c.level == Level::Fail) {
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+const CLAUDE_HOOKS: &str = r#"{
+  "hooks": {
+    "WorktreeCreate": [
+      { "hooks": [{ "type": "command", "command": "clove hook worktree-create" }] }
+    ],
+    "WorktreeRemove": [
+      { "hooks": [{ "type": "command", "command": "clove hook worktree-remove" }] }
+    ]
+  }
+}"#;
+
+/// Claude Code worktree hooks. Progress goes to stderr; stdout carries only the path.
+fn cmd_hook(action: &HookAction) -> Result<()> {
+    let read_input = || -> Result<serde_json::Value> {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+        serde_json::from_str(&buf).context("hook input is not JSON")
+    };
+    match action {
+        HookAction::Claude => {
+            println!("{CLAUDE_HOOKS}");
+            eprintln!(
+                "{}",
+                paint(
+                    DIM,
+                    "merge into ~/.claude/settings.json (or .claude/settings.json in a repo); \
+                     `claude --worktree <name>` and subagent worktrees then become clove clones"
+                )
+            );
+        }
+        HookAction::WorktreeCreate => {
+            let input = read_input()?;
+            let name = input["name"].as_str().context("hook input has no name")?;
+            let cwd = input["cwd"]
+                .as_str()
+                .map(PathBuf::from)
+                .unwrap_or(std::env::current_dir()?);
+            let c = Clove::discover(&cwd)?;
+            let info = c.new_clone(
+                &NewOptions {
+                    branch: Some(name.to_string()),
+                    ..Default::default()
+                },
+                &TermReporter::new(false),
+            )?;
+            println!("{}", info.path.display());
+        }
+        HookAction::WorktreeRemove => {
+            let input = read_input()?;
+            let path = PathBuf::from(
+                input["worktree_path"]
+                    .as_str()
+                    .context("hook input has no worktree_path")?,
+            );
+            let c = Clove::discover(&path).or_else(|_| {
+                Clove::discover(&input["cwd"].as_str().map(PathBuf::from).unwrap_or_default())
+            })?;
+            let name = c.resolve(&path.to_string_lossy())?;
+            // Keeps the branch when it has commits its base does not.
+            c.remove(
+                &name,
+                &RemoveOptions {
+                    force: false,
+                    delete_branch: true,
+                },
+                &TermReporter::new(false),
+            )?;
+        }
     }
     Ok(())
 }

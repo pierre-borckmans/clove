@@ -378,6 +378,29 @@ impl Clove {
         let started = std::time::Instant::now();
         let record = self.require_record()?;
         let branch = match (&opts.branch, opts.detach) {
+            // pr:123 checks out the pull request's head as local branch pr/123.
+            (Some(b), _) if b.starts_with("pr:") => {
+                let n = b[3..].trim_start_matches('#');
+                if n.is_empty() || !n.chars().all(|c| c.is_ascii_digit()) {
+                    bail!("expected pr:<number>, got {b}");
+                }
+                let local = format!("pr/{n}");
+                let mut t = vec![];
+                timed(r, &mut t, "fetch pr", || {
+                    git::run_ok(
+                        &self.root,
+                        &[
+                            "fetch",
+                            "--quiet",
+                            "--force",
+                            "origin",
+                            &format!("pull/{n}/head:refs/heads/{local}"),
+                        ],
+                    )
+                })
+                .with_context(|| format!("fetch pull request {n} from origin"))?;
+                Some(local)
+            }
             (Some(b), _) => Some(b.clone()),
             (None, true) => None,
             (None, false) => Some(crate::names::generate(|n| {

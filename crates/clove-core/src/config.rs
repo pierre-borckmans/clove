@@ -31,8 +31,12 @@ pub struct FileConfig {
     /// Extra environment for every step and `clove run`.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
-    #[serde(rename = "step")]
+    /// Replaces the detected steps.
+    #[serde(rename = "step", skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<Step>,
+    /// Appended after the detected or configured steps.
+    #[serde(rename = "add_step", skip_serializing_if = "Vec::is_empty")]
+    pub add_steps: Vec<Step>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -126,14 +130,24 @@ fn read(path: &Path) -> Result<Option<FileConfig>> {
 impl Config {
     pub fn load(repo_root: &Path, repo_name: &str, default_base: impl FnOnce() -> String) -> Result<Self> {
         let mut sources = vec![];
+        // Lowest to highest precedence: personal defaults, the repo's shared
+        // file, then personal overrides for this repo.
         let user_path = user_config_path();
-        let user = read(&user_path)?
-            .inspect(|_| sources.push(user_path.clone()))
-            .unwrap_or_default();
-        let repo_path = repo_root.join(REPO_FILE);
-        let repo = read(&repo_path)?
-            .inspect(|_| sources.push(repo_path.clone()))
-            .unwrap_or_default();
+        let personal_path = user_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("repos")
+            .join(format!("{repo_name}.toml"));
+        let mut layers = vec![];
+        for path in [user_path, repo_root.join(REPO_FILE), personal_path] {
+            if let Some(f) = read(&path)? {
+                sources.push(path);
+                layers.push(f);
+            }
+        }
+        fn pick<T: Clone>(layers: &[FileConfig], f: impl Fn(&FileConfig) -> Option<T>) -> Option<T> {
+            layers.iter().rev().find_map(f)
+        }
 
         let parent = repo_root
             .parent()
@@ -142,35 +156,33 @@ impl Config {
             .to_string();
         let root_tpl = std::env::var("CLOVE_CLONE_ROOT")
             .ok()
-            .or(repo.clone_root.clone())
-            .or(user.clone_root.clone())
+            .or_else(|| pick(&layers, |l| l.clone_root.clone()))
             .unwrap_or_else(|| "{repo_parent}/{repo}.clove".into());
         let clone_root = expand(&root_tpl, &[("repo", repo_name), ("repo_parent", &parent)]);
 
-        let mut env = user.env.clone();
-        env.extend(repo.env.clone());
+        let mut env = BTreeMap::new();
+        for l in &layers {
+            env.extend(l.env.clone());
+        }
 
-        let detect_on = repo.detect.or(user.detect).unwrap_or(true);
-        let (steps, steps_detected) = if !repo.steps.is_empty() {
-            (repo.steps.clone(), false)
-        } else if !user.steps.is_empty() {
-            (user.steps.clone(), false)
-        } else if detect_on {
-            (detect::steps(repo_root), true)
-        } else {
-            (vec![], false)
+        let detect_on = pick(&layers, |l| l.detect).unwrap_or(true);
+        let configured = layers.iter().rev().find(|l| !l.steps.is_empty());
+        let (mut steps, steps_detected) = match configured {
+            Some(l) => (l.steps.clone(), false),
+            None if detect_on => (detect::steps(repo_root), true),
+            None => (vec![], false),
         };
+        for l in &layers {
+            steps.extend(l.add_steps.iter().cloned());
+        }
 
-        let exec = repo.exec.or(user.exec).unwrap_or_default();
+        let exec = pick(&layers, |l| l.exec).unwrap_or_default();
         Ok(Self {
-            base: repo.base.or(user.base).unwrap_or_else(default_base),
+            base: pick(&layers, |l| l.base.clone()).unwrap_or_else(default_base),
             clone_root,
-            image_size: repo
-                .image_size
-                .or(user.image_size)
-                .unwrap_or_else(|| "300G".into()),
-            fetch: repo.fetch.or(user.fetch).unwrap_or(true),
-            fetch_interval: repo.fetch_interval.or(user.fetch_interval).unwrap_or(300),
+            image_size: pick(&layers, |l| l.image_size.clone()).unwrap_or_else(|| "300G".into()),
+            fetch: pick(&layers, |l| l.fetch).unwrap_or(true),
+            fetch_interval: pick(&layers, |l| l.fetch_interval).unwrap_or(300),
             exec: detect::resolve_exec(exec, repo_root),
             env,
             steps,
@@ -239,5 +251,45 @@ mod default_tests {
         })
         .unwrap();
         assert!(!out.contains("wrap"), "{out}");
+    }
+}
+
+#[cfg(test)]
+mod layer_tests {
+    use super::*;
+
+    #[test]
+    fn personal_overrides_repo_and_add_steps_append() {
+        let d = tempfile::tempdir().unwrap();
+        let repo = d.path().join("app");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(repo.join("pnpm-lock.yaml"), "").unwrap();
+        std::fs::write(
+            repo.join(REPO_FILE),
+            "base = \"origin/dev\"\nfetch_interval = 10\n",
+        )
+        .unwrap();
+        let cfg = d.path().join("cfg");
+        std::fs::create_dir_all(cfg.join("repos")).unwrap();
+        std::fs::write(
+            cfg.join("config.toml"),
+            "fetch_interval = 99\nimage_size = \"5G\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            cfg.join("repos/app.toml"),
+            "base = \"origin/main\"\n[[add_step]]\nname = \"build\"\nwarm = \"make\"\n",
+        )
+        .unwrap();
+        // SAFETY: the only test that touches CLOVE_CONFIG.
+        unsafe { std::env::set_var("CLOVE_CONFIG", cfg.join("config.toml")) };
+        let c = Config::load(&repo, "app", || "HEAD".into()).unwrap();
+        assert_eq!(c.base, "origin/main", "personal file wins");
+        assert_eq!(c.fetch_interval, 10, "repo file beats user defaults");
+        assert_eq!(c.image_size, "5G");
+        let names: Vec<_> = c.steps.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["pnpm", "build"], "detected steps plus add_step");
+        assert!(c.steps_detected);
+        assert_eq!(c.sources.len(), 3);
     }
 }

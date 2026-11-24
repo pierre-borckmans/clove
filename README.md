@@ -66,6 +66,10 @@ Every command takes `--json`. `clove new --json` prints the clone's path, branch
 path=$(clove new --json agent/task-42 | jq -r .path)
 ```
 
+`clove new pr:123` checks out a pull request as branch `pr/123`.
+
+To make Claude Code put its worktrees (`claude --worktree`, subagents) in clones, merge the block from `clove hook claude` into `~/.claude/settings.json`. The create hook makes a clone named after the worktree, and the remove hook deletes it, along with the branch if the branch has no commits of its own.
+
 `clove refresh` builds the next golden generation from a clone of the current one and swaps it in atomically. `clove new` keeps working while it runs, and existing clones never change. `clove service install` adds two launchd agents: one remounts clones at login, the other refreshes every golden image at 04:30.
 
 ## Configure
@@ -88,7 +92,22 @@ setup = "make generate"
 watch = ["proto/"]
 ```
 
-Steps run inside the repo's environment (`direnv exec`, or `mise exec`). Personal defaults go in `~/.config/clove/config.toml`: `clone_root`, `image_size`, `fetch`, `fetch_interval`.
+Steps run inside the repo's environment (`direnv exec`, or `mise exec`). `[[step]]` replaces the detected steps; `[[add_step]]` appends to them. Settings layer in this order, last wins:
+
+1. `~/.config/clove/config.toml`: personal defaults (`clone_root`, `image_size`, `fetch`, `fetch_interval`)
+2. `.clove.toml` in the repo: shared with the team
+3. `~/.config/clove/repos/<repo>.toml`: personal overrides for one repo, for steps you don't want to commit
+
+For example, a monorepo whose workspace libraries must be built before the app typechecks:
+
+```toml
+# ~/.config/clove/repos/mono.toml
+[[add_step]]
+name = "build-deps"
+warm = "pnpm run build-deps"
+setup = "pnpm run build-deps"
+watch = ["common/javascript", "packages/inkwell", "pnpm-lock.yaml"]
+```
 
 ## Limits
 

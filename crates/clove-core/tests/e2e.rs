@@ -142,6 +142,36 @@ fn full_lifecycle() {
     );
     assert!(b.path.join("deps/setup-ran").exists(), "setup should run");
 
+    // pr:N fetches the pull request head into pr/N
+    sh(
+        &seed,
+        "echo pr >> app.txt && git commit -qam pr && git push -q origin HEAD:refs/pull/7/head && git reset -q --hard HEAD~1",
+    );
+    let pr = c
+        .new_clone(
+            &NewOptions {
+                branch: Some("pr:7".into()),
+                ..Default::default()
+            },
+            &Silent,
+        )
+        .expect("new pr:7");
+    assert_eq!(pr.branch.as_deref(), Some("pr/7"));
+    assert!(
+        std::fs::read_to_string(pr.path.join("app.txt"))
+            .unwrap()
+            .contains("pr")
+    );
+    c.remove(
+        "pr-7",
+        &RemoveOptions {
+            force: false,
+            delete_branch: true,
+        },
+        &Silent,
+    )
+    .unwrap();
+
     // isolation between clones
     std::fs::write(a.path.join("deps/only-a"), "x").unwrap();
     assert!(!b.path.join("deps/only-a").exists());

@@ -60,6 +60,13 @@ pass "rm from inside"
 clove unmount two >/dev/null 2>&1 && clove mount >/dev/null 2>&1 || fail "unmount/mount"
 pass "unmount + mount"
 
+hp=$(print '{"name":"agent-x","cwd":"'$T/app'"}' | command clove hook worktree-create 2>/dev/null)
+[[ -d $hp && $(git -C $hp branch --show-current) == agent-x ]] || fail "claude WorktreeCreate hook (got $hp)"
+print '{"worktree_path":"'$hp'","cwd":"'$T/app'"}' | command clove hook worktree-remove >/dev/null 2>&1 || fail "claude WorktreeRemove hook"
+[[ ! -d $hp ]] || fail "hook removed the clone"
+git -C $T/app rev-parse --verify --quiet refs/heads/agent-x >/dev/null && fail "merged branch deleted by remove hook"
+pass "claude worktree hooks"
+
 clove rm --all >/dev/null 2>&1 || fail "rm --all"
 [[ -z $(command clove gc --json | python3 -c 'import json,sys; print(*json.load(sys.stdin)["actions"])') ]] || fail "gc clean"
 clove deinit >/dev/null 2>&1 || fail "deinit"
