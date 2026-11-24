@@ -38,6 +38,27 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+/// Ejects every volume mounted under the test dir, so a failing assertion
+/// does not leave disk images attached.
+struct UnmountOnDrop(std::path::PathBuf);
+
+impl Drop for UnmountOnDrop {
+    fn drop(&mut self) {
+        let out = Command::new("mount").output().unwrap();
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            if let Some((_, rest)) = line.split_once(" on ")
+                && let Some((point, _)) = rest.split_once(" (")
+                && point.starts_with(&*self.0.to_string_lossy())
+            {
+                let _ = Command::new("diskutil")
+                    .args(["unmount", "force", point])
+                    .output();
+                let _ = Command::new("diskutil").args(["eject", point]).output();
+            }
+        }
+    }
+}
+
 const CONFIG: &str = r#"
 image_size = "2G"
 [[step]]
@@ -54,6 +75,7 @@ fn full_lifecycle() {
         .tempdir_in(std::env::temp_dir())
         .unwrap();
     let t = tmp.path().canonicalize().unwrap();
+    let _unmount = UnmountOnDrop(t.clone());
     // SAFETY: single-threaded at this point; the only test in this binary.
     unsafe {
         std::env::set_var("CLOVE_HOME", t.join("state"));
