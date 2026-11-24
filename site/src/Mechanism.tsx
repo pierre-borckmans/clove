@@ -95,25 +95,26 @@ export function Pipeline() {
             </li>
             <li>nix shell built by direnv</li>
             <li>build caches</li>
+            <li className="font-mono text-[0.8rem] text-muted">3.8G allocated</li>
           </ul>
         </Stage>
-        <Edge op="clonefile()" time="0.02s" />
+        <Edge op="clonefile()" time="0.00s" />
         <Stage n="per worktree" name="Clone image" path="clones/feat-login/image.asif">
           One file. It points at the golden image's blocks and gets its own blocks only for what you
-          write.
+          write. A fresh one owns 6.1M.
         </Stage>
         <Edge op="mount" time="0.70s" />
-        <Stage n="per worktree" name="Mounted volume" path="~/code/mono.clove/feat-login/">
+        <Stage n="per worktree" name="Mounted volume" path="~/src/mono.clove/feat-login/">
           An APFS volume with the whole warmed checkout in it, deps included.
         </Stage>
-        <Edge op="git switch" time="0.21s" />
+        <Edge op="checkout" time="0.21s" />
         <Stage n="per worktree" name="Git worktree" path="feat-login/mono on feat/login">
-          Registered with your repo, index copied from golden, so <code>git status</code> takes
-          0.09s.
+          Registered with your repo. The index is copied from golden, so git doesn't rehash 35k
+          files.
         </Stage>
       </div>
       <figcaption className="mt-4 text-[0.9rem] text-muted">
-        Times measured on a monorepo with 35k tracked files.
+        Times from a release build on a monorepo with 35k tracked files.
       </figcaption>
     </figure>
   );

@@ -5,7 +5,9 @@ export const INSTALL = "cargo install --git https://github.com/pierre-borckmans/
 
 /** Formats milliseconds like the CLI does (`secs` in render.rs). */
 export function secs(ms: number): string {
-  return ms < 1000 ? `${(ms / 1000).toFixed(2)}s` : `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 1000) return `${(ms / 1000).toFixed(2)}s`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60_000)}m${String(Math.floor((ms % 60_000) / 1000)).padStart(2, "0")}s`;
 }
 
 export function Section({
@@ -118,7 +120,7 @@ export function Prompt({ cwd }: { cwd?: string }) {
   );
 }
 
-/** One `✓ step  0.02s` line, padded like the CLI's `{:<24}`. */
+/** One `✓ step  0.70s` line, padded like the CLI's `{:<24}`. */
 export function StepLine({ step, ms }: { step: string; ms: number }) {
   return (
     <span className="term-line" data-r="step" data-step={step} data-ms={ms}>

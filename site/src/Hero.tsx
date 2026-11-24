@@ -11,14 +11,14 @@ import {
   Term,
 } from "./components";
 
-const WT = "~/code/mono.clove/feat-login/mono";
+const WT = "~/src/mono.clove/feat-login/mono";
 
-/** The replay is the real CLI output for `clove new`, with the per-step times
- *  measured on the monorepo. Without JS it shows the finished run. */
+/** The replay is the real CLI output for `clove new`, with one of five measured
+ *  runs on the monorepo (release build). Without JS it shows the finished run. */
 function Replay() {
   return (
     <Term
-      title="~/code/mono"
+      title="~/src/mono"
       data-replay=""
       aside={
         <span className="flex items-center gap-3">
@@ -35,7 +35,7 @@ function Replay() {
       }
     >
       <span className="term-line" data-r="cmd">
-        <Prompt cwd="~/code/mono" />
+        <Prompt cwd="~/src/mono" />
         <span data-cmd>clove new feat/login</span>
         {"\n"}
       </span>
@@ -43,25 +43,28 @@ function Replay() {
         <span className={ok}>+</span> <b className="font-semibold">feat/login</b>
         {"\n"}
       </span>
-      <StepLine step="clone image" ms={20} />
+      <StepLine step="clone image" ms={0} />
       <StepLine step="mount" ms={700} />
+      <SkipLine step="fetch" reason="fetched 1m ago (--fetch to force)" />
       <StepLine step="checkout" ms={210} />
+      <StepLine step="setup mise" ms={20} />
+      <StepLine step="setup direnv-allow" ms={20} />
       <SkipLine step="setup direnv" reason="unchanged since golden" />
       <SkipLine step="setup pnpm" reason="unchanged since golden" />
       <span className="term-line" data-r="show">
         {"\n"}
         <span className={ok}>●</span> <b className="font-semibold">feat-login</b>{" "}
-        <span className={dim}>ready in 0.93s</span> {WT}
+        <span className={dim}>ready in 1.0s</span> {WT}
         {"\n\n"}
       </span>
       <span className="term-line" data-r="cmd">
         <Prompt cwd={WT} />
-        <span data-cmd>git status</span>
+        <span data-cmd>git branch --show-current</span>
         {"\n"}
       </span>
-      <span className="term-line" data-r="show" data-wait="90">
-        On branch <span className={accent}>feat/login</span>
-        {"\n"}nothing to commit, working tree clean{"\n"}
+      <span className="term-line" data-r="show">
+        <span className={accent}>feat/login</span>
+        {"\n"}
       </span>
       <span className="term-line" data-r="end">
         <Prompt cwd={WT} />
@@ -101,9 +104,9 @@ export function Hero() {
         <div className="min-w-0">
           <Replay />
           <p className="prose-body mt-3 text-[0.9rem] leading-snug text-muted!">
-            Step times measured on that monorepo. The base fetch runs in parallel with the mount and
-            is left out. direnv still evaluates when you <code>cd</code> in: 0.24s from the nix
-            cache.
+            One of five runs on that monorepo, release build. Each took 0.93 to 1.04s. The fetch was
+            skipped because the repo had been fetched a minute earlier. When it runs, it takes about
+            2s, in parallel with the mount.
           </p>
         </div>
       </div>

@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import {
+  accent,
   CopyCommand,
+  dim,
   INSTALL,
   Json,
   ok,
@@ -162,20 +164,19 @@ function How() {
           <p>
             It checks out the base branch inside a fresh image and runs your warm steps there:{" "}
             <code>pnpm install</code>, the direnv or nix eval, <code>mise install</code>. This is
-            the slow part, and it runs once.
+            the slow part: 1m18s on the monorepo, once.
           </p>
         </Step>
         <Step n={2} title="clove new clones and mounts it">
           <p>
-            <code>clonefile()</code> on the image takes 0.02s and uses no extra disk until something
-            writes to the clone. Mounting it takes 0.70s.
+            <code>clonefile()</code> on the image rounds to 0.00s and shares every block with the
+            golden image. Mounting it takes about 0.7s, most of the total.
           </p>
         </Step>
         <Step n={3} title="The mount becomes a real git worktree">
           <p>
-            clove registers it with your repo and copies the golden index, so the first{" "}
-            <code>git status</code> takes 0.09s instead of rehashing 35k files. Then it switches to
-            your branch.
+            clove registers it with your repo and copies the golden index, so git doesn't rehash 35k
+            files. Then it checks out your branch, about 0.2s.
           </p>
         </Step>
         <Step n={4} title="Setup reruns only what changed">
@@ -192,8 +193,9 @@ function How() {
           <Prose className="mt-3">
             <p>
               Every clone starts as a reference to the golden image's blocks. A block gets its own
-              copy only when that clone writes to it. A clone you haven't touched costs no disk at
-              all.
+              copy only when that clone writes to it. On the monorepo the golden image is 3.8G and a
+              new clone owns 6.1M, the bytes it doesn't share. <code>clove ls</code> shows that
+              number per clone.
             </p>
             <p>
               <code>clove refresh</code> builds the next golden generation from a clone of the
@@ -260,17 +262,53 @@ function Bar({
   );
 }
 
-function Numbers() {
-  const rows: [string, string, string][] = [
-    ["clone image", "0.02s", "clonefile() of one file"],
-    ["mount", "0.70s", "attach the APFS image"],
-    ["git switch", "0.21s", "check out your branch"],
-    ["git status", "0.09s", "index copied, no rehash"],
-    ["direnv", "0.24s", "nix cache hit"],
-    ["pnpm", "2.76s", "install check"],
+function InitTerm() {
+  const steps: [string, string][] = [
+    ["create image", "0.62s"],
+    ["mount", "0.44s"],
+    ["fetch", "1.6s"],
+    ["checkout", "5.8s"],
+    ["warm mise", "5.7s"],
+    ["warm direnv", "12.0s"],
+    ["warm pnpm", "50.9s"],
+    ["index", "0.27s"],
+    ["unmount", "1.3s"],
   ];
   return (
-    <Section id="numbers" label="the numbers" title="72 seconds down to about one.">
+    <Term title="~/src/mono">
+      <Prompt />
+      {"clove init\n"}
+      <b className="font-semibold">clove init</b> mono <span className={dim}>~/src/mono</span>
+      {"\n  base   origin/main\n  steps  mise, direnv-allow, direnv, pnpm"}
+      <span className={dim}> (detected)</span>
+      {"\n  env    auto\n\n"}
+      {steps.map(([step, t]) => (
+        <span key={step}>
+          {"  "}
+          <span className={ok}>✓</span> {step.padEnd(24)} <span className={dim}>{t}</span>
+          {"\n"}
+        </span>
+      ))}
+      {"\n"}
+      <span className={ok}>●</span> golden image ready in 1m18s. Next:{" "}
+      <b className="font-semibold">clove new &lt;branch&gt;</b>
+    </Term>
+  );
+}
+
+function Numbers() {
+  const rows: [string, string, string][] = [
+    ["clone image", "0.00s", "clonefile() of one file"],
+    ["mount", "0.67-0.75s", "attach the APFS image"],
+    ["fetch", "skipped", "fetched in the last 5 min"],
+    ["checkout", "0.18-0.25s", "switch to your branch"],
+    ["setup mise", "0.02s", "mise trust"],
+    ["setup direnv-allow", "0.01-0.02s", "direnv allow"],
+    ["setup direnv", "skipped", "flake unchanged"],
+    ["setup pnpm", "skipped", "lockfile unchanged"],
+  ];
+  return (
+    <Section id="numbers" label="the numbers" title="72 seconds down to one.">
       <div className="space-y-5">
         <Bar
           label={
@@ -286,15 +324,14 @@ function Numbers() {
           ]}
         />
         <Bar
-          label="clove, bash prototype with the pnpm check"
-          total="~6s"
-          segments={[{ s: 6, cls: "bg-sage" }]}
-        />
-        <Bar
-          label="clove, lockfile unchanged"
-          total="~1s"
+          label={
+            <>
+              <code className="font-mono text-[0.85rem]">clove new</code>, lockfile unchanged
+            </>
+          }
+          total="1.0s"
           emphasis
-          segments={[{ s: 0.93, cls: "bg-rust" }]}
+          segments={[{ s: 1.0, cls: "bg-rust" }]}
         />
         <div className="grid grid-cols-[minmax(0,1fr)] sm:grid-cols-[15rem_minmax(0,1fr)] sm:gap-6">
           <div />
@@ -306,48 +343,79 @@ function Numbers() {
         </div>
       </div>
 
-      <div className="mt-16 grid gap-10 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="mt-16 grid grid-cols-[minmax(0,1fr)] gap-10 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div>
-          <h3 className="text-[1.4rem] font-medium">Where the time goes</h3>
-          <table className="mt-4 w-full border-t border-ink font-mono text-[0.8rem]">
+          <h3 className="text-[1.4rem] font-medium">Where the second goes</h3>
+          <table className="mt-4 w-full border-t border-ink font-mono text-[0.78rem]">
             <thead>
               <tr className="border-b border-rule text-left text-[0.7rem] text-muted">
                 <th className="py-2 font-normal">step</th>
-                <th className="py-2 text-right font-normal">time</th>
+                <th className="py-2 text-right font-normal">5 runs</th>
                 <th className="hidden py-2 pl-6 font-normal sm:table-cell">what happens</th>
               </tr>
             </thead>
             <tbody>
               {rows.map(([step, t, what]) => (
                 <tr key={step} className="border-b border-rule">
-                  <td className="py-2">{step}</td>
-                  <td className="py-2 text-right tabular-nums">{t}</td>
+                  <td className="py-2 pr-4 whitespace-nowrap">{step}</td>
+                  <td
+                    className={`py-2 text-right whitespace-nowrap tabular-nums ${t === "skipped" ? "text-muted" : ""}`}
+                  >
+                    {t}
+                  </td>
                   <td className="hidden py-2 pl-6 text-ink-2 sm:table-cell">{what}</td>
                 </tr>
               ))}
+              <tr className="border-b border-rule">
+                <td className="py-2 font-semibold">total</td>
+                <td className="py-2 text-right font-semibold whitespace-nowrap text-rust">
+                  0.93-1.04s
+                </td>
+                <td className="hidden py-2 pl-6 text-ink-2 sm:table-cell">as clove reports it</td>
+              </tr>
               <tr className="border-b border-ink">
-                <td className="py-2 font-semibold">end to end</td>
-                <td className="py-2 text-right font-semibold text-rust">~6s</td>
-                <td className="hidden py-2 pl-6 text-ink-2 sm:table-cell">bash prototype</td>
+                <td className="py-2">wall time</td>
+                <td className="py-2 text-right whitespace-nowrap">1.04-1.16s</td>
+                <td className="hidden py-2 pl-6 text-ink-2 sm:table-cell">process start to exit</td>
               </tr>
             </tbody>
           </table>
         </div>
         <Prose className="xl:pt-12">
           <p>
-            These are the per-step numbers from the bash prototype on the monorepo. It ran a pnpm
-            install check on every new worktree, which is most of its 6 seconds.
+            Five consecutive <code>clove new</code> runs on the monorepo, release build. The mount
+            is most of the time. The clone itself rounds to zero.
           </p>
           <p>
-            The Rust version skips pnpm entirely when the lockfile matches the golden commit, which
-            leaves the clone, the mount and the checkout: under a second. In its own test suite{" "}
-            <code>clove new</code> takes about 0.6s.
+            clove skips the base fetch when the repo was fetched in the last five minutes. When it
+            does fetch, that takes about 2s and runs in parallel with the mount.
           </p>
           <p>
-            When the lockfile did change, pnpm runs as usual with the golden image's{" "}
-            <code>node_modules</code> already in place, so it only installs the difference.
+            When the lockfile changed, the pnpm step runs with the golden image's{" "}
+            <code>node_modules</code> already in place, so it installs only the difference. My first
+            prototype, in bash, ran that check every time and took about 6s.
           </p>
         </Prose>
+      </div>
+
+      <div className="mt-16 grid grid-cols-[minmax(0,1fr)] gap-10 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <div>
+          <h3 className="text-[1.4rem] font-medium">The slow part, once</h3>
+          <Prose className="mt-3">
+            <p>
+              <code>clove init</code> pays the 72 seconds, and a bit more, one time per repo. On the
+              monorepo it took 1m18s, 51s of it in <code>pnpm install</code>.
+            </p>
+            <p>
+              Warm steps sometimes leave daemons running on the golden volume. On this repo that was
+              a bazel server and git's fsmonitor. Init stops them so the image can unmount, and
+              tells you which ones it stopped.
+            </p>
+          </Prose>
+        </div>
+        <div className="min-w-0">
+          <InitTerm />
+        </div>
       </div>
     </Section>
   );
@@ -357,15 +425,23 @@ function Cli() {
   const cmds: [string, string][] = [
     ["clove init", "Build the golden image for this repo. Slow, once."],
     ["clove new <branch>", "Clone, mount, check out. Alias: add."],
-    ["clove ls", "List clones with branch, changes and age."],
+    ["clove ls", "List clones: branch, changes, age, and the disk each one owns."],
     ["clove cd <clone>", "Jump into a clone. No argument: the main checkout."],
     ["clove run <clone> -- cmd", "Run a command in the clone's dev environment."],
-    ["clove rm <clone>", "Unmount, delete the image and the git registration."],
+    [
+      "clove rm <clone>",
+      "Unmount, delete the image and the git registration. Works from inside the clone.",
+    ],
     ["clove refresh", "Build the next golden image from the latest base."],
     ["clove status", "Golden generation, age, commits behind, clones."],
     ["clove doctor", "Check the machine and the repo setup."],
     ["clove gc", "Find leftovers from interrupted runs."],
     ["clove mount --all-repos", "Remount everything after a reboot."],
+    ["clove new --fetch", "Fetch the base even if it was fetched in the last 5 minutes."],
+    [
+      "clove service install",
+      "launchd agents: remount at login, refresh --all-repos nightly at 04:30.",
+    ],
   ];
   return (
     <Section id="cli" label="the cli" title="A handful of commands, all with --json.">
@@ -379,15 +455,17 @@ function Cli() {
       </dl>
       <Prose className="mt-5 text-[1rem]">
         <p>
-          A terminal UI, <code>clove ui</code>, is in progress and not in the current binary.
+          In progress, not in the current binary: a terminal UI, <code>clove ui</code>, and a
+          desktop app.
         </p>
       </Prose>
-      <div className="mt-14 grid grid-cols-[minmax(0,1fr)] gap-10 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-        <div className="prose-body text-[1rem] text-ink-2">
+      <div className="mt-14 grid grid-cols-[minmax(0,1fr)] gap-8">
+        <div className="prose-body max-w-[34rem] text-[1rem] text-ink-2">
           <h3 className="text-[1.4rem] font-medium text-ink">Shell integration</h3>
           <p className="mt-3">
-            It lets <code>clove new</code> and <code>clove cd</code> change your directory, and adds
-            completions for branches and clones.
+            It lets <code>clove new</code> and <code>clove cd</code> change your directory, lets{" "}
+            <code>clove rm</code> step out of the clone it removes, and adds completions for
+            branches and clones.
           </p>
           <CopyCommand cmd={'eval "$(clove shell-init zsh)"'} className="mt-4" />
           <p className="mt-2 text-[0.9rem] text-muted!">
@@ -395,20 +473,25 @@ function Cli() {
           </p>
         </div>
         <div className="min-w-0">
-          <Term title="~/code/mono">
+          <Term title="~/src/mono">
             <Prompt />
-            clove doctor{"\n"}
+            {"clove ls\n"}
+            <span className={dim}>
+              {"   "}
+              {["NAME", "BRANCH", "CHANGES", "AGE", "OWN"].map((h, i) =>
+                h.padEnd([10, 10, 7, 3, 4][i] + 2),
+              )}
+              PATH
+            </span>
+            {"\n"}
+            <span className={ok}>●</span>
             {"  "}
-            <span className={ok}>✓</span> {"disk images".padEnd(14)} ASIF via diskutil (macOS 26+)
-            {"\n  "}
-            <span className={ok}>✓</span> {"state volume".padEnd(14)} /Users/you/.clove is on APFS
-            {"\n  "}
-            <span className={ok}>✓</span> {"git".padEnd(14)} 2.50.1{"\n  "}
-            <span className={ok}>✓</span> {"steps".padEnd(14)} direnv, pnpm (from config){"\n  "}
-            <span className={ok}>✓</span> {"pnpm store".padEnd(14)} pinned to
-            /Users/you/Library/pnpm/store{"\n  "}
-            <span className={ok}>✓</span> {"golden".padEnd(14)} gen 3 at 4f1c2a9e07 (12 commits
-            behind origin/main)
+            <b className="font-semibold">{"feat-login".padEnd(12)}</b>
+            <span className={accent}>{"feat/login".padEnd(12)}</span>
+            <span className={dim}>{"clean".padEnd(9)}</span>
+            {"1m".padEnd(5)}
+            {"6.1M".padEnd(6)}
+            <span className={dim}>~/src/mono.clove/feat-login/mono</span>
           </Term>
         </div>
       </div>
@@ -437,7 +520,7 @@ function Agents() {
           </p>
         </Prose>
         <div className="min-w-0 space-y-6">
-          <Term title="~/code/mono">
+          <Term title="~/src/mono">
             <Prompt />
             {"clove new agent/parser -x claude\n"}
             <Prompt />
@@ -445,12 +528,12 @@ function Agents() {
             <Prompt />
             {"clove run agent-parser -- pnpm test"}
           </Term>
-          <Term title="~/code/mono">
+          <Term title="~/src/mono">
             <Prompt />
             {"clove new agent/parser --json | jq '{path, branch}'\n"}
             <Json
               value={{
-                path: "/Users/you/code/mono.clove/agent-parser/mono",
+                path: "/Users/you/src/mono.clove/agent-parser/mono",
                 branch: "agent/parser",
               }}
             />
@@ -462,6 +545,7 @@ function Agents() {
 }
 
 const TOML = `base = "origin/main"
+fetch_interval = 300
 
 [[step]]
 name = "direnv"
@@ -509,6 +593,10 @@ function Config() {
               pnpm, npm, yarn, bun, direnv, mise and uv. <code>clove config --write</code> saves
               what it detected so the team can share and edit it.
             </p>
+            <p>
+              <code>fetch_interval</code> is in seconds: <code>clove new</code> skips fetching the
+              base if the repo was fetched more recently than that. The default is 300.
+            </p>
           </Prose>
         </div>
       </div>
@@ -529,7 +617,8 @@ function Limits() {
       "Each clone is a mounted volume.",
       <>
         Mounts don't survive a reboot. <code>clove mount --all-repos</code> brings them all back,
-        and <code>clove cd</code> remounts the one you ask for.
+        <code>clove cd</code> remounts the one you ask for, and <code>clove service install</code>{" "}
+        remounts everything at login.
       </>,
     ],
     [
@@ -544,7 +633,15 @@ function Limits() {
       <>
         Clones start from the golden commit and switch to your branch, so a stale golden image means
         a bigger checkout and more setup. <code>clove refresh</code> brings it up to date, and{" "}
-        <code>clove doctor</code> warns past 200 commits behind.
+        <code>clove doctor</code> warns past 200 commits behind. The launchd service refreshes every
+        repo nightly.
+      </>,
+    ],
+    [
+      "The first git status can be slow.",
+      <>
+        The copied index means git doesn't rehash the tree, but the first <code>git status</code> in
+        a clone on the monorepo took 1.5s because it started git's fsmonitor daemon.
       </>,
     ],
     [
