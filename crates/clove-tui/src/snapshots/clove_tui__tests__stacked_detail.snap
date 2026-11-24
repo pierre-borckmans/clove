@@ -33,4 +33,4 @@ expression: s
 │  clone image ▊                                                                          6ms  │
 │                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
- ⏎ cd  n new  d remove  m mount  u unmount  r refresh  o open  / filter  ? help  q quit
+ ⏎ cd  n new  d remove  u unmount  r refresh  o open  / filter  tab repo  ? help  q quit

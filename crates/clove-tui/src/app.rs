@@ -61,6 +61,8 @@ pub struct App {
     pub now_unix: u64,
     pub hits: Vec<(Rect, Hit)>,
     pub exit: Option<Exit>,
+    /// Quit asked while operations run: exit once they finish.
+    pub quitting: bool,
     /// Select this clone once it shows up in a load.
     pending_select: Option<String>,
     last_click: Option<(u64, usize)>,
@@ -92,6 +94,7 @@ impl App {
             now_unix: 0,
             hits: vec![],
             exit: None,
+            quitting: false,
             pending_select: None,
             last_click: None,
             log_height: 10,
@@ -579,7 +582,13 @@ impl App {
                 self.on_event(id, ev);
                 vec![]
             }
-            Msg::Done(id, res) => self.on_done(id, res),
+            Msg::Done(id, res) => {
+                let fx = self.on_done(id, res);
+                if self.quitting && self.running().next().is_none() {
+                    self.exit = Some(Exit::Quit);
+                }
+                fx
+            }
         }
     }
 
@@ -635,7 +644,7 @@ impl App {
 
     pub fn on_key(&mut self, k: KeyEvent) -> Vec<Effect> {
         if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) {
-            self.exit = Some(Exit::Quit);
+            self.request_quit();
             return vec![];
         }
         if self.modal.is_some() {
@@ -645,6 +654,25 @@ impl App {
             return self.on_filter_key(k);
         }
         self.on_main_key(k)
+    }
+
+    /// Quits now, or once running operations finish: killing a refresh or a
+    /// clone halfway leaves leftovers. Asking twice quits regardless.
+    pub fn request_quit(&mut self) {
+        let running: Vec<String> = self.running().map(|j| j.title()).collect();
+        if running.is_empty() || self.quitting {
+            self.exit = Some(Exit::Quit);
+            return;
+        }
+        self.quitting = true;
+        let what = match running.as_slice() {
+            [one] => one.clone(),
+            many => format!("{} operations", many.len()),
+        };
+        self.toast(
+            ToastKind::Warn,
+            format!("waiting for {what} to finish; q again quits now"),
+        );
     }
 
     fn on_filter_key(&mut self, k: KeyEvent) -> Vec<Effect> {
@@ -713,7 +741,7 @@ impl App {
                     self.filter.clear();
                     self.selected = 0;
                 } else {
-                    self.exit = Some(Exit::Quit);
+                    self.request_quit();
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => self.move_sel(-1),

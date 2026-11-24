@@ -25,4 +25,4 @@ expression: s
 │                                                                      ││                                              │
 │                                                                      ││                                              │
 ╰──────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
- ⏎ cd  n new  d remove  m mount  u unmount  r refresh  o open  / filter  tab repo  g gc  D doctor  ? help  q quit
+ ⏎ cd  n new  d remove  u unmount  r refresh  o open  / filter  tab repo  g gc  D doctor  ? help  q quit

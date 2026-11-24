@@ -426,6 +426,8 @@ pub enum Hit {
     ScrollList,
     ScrollLog,
     ScrollDoctor,
+    /// Swallows clicks (a modal's body over the click-to-close backdrop).
+    Inert,
 }
 
 #[cfg(test)]

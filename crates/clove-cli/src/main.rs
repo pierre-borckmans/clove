@@ -18,6 +18,7 @@ Getting started:
   clove new feat/login       a ready worktree in ~1s, deps and env included
   clove ls                   list clones
   clove rm feat/login        unmount and delete it
+  clove ui                   all of the above, interactively
 
 Shell integration (cd into new clones, completions):
   eval \"$(clove shell-init zsh)\"     # or bash; fish: clove shell-init fish | source

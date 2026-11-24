@@ -235,13 +235,18 @@ fn golden_line<'a>(app: &App, data: Option<&RepoData>, w: usize) -> Line<'a> {
         Span::raw(format!("{} old", fmt::age(g.age_secs))),
         sep(),
     ];
+    // Long form when it fits, else drop the base name.
+    let long = w >= 70 + g.meta.base.len();
+    let base = if long {
+        format!(" {}", g.meta.base)
+    } else {
+        String::new()
+    };
     match g.behind {
-        Some(0) => spans.push(Span::styled(
-            format!("✓ up to date with {}", g.meta.base),
-            fg(SAGE),
-        )),
-        Some(n) => spans.push(Span::styled(format!("↓{n} behind {}", g.meta.base), fg(AMBER))),
-        None => spans.push(Span::styled(format!("? vs {}", g.meta.base), muted())),
+        Some(0) if long => spans.push(Span::styled(format!("✓ up to date with{base}"), fg(SAGE))),
+        Some(0) => spans.push(Span::styled("✓ current", fg(SAGE))),
+        Some(n) => spans.push(Span::styled(format!("↓{n} behind{base}"), fg(AMBER))),
+        None => spans.push(Span::styled("? behind", muted())),
     }
     spans.push(sep());
     spans.push(Span::raw(fmt::bytes(g.image_bytes)));
@@ -616,8 +621,97 @@ fn changes<'a>(app: &App, c: &CloneInfo, w: usize) -> Vec<Span<'a>> {
     out
 }
 
+/// Appends a TIMINGS header and one bar per step, scaled to the slowest; the
+/// slowest bar takes the accent. Returns the step-name column width.
+fn timing_lines(lines: &mut Vec<Line>, timings: &[clove_core::Timing], w: usize) -> usize {
+    let total: f64 = timings.iter().map(|t| t.ms).sum();
+    let head = "TIMINGS";
+    let tot = fmt::secs(total);
+    lines.push(Line::from(vec![
+        Span::styled(head, muted().add_modifier(Modifier::BOLD)),
+        Span::raw(" ".repeat(w.saturating_sub(head.len() + width(&tot)))),
+        Span::styled(tot, bold()),
+    ]));
+    let max = timings.iter().map(|t| t.ms).fold(0.0, f64::max);
+    let nw = timings
+        .iter()
+        .map(|t| width(&t.step))
+        .max()
+        .unwrap_or(4)
+        .clamp(4, 16);
+    let vw = 6;
+    let bw = w.saturating_sub(nw + vw + 2);
+    for t in timings {
+        let frac = if max > 0.0 { t.ms / max } else { 0.0 };
+        let b = fmt::bar(frac, bw);
+        let style = if t.ms == max && timings.len() > 1 {
+            fg(RUST)
+        } else {
+            fg(SAGE)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(pad(&t.step, nw), muted()),
+            Span::raw(" "),
+            Span::styled(pad(&b, bw), style),
+            Span::raw(" "),
+            Span::raw(format!("{:>vw$}", fmt::secs(t.ms))),
+        ]));
+    }
+    nw
+}
+
+/// With nothing selected, the detail pane describes the golden image.
+fn draw_golden_detail(f: &mut Frame, app: &App, area: Rect) -> bool {
+    let Some(d) = app.current() else {
+        return false;
+    };
+    let Some(g) = &d.status.golden else {
+        return false;
+    };
+    let block = panel(
+        vec![Span::styled(format!("golden gen {}", g.meta.generation), title())],
+        false,
+    );
+    let inner = block.inner(area).inner(Margin::new(2, 1));
+    f.render_widget(block, area);
+    let w = inner.width as usize;
+    let vw = w.saturating_sub(8);
+    let mut lines = vec![
+        kv("base", vec![Span::styled(trunc(&g.meta.base, vw), fg(PLUM))]),
+        kv(
+            "commit",
+            vec![Span::styled(fmt::short_commit(&g.meta.commit), muted())],
+        ),
+        kv(
+            "built",
+            vec![
+                Span::raw(format!("{} ago", fmt::age(g.age_secs))),
+                Span::styled(" · ", muted()),
+                Span::raw(fmt::bytes(g.image_bytes)),
+            ],
+        ),
+    ];
+    if !g.meta.steps.is_empty() {
+        lines.push(kv("warm", vec![Span::raw(trunc(&g.meta.steps.join(", "), vw))]));
+    }
+    if !g.meta.timings.is_empty() {
+        lines.push(Line::from(""));
+        timing_lines(&mut lines, &g.meta.timings, w);
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("n", key()),
+        Span::styled(" clones it in about a second", muted()),
+    ]));
+    f.render_widget(Paragraph::new(lines), inner);
+    true
+}
+
 fn draw_detail(f: &mut Frame, app: &mut App, area: Rect) {
     let Some(c) = app.selected_clone().cloned() else {
+        if draw_golden_detail(f, app, area) {
+            return;
+        }
         let block = panel(vec![Span::styled("details", title())], false);
         let inner = block.inner(area);
         f.render_widget(block, area);
@@ -688,47 +782,13 @@ fn draw_detail(f: &mut Frame, app: &mut App, area: Rect) {
     lines.push(kv("from", golden));
     lines.push(kv("path", vec![Span::raw(trunc_left(&fmt::tilde(&c.path), vw))]));
 
-    // Timings as bars, scaled to the slowest step.
     if !c.timings.is_empty() || !c.failed_steps.is_empty() {
         lines.push(Line::from(""));
-        let total: f64 = c.timings.iter().map(|t| t.ms).sum();
-        let head = "TIMINGS";
-        let tot = fmt::secs(total);
-        lines.push(Line::from(vec![
-            Span::styled(head, muted().add_modifier(Modifier::BOLD)),
-            Span::raw(" ".repeat(w.saturating_sub(head.len() + width(&tot)))),
-            Span::styled(tot, bold()),
-        ]));
-        let max = c.timings.iter().map(|t| t.ms).fold(0.0, f64::max);
-        let nw = c
-            .timings
-            .iter()
-            .map(|t| width(&t.step))
-            .max()
-            .unwrap_or(4)
-            .clamp(4, 16);
-        let vw = 6;
-        let bw = w.saturating_sub(nw + vw + 2);
-        for t in &c.timings {
-            let frac = if max > 0.0 { t.ms / max } else { 0.0 };
-            let b = fmt::bar(frac, bw);
-            let style = if t.ms == max && c.timings.len() > 1 {
-                fg(RUST)
-            } else {
-                fg(SAGE)
-            };
-            lines.push(Line::from(vec![
-                Span::styled(pad(&t.step, nw), muted()),
-                Span::raw(" "),
-                Span::styled(pad(&b, bw), style),
-                Span::raw(" "),
-                Span::raw(format!("{:>vw$}", fmt::secs(t.ms))),
-            ]));
-        }
+        let nw = timing_lines(&mut lines, &c.timings, w);
         for s in &c.failed_steps {
             lines.push(Line::from(vec![
                 Span::styled("✗ ", fg(RED)),
-                Span::styled(pad(&format!("setup {s}"), nw.max(4)), fg(RED)),
+                Span::styled(pad(&format!("setup {s}"), nw), fg(RED)),
                 Span::styled(" failed", fg(RED)),
             ]));
             if let Some(d) = app.current() {
@@ -796,17 +856,27 @@ fn hints(app: &App) -> Vec<Hint> {
             let mut v: Vec<Hint> = vec![];
             if app.current().is_some() && !app.has_golden() {
                 v.push(("i", "init", Char('i')));
-            } else {
+            } else if let Some(c) = app.selected_clone() {
                 v.extend([
                     ("⏎", "cd", Enter),
                     ("n", "new", Char('n')),
                     ("d", "remove", Char('d')),
-                    ("m", "mount", Char('m')),
-                    ("u", "unmount", Char('u')),
+                ]);
+                v.push(if c.mounted {
+                    ("u", "unmount", Char('u'))
+                } else {
+                    ("m", "mount", Char('m'))
+                });
+                v.extend([
                     ("r", "refresh", Char('r')),
                     ("o", "open", Char('o')),
                     ("/", "filter", Char('/')),
                 ]);
+            } else if app.current().is_some() {
+                v.extend([("n", "new", Char('n')), ("r", "refresh", Char('r'))]);
+                if !app.filter.is_empty() {
+                    v.push(("esc", "clear filter", Esc));
+                }
             }
             if app.repos.len() > 1 {
                 v.push(("tab", "repo", Tab));
@@ -825,6 +895,14 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
             Line::from(Span::styled(format!("{} loading ", spinner(app.now_ms)), muted()))
         }
         [] => Line::from(""),
+        _ if app.quitting => Line::from(vec![
+            Span::styled(
+                format!("{} finishing before quit · ", spinner(app.now_ms)),
+                fg(AMBER),
+            ),
+            Span::styled("q", key()),
+            Span::styled(" now ", muted()),
+        ]),
         [j, rest @ ..] => {
             let mut s = vec![
                 Span::styled(format!("{} ", spinner(app.now_ms)), fg(RUST)),
@@ -949,8 +1027,8 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect, list: Rect) {
     };
     match modal {
         Modal::New(form) => draw_new(f, app, list, &form),
-        Modal::Help => draw_help(f, area),
-        Modal::Remove(r) => draw_remove(f, area, &r),
+        Modal::Help => draw_help(f, app, area),
+        Modal::Remove(r) => draw_remove(f, app, area, &r),
         Modal::Gc(g) => draw_gc(f, app, area, &g),
         Modal::Doctor(d) => draw_doctor(f, app, area, d),
         Modal::Job(id) => draw_job(f, app, area, id),
@@ -961,9 +1039,18 @@ fn modal_block<'a>(title_spans: Vec<Span<'a>>) -> Block<'a> {
     panel(title_spans, true).padding(ratatui::widgets::Padding::new(2, 2, 1, 1))
 }
 
-fn open_modal(f: &mut Frame, area: Rect, rect: Rect) {
+/// Dims everything behind a centered modal and makes a click outside it close
+/// it (the footer stays clickable).
+fn open_modal(f: &mut Frame, hits: &mut Vec<(Rect, Hit)>, area: Rect, rect: Rect) {
     dim_backdrop(f, area);
     f.render_widget(Clear, rect);
+    let above_footer = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
+    hits.push((above_footer, Hit::Key(KeyCode::Esc, KeyModifiers::NONE)));
+    hits.push((rect, Hit::Inert));
+}
+
+fn key_hit(c: char) -> Hit {
+    Hit::Key(KeyCode::Char(c), KeyModifiers::NONE)
 }
 
 fn button<'a>(label: &str, focused: bool, danger: bool) -> Span<'a> {
@@ -1106,7 +1193,7 @@ fn ref_tag(app: &App, name: &str, focus: usize) -> &'static str {
     }
 }
 
-fn draw_help(f: &mut Frame, area: Rect) {
+fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
     let sections: [(&str, &[(&str, &str)]); 3] = [
         (
             "clones",
@@ -1163,12 +1250,12 @@ fn draw_help(f: &mut Frame, area: Rect) {
     )));
     let h = lines.len() as u16 + 4;
     let rect = centered(area, 56, h);
-    open_modal(f, area, rect);
+    open_modal(f, &mut app.hits, area, rect);
     let block = modal_block(vec![Span::styled("keys", title())]);
     f.render_widget(Paragraph::new(lines).block(block), rect);
 }
 
-fn draw_remove(f: &mut Frame, area: Rect, r: &RemoveForm) {
+fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
     let w: u16 = 62;
     let iw = (w - 6) as usize;
     let mut lines = vec![];
@@ -1215,7 +1302,9 @@ fn draw_remove(f: &mut Frame, area: Rect, r: &RemoveForm) {
             Span::styled("[ ] ", muted())
         }
     };
+    let mut toggles = vec![];
     if let Some(b) = &r.branch {
+        toggles.push((lines.len(), 'b'));
         lines.push(Line::from(vec![
             check(r.delete_branch),
             Span::raw("also delete branch "),
@@ -1223,6 +1312,7 @@ fn draw_remove(f: &mut Frame, area: Rect, r: &RemoveForm) {
             Span::styled("  b", key()),
         ]));
     }
+    toggles.push((lines.len(), 'f'));
     lines.push(Line::from(vec![
         check(r.force),
         Span::raw("force: discard changes, eject if busy"),
@@ -1233,7 +1323,9 @@ fn draw_remove(f: &mut Frame, area: Rect, r: &RemoveForm) {
     let confirm = if danger { "discard & remove" } else { "remove" };
     let b1 = button(confirm, r.focus == 0, danger);
     let b2 = button("cancel", r.focus == 1, false);
-    let bw = width(&b1.content) + 2 + width(&b2.content);
+    let (b1w, b2w) = (width(&b1.content) as u16, width(&b2.content) as u16);
+    let bw = (b1w + 2 + b2w) as usize;
+    let btn_line = lines.len() as u16;
     lines.push(Line::from(vec![
         Span::raw(" ".repeat(iw.saturating_sub(bw))),
         b1,
@@ -1242,17 +1334,31 @@ fn draw_remove(f: &mut Frame, area: Rect, r: &RemoveForm) {
     ]));
     let h = lines.len() as u16 + 4;
     let rect = centered(area, w, h);
-    open_modal(f, area, rect);
+    open_modal(f, &mut app.hits, area, rect);
     let block = modal_block(vec![
         Span::styled("remove ", title()),
         Span::styled(r.name.clone(), bold()),
     ]);
+    let inner = block.inner(rect);
     f.render_widget(Paragraph::new(lines).block(block), rect);
+    for (i, c) in toggles {
+        app.hits.push((row(inner, i as u16), key_hit(c)));
+    }
+    let bx = inner.x + (iw.saturating_sub(bw)) as u16;
+    let by = inner.y + btn_line;
+    if by < inner.bottom() {
+        app.hits.push((Rect::new(bx, by, b1w, 1), key_hit('y')));
+        app.hits.push((
+            Rect::new(bx + b1w + 2, by, b2w, 1),
+            Hit::Key(KeyCode::Esc, KeyModifiers::NONE),
+        ));
+    }
 }
 
-fn draw_gc(f: &mut Frame, app: &App, area: Rect, g: &GcView) {
+fn draw_gc(f: &mut Frame, app: &mut App, area: Rect, g: &GcView) {
     let w: u16 = 70;
     let iw = (w - 6) as usize;
+    let mut apply_line = None;
     let mut lines = vec![];
     match (&g.actions, &g.error) {
         (_, Some(e)) => {
@@ -1288,6 +1394,7 @@ fn draw_gc(f: &mut Frame, app: &App, area: Rect, g: &GcView) {
             } else if g.applied {
                 lines.push(Line::from(Span::styled("cleaned", fg(SAGE))));
             } else {
+                apply_line = Some(lines.len() as u16);
                 lines.push(Line::from(vec![
                     Span::styled("press ", muted()),
                     Span::styled("a", key()),
@@ -1298,9 +1405,13 @@ fn draw_gc(f: &mut Frame, app: &App, area: Rect, g: &GcView) {
     }
     let h = (lines.len() as u16 + 4).min(area.height.saturating_sub(2));
     let rect = centered(area, w, h);
-    open_modal(f, area, rect);
+    open_modal(f, &mut app.hits, area, rect);
     let block = modal_block(vec![Span::styled("leftovers", title())]);
+    let inner = block.inner(rect);
     f.render_widget(Paragraph::new(lines).block(block), rect);
+    if let Some(y) = apply_line {
+        app.hits.push((row(inner, y), key_hit('a')));
+    }
 }
 
 fn draw_doctor(f: &mut Frame, app: &mut App, area: Rect, d: DoctorView) {
@@ -1363,7 +1474,7 @@ fn draw_doctor(f: &mut Frame, app: &mut App, area: Rect, d: DoctorView) {
     }
     let h = (lines.len() as u16 + 4).min(area.height.saturating_sub(2));
     let rect = centered(area, w, h);
-    open_modal(f, area, rect);
+    open_modal(f, &mut app.hits, area, rect);
     let block = modal_block(vec![Span::styled("doctor", title())]);
     let inner = block.inner(rect);
     f.render_widget(block, rect);
@@ -1427,7 +1538,7 @@ fn draw_job(f: &mut Frame, app: &mut App, area: Rect, id: u64) {
         .min(area.height.saturating_sub(4))
         .min(40);
     let rect = centered(area, w, h);
-    open_modal(f, area, rect);
+    open_modal(f, &mut app.hits, area, rect);
     let (icon, istyle) = match &job.result {
         None => (spinner(app.now_ms).to_string(), fg(RUST)),
         Some(Ok(_)) => ("✓".into(), fg(SAGE)),
@@ -1492,7 +1603,15 @@ fn draw_job(f: &mut Frame, app: &mut App, area: Rect, id: u64) {
     if job.result.is_some() {
         shown.extend(summary);
     }
+    let last = shown.len().saturating_sub(1) as u16;
+    let n = shown.len();
     f.render_widget(Paragraph::new(shown), steps_area);
+    if matches!(job.result, Some(Ok(_))) && job.path.is_some() && n > 0 {
+        app.hits.push((
+            Rect::new(steps_area.x, steps_area.y + last, 14, 1).intersection(steps_area),
+            Hit::Key(KeyCode::Enter, KeyModifiers::NONE),
+        ));
+    }
 
     // Output log.
     let block = panel(

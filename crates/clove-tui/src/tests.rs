@@ -678,3 +678,130 @@ fn reload_cadence() {
     app.loading = true;
     assert!(!app.needs_reload());
 }
+
+#[test]
+fn quit_waits_for_running_operations() {
+    let mut app = app();
+    let fx = key(&mut app, KeyCode::Char('r'));
+    let Some(Effect::Spawn { id, .. }) = fx.first().cloned() else {
+        panic!("{fx:?}")
+    };
+    key(&mut app, KeyCode::Esc); // hide the progress view
+    key(&mut app, KeyCode::Char('q'));
+    assert!(app.exit.is_none(), "must not kill a refresh halfway");
+    assert!(app.quitting);
+    let (s, _) = render(&mut app, 120, 24);
+    assert!(s.contains("finishing before quit"), "{s}");
+    app.on_msg(Msg::Done(id, Err("interrupted".into())));
+    assert_eq!(app.exit, Some(Exit::Quit));
+
+    // Asking twice quits regardless.
+    let mut app = self::app();
+    key(&mut app, KeyCode::Char('u'));
+    app.on_input(TermEvent::Key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL,
+    )));
+    assert!(app.exit.is_none());
+    app.on_input(TermEvent::Key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL,
+    )));
+    assert_eq!(app.exit, Some(Exit::Quit));
+}
+
+#[test]
+fn golden_detail_when_no_clones() {
+    let mut app = App::new(repos(), 0);
+    app.now_unix = NOW;
+    let mut st = status(true, 0);
+    if let Some(g) = &mut st.golden {
+        g.meta.timings = vec![
+            t("create image", 1830.0),
+            t("mount", 702.0),
+            t("fetch", 1204.0),
+            t("checkout", 3410.0),
+            t("warm deps", 48_200.0),
+            t("warm direnv", 6100.0),
+            t("unmount", 390.0),
+        ];
+        g.meta.steps = vec!["deps".into(), "direnv".into()];
+    }
+    app.apply_data(RepoData {
+        root: "/work/app".into(),
+        status: st,
+        clones: vec![],
+    });
+    let (s, _) = render(&mut app, 110, 22);
+    insta::assert_snapshot!(s);
+}
+
+#[test]
+fn compact_golden_line() {
+    let mut app = app();
+    let (s, _) = render(&mut app, 72, 20);
+    assert!(s.contains("↓4 behind ·"), "{s}");
+}
+
+#[test]
+fn remove_dialog_is_clickable() {
+    let mut app = app();
+    key(&mut app, KeyCode::Char('d'));
+    let (s, _) = render(&mut app, 120, 28);
+    let (x, y) = find(&s, "also delete branch");
+    click(&mut app, x, y);
+    let Some(Modal::Remove(f)) = &app.modal else {
+        panic!()
+    };
+    assert!(f.delete_branch);
+    // A click inside the dialog but off any control does nothing.
+    let (x, y) = find(&s, "uncommitted changes");
+    click(&mut app, x, y);
+    assert!(app.modal.is_some());
+    // Cancel button closes it; so does a click outside.
+    let (x, y) = find(&s, " cancel ");
+    click(&mut app, x + 1, y);
+    assert!(app.modal.is_none());
+    key(&mut app, KeyCode::Char('d'));
+    render(&mut app, 120, 28);
+    click(&mut app, 2, 6);
+    assert!(app.modal.is_none());
+    // The confirm button removes.
+    key(&mut app, KeyCode::Char('d'));
+    let (s, _) = render(&mut app, 120, 28);
+    let (x, y) = find(&s, "discard & remove");
+    let fx = click(&mut app, x, y);
+    assert!(matches!(fx.first(), Some(Effect::Spawn { .. })), "{fx:?}");
+}
+
+#[test]
+fn long_list_scrolls_with_a_scrollbar() {
+    let many: Vec<CloneInfo> = (0..40)
+        .map(|i| {
+            let mut c = clone(
+                &format!("task-{i:02}"),
+                Some(&format!("agent/task-{i:02}")),
+                i % 3 != 0,
+            );
+            c.ahead = c.mounted.then_some(i % 4);
+            c
+        })
+        .collect();
+    let mut app = app_with(true, many);
+    for _ in 0..25 {
+        key(&mut app, KeyCode::Down);
+    }
+    let (s, buf) = render(&mut app, 100, 24);
+    insta::assert_snapshot!(s);
+    let (_, y) = find(&s, "● task-25");
+    assert_eq!(buf[(4, y)].bg, theme::RUST, "selection stays in view");
+    assert!(s.contains('┃'), "scrollbar thumb drawn");
+    // Easing: right after a jump the offset is still travelling.
+    key(&mut app, KeyCode::Home);
+    let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
+    term.draw(|f| ui::draw(f, &mut app)).unwrap(); // draw sets the new target
+    let before = app.list_scroll.offset();
+    app.animate();
+    let after = app.list_scroll.offset();
+    assert!(after < before && after > 0, "{before} -> {after}");
+}
