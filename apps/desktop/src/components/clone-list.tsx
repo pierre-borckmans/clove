@@ -316,7 +316,7 @@ function CloneRow({
         {since(c.created_at)}
       </span>
       <span className="text-right font-mono text-[12px] text-muted-foreground tabular-nums">
-        {bytes(c.image_bytes)}
+        {bytes(c.own_bytes ?? c.image_bytes)}
       </span>
 
       <div className="flex items-center justify-end gap-0.5">

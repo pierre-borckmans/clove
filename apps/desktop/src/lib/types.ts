@@ -59,7 +59,12 @@ export type CloneInfo = {
   dirty: boolean | null;
   ahead: number | null;
   behind: number | null;
+  /** Allocated image size, mostly blocks shared with the golden image. */
   image_bytes: number;
+  /** Bytes this clone does not share: what removing it frees. Missing in old mocks. */
+  own_bytes?: number;
+  /** Wall-clock time of `clove new`. */
+  total_ms?: number;
   created_at: number;
   golden_generation: number;
   timings: Timing[];
