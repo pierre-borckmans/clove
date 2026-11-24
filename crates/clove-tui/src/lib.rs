@@ -91,9 +91,9 @@ pub fn run(start_dir: &Path) -> Result<()> {
 fn perform(e: Effect, app: &mut App, tx: &mpsc::Sender<Msg>, term: &mut Term) {
     match e {
         Effect::Load => {
-            if let Some(root) = app.root()
-                && !app.loading
-            {
+            if app.loading {
+                app.reload_queued = true;
+            } else if let Some(root) = app.root() {
                 app.loading = true;
                 worker::load(tx.clone(), root);
             }

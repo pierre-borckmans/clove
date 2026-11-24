@@ -44,6 +44,8 @@ pub struct App {
     /// Startup problem shown when there is no repo at all.
     pub notice: Option<String>,
     pub loading: bool,
+    /// A reload was asked for while one was in flight (it may predate a change).
+    pub reload_queued: bool,
     pub loaded_ms: Option<u64>,
     pub selected: usize,
     pub list_scroll: Smooth,
@@ -78,6 +80,7 @@ impl App {
             errors: HashMap::new(),
             notice: None,
             loading: false,
+            reload_queued: false,
             loaded_ms: None,
             selected: 0,
             list_scroll: Smooth::default(),
@@ -560,7 +563,10 @@ impl App {
         match msg {
             Msg::Loaded { root, data, repos } => {
                 self.loading = false;
-                self.loaded_ms = Some(self.now_ms);
+                // A load for a repo we switched away from: reload the current one now.
+                let current = self.repo().is_some_and(|r| r.root == root);
+                self.loaded_ms = (current && !self.reload_queued).then_some(self.now_ms);
+                self.reload_queued = false;
                 self.merge_repos(repos);
                 match data {
                     Ok(d) => {
@@ -808,6 +814,9 @@ impl App {
             return vec![];
         }
         let base = self.current().map(|d| d.status.base.clone()).unwrap_or_default();
+        if self.refs_root != self.root() {
+            self.refs.clear();
+        }
         self.modal = Some(Modal::New(NewForm {
             base: Input::new(&base),
             ..Default::default()

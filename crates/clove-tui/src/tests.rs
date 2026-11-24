@@ -805,3 +805,40 @@ fn long_list_scrolls_with_a_scrollbar() {
     let after = app.list_scroll.offset();
     assert!(after < before && after > 0, "{before} -> {after}");
 }
+
+#[test]
+fn switching_repo_mid_load_reloads_at_once() {
+    let mut app = app();
+    app.loading = true;
+    let fx = key(&mut app, KeyCode::Tab);
+    assert!(fx.is_empty(), "a load is in flight");
+    app.on_msg(Msg::Loaded {
+        root: "/work/app".into(),
+        data: Err("stale".into()),
+        repos: vec![],
+    });
+    assert!(app.needs_reload(), "mono should load now, not in 3s");
+    // Branch suggestions from the old repo are not offered in the new one.
+    app.refs = refs();
+    app.refs_root = Some("/work/app".into());
+    app.apply_data(RepoData {
+        root: "/work/mono".into(),
+        status: status(true, 0),
+        clones: vec![],
+    });
+    key(&mut app, KeyCode::Char('n'));
+    assert!(app.refs.is_empty());
+}
+
+#[test]
+fn reload_requested_mid_load_runs_after_it() {
+    let mut app = app();
+    app.loading = true;
+    app.reload_queued = true; // what the runtime does with a Load while loading
+    app.on_msg(Msg::Loaded {
+        root: "/work/app".into(),
+        data: Err("x".into()),
+        repos: vec![],
+    });
+    assert!(app.needs_reload());
+}
