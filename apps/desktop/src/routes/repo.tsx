@@ -1,0 +1,80 @@
+import { useParams } from "@tanstack/react-router";
+import { Copy, Plus } from "lucide-react";
+import { useEffect } from "react";
+import { PaneHeader } from "@/components/app-shell";
+import { CloneList } from "@/components/clone-list";
+import { GoldenCard } from "@/components/golden-card";
+import { Shortcut } from "@/components/shortcut";
+import { RepoMark } from "@/components/sidebar";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { tildify } from "@/lib/format";
+import { copyPath, useClones, useRepo, useStatus } from "@/lib/queries";
+import { setUi } from "@/lib/ui";
+
+export function RepoPage() {
+  const { repoId } = useParams({ from: "/shell/repo/$repoId" });
+  const { repo, isLoading } = useRepo(repoId);
+  const status = useStatus(repo?.root);
+  const clones = useClones(repo?.root);
+
+  useEffect(() => {
+    const refetch = () => {
+      void status.refetch();
+      void clones.refetch();
+    };
+    window.addEventListener("clove:refetch", refetch);
+    return () => window.removeEventListener("clove:refetch", refetch);
+  }, [status, clones]);
+
+  if (!repo) {
+    return (
+      <>
+        <PaneHeader>{isLoading ? <Skeleton className="h-4 w-32" /> : <span>Repository not found</span>}</PaneHeader>
+        <div className="flex-1" />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <PaneHeader>
+        <RepoMark name={repo.name} active className="size-5 text-[11px]" />
+        <h1 className="text-[14px] font-semibold tracking-tight">{repo.name}</h1>
+        <button
+          type="button"
+          onClick={() => void copyPath(repo.root)}
+          className="group flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 font-mono text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground"
+          title="Copy path"
+        >
+          <span className="truncate">{tildify(repo.root)}</span>
+          <Copy className="size-3 opacity-0 group-hover:opacity-70" />
+        </button>
+        <div data-tauri-drag-region className="h-full flex-1" />
+        <Button
+          size="sm"
+          className="h-7 gap-1.5 pr-1.5 pl-2.5 text-[12.5px]"
+          onClick={() => setUi({ newClone: { root: repo.root } })}
+        >
+          <Plus className="size-3.5" />
+          New clone
+          <Shortcut keys="mod+n" className="ml-0.5 [&_kbd]:border-white/20 [&_kbd]:bg-white/15 [&_kbd]:text-white/90" />
+        </Button>
+      </PaneHeader>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto flex max-w-[1080px] flex-col gap-6 px-6 pt-5 pb-24">
+          {status.data ? <GoldenCard status={status.data} /> : <Skeleton className="h-[188px] rounded-xl" />}
+          {clones.data ? (
+            <CloneList
+              root={repo.root}
+              clones={clones.data}
+              goldenGeneration={status.data?.golden?.generation ?? null}
+            />
+          ) : (
+            <Skeleton className="h-[240px] rounded-xl" />
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
