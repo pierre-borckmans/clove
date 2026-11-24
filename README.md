@@ -8,7 +8,7 @@ $ clove new feat/login
   ✓ clone image              0.00s
   ✓ mount                    0.70s
   ✓ checkout                 0.21s
-  ✓ setup mise               0.02s
+  ✓ setup mise-trust         0.02s
   ✓ setup direnv-allow       0.02s
   · setup direnv             unchanged since golden
   · setup pnpm               unchanged since golden
