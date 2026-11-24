@@ -1,0 +1,160 @@
+@import "tailwindcss";
+
+/* Colors live in variables so dark mode is one override, either from the OS or
+   from the toggle (data-theme on <html>). */
+:root {
+  --paper: #f6f1e7;
+  --paper-2: #efe7d8;
+  --ink: #1a1714;
+  --ink-2: #4a433b;
+  --muted: #776d61;
+  --rule: #dcd1bf;
+  --rust: #b4532a;
+  --rust-soft: #e9cdb9;
+  --sage: #6b8f71;
+  --sage-ink: #4b6b51;
+  --term: #1a1714;
+  --term-ink: #ece4d6;
+  --term-dim: #8f857a;
+  --term-rule: #3a332c;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #151310;
+    --paper-2: #1d1a16;
+    --ink: #ece4d6;
+    --ink-2: #c9bfb0;
+    --muted: #978c7e;
+    --rule: #332d26;
+    --rust: #e07a4b;
+    --rust-soft: #4a2a1b;
+    --sage: #8db493;
+    --sage-ink: #9cc2a2;
+    --term: #0d0c0a;
+    --term-ink: #ece4d6;
+    --term-dim: #857b70;
+    --term-rule: #2c2722;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper: #151310;
+  --paper-2: #1d1a16;
+  --ink: #ece4d6;
+  --ink-2: #c9bfb0;
+  --muted: #978c7e;
+  --rule: #332d26;
+  --rust: #e07a4b;
+  --rust-soft: #4a2a1b;
+  --sage: #8db493;
+  --sage-ink: #9cc2a2;
+  --term: #0d0c0a;
+  --term-ink: #ece4d6;
+  --term-dim: #857b70;
+  --term-rule: #2c2722;
+  color-scheme: dark;
+}
+
+@theme {
+  --font-serif: "Newsreader", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-rule: var(--rule);
+  --color-rust: var(--rust);
+  --color-rust-soft: var(--rust-soft);
+  --color-sage: var(--sage);
+  --color-sage-ink: var(--sage-ink);
+  --color-term: var(--term);
+  --color-term-ink: var(--term-ink);
+  --color-term-dim: var(--term-dim);
+  --color-term-rule: var(--term-rule);
+}
+
+@layer base {
+  html {
+    background: var(--paper);
+    color: var(--ink);
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+  body {
+    background: var(--paper);
+    font-family: var(--font-serif);
+    font-size: 1.1875rem;
+    line-height: 1.6;
+    font-optical-sizing: auto;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: var(--rust);
+    color: var(--paper);
+  }
+  a {
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.18em;
+  }
+  :focus-visible {
+    outline: 2px solid var(--rust);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Inline code inside prose. */
+  .prose-body code:not(.raw) {
+    font-family: var(--font-mono);
+    font-size: 0.78em;
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+    background: var(--paper-2);
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  .prose-body p + p {
+    margin-top: 1em;
+  }
+  .prose-body a {
+    color: var(--rust);
+    text-decoration: underline;
+  }
+
+  .term-line {
+    white-space: pre;
+  }
+  .term-cursor {
+    display: inline-block;
+    width: 0.55em;
+    height: 1.1em;
+    vertical-align: -0.2em;
+    background: var(--term-ink);
+    animation: blink 1s steps(1) infinite;
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .term-cursor {
+    animation: none;
+  }
+}
