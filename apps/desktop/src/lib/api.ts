@@ -1,0 +1,33 @@
+import { invoke, isTauri } from "./bridge";
+import type { AppId, Check, CloneInfo, Discovered, OpRequest, Refs, RepoStatus, RepoSummary } from "./types";
+
+export const api = {
+  repos: () => invoke<RepoSummary[]>("repos"),
+  status: (root: string) => invoke<RepoStatus>("repo_status", { root }),
+  clones: (root: string, status: boolean) => invoke<CloneInfo[]>("clones", { root, status }),
+  refs: (root: string) => invoke<Refs>("refs", { root }),
+  doctorMachine: () => invoke<Check[]>("doctor_machine"),
+  doctorRepo: (root: string) => invoke<Check[]>("doctor_repo", { root }),
+  gc: (root: string, apply: boolean) => invoke<string[]>("gc", { root, apply }),
+  mount: (root: string, name: string) => invoke<string>("mount_clone", { root, name }),
+  unmount: (root: string, name: string, force = false) => invoke<void>("unmount_clone", { root, name, force }),
+  discover: (dir: string) => invoke<Discovered>("discover", { dir }),
+  installedApps: () => invoke<AppId[]>("installed_apps"),
+  openIn: (path: string, app: AppId) => invoke<void>("open_in", { path, app }),
+  copy: (text: string) => invoke<void>("copy_text", { text }),
+  startOp: (op: OpRequest) => invoke<string>("start_op", { op }),
+  openMain: (route?: string, action?: string) => invoke<void>("open_main", { route, action }),
+  hidePopover: () => invoke<void>("hide_popover"),
+  quit: () => invoke<void>("quit"),
+};
+
+/** Folder picker. Returns null when cancelled. */
+export async function pickFolder(): Promise<string | null> {
+  if (!isTauri) {
+    const { mockPickFolder } = await import("@/mock/backend");
+    return mockPickFolder();
+  }
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const res = await open({ directory: true, multiple: false, title: "Choose a git repository" });
+  return typeof res === "string" ? res : null;
+}
