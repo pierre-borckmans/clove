@@ -81,9 +81,24 @@ enum Cmd {
     },
     /// Update the golden image to the latest base. Existing clones are untouched.
     Refresh {
-        /// Every repo clove knows about (used by the nightly service).
+        /// Every repo clove knows about (used by the service).
         #[arg(long)]
         all_repos: bool,
+        /// Only if stale per [refresh] max_age / max_behind (fetches first).
+        #[arg(long)]
+        if_stale: bool,
+        /// Rerun every warm step, not only those whose inputs changed.
+        #[arg(long)]
+        full: bool,
+    },
+    /// Re-sync a clone after its branch moved: copy local files, rerun changed setup steps.
+    Setup {
+        /// Clone (default: the one you are in).
+        #[arg(add = ArgValueCompleter::new(complete::clones))]
+        clone: Option<String>,
+        /// Rerun every setup step.
+        #[arg(long)]
+        all: bool,
     },
     /// Golden image and clone summary for this repo.
     #[command(visible_alias = "info")]
@@ -120,7 +135,7 @@ enum Cmd {
     },
     /// Delete the golden image and clove's state for this repo.
     Deinit,
-    /// Background agents: remount clones at login, refresh golden images nightly.
+    /// Background agents: remount clones at login, keep golden images fresh.
     Service {
         #[command(subcommand)]
         action: ServiceAction,
@@ -150,9 +165,9 @@ enum HookAction {
 enum ServiceAction {
     /// Install the launchd agents.
     Install {
-        /// Nightly refresh time, HH:MM.
-        #[arg(long, default_value = "04:30")]
-        at: String,
+        /// How often to check for stale golden images, e.g. 30m, 1h.
+        #[arg(long, default_value = "1h")]
+        every: String,
     },
     /// Remove the launchd agents.
     Uninstall,
@@ -254,7 +269,11 @@ fn run(cli: Cli) -> Result<()> {
                 paint(BOLD, "clove new <branch>")
             );
         }
-        Cmd::Refresh { all_repos } => {
+        Cmd::Refresh {
+            all_repos,
+            if_stale,
+            full,
+        } => {
             let targets: Vec<Clove> = if *all_repos {
                 clove_core::known_repos()
                     .into_iter()
@@ -266,10 +285,27 @@ fn run(cli: Cli) -> Result<()> {
             let mut metas = vec![];
             let mut failed = false;
             for c in &targets {
+                if *if_stale {
+                    let _ = c.fetch();
+                    let fresh = c.freshness().ok().flatten();
+                    let skip = match &fresh {
+                        None => Some("no golden image".to_string()),
+                        Some(f) if f.refreshing.is_some() => Some("already refreshing".into()),
+                        Some(f) if !f.stale => Some("fresh".into()),
+                        _ => None,
+                    };
+                    if let Some(why) = skip {
+                        if !cli.json {
+                            eprintln!("{} {} {}", paint(DIM, "·"), c.name, paint(DIM, &why));
+                        }
+                        metas.push(serde_json::json!({ "repo": c.name, "skipped": why }));
+                        continue;
+                    }
+                }
                 if !cli.json {
                     eprintln!("{} {}", paint(BOLD, "refresh"), c.name);
                 }
-                match c.refresh(r) {
+                match c.refresh_with(&clove_core::RefreshOptions { full: *full }, r) {
                     Ok(meta) => {
                         if !cli.json {
                             eprintln!(
@@ -302,6 +338,20 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Cmd::New(a) => cmd_new(&cli, a, r)?,
+        Cmd::Setup { clone, all } => {
+            let c = repo(&cli)?;
+            let name = c.resolve(clone.as_deref().unwrap_or("."))?;
+            if !cli.json {
+                eprintln!("{} {}", paint(BOLD, "setup"), name);
+            }
+            let info = c.setup_clone(&name, *all, r)?;
+            if cli.json {
+                return emit(&info);
+            }
+            if !info.failed_steps.is_empty() {
+                bail!("setup failed: {}", info.failed_steps.join(", "));
+            }
+        }
         Cmd::List { fast } => cmd_list(&cli, !fast)?,
         Cmd::Remove(a) => {
             let c = repo(&cli)?;
@@ -500,16 +550,15 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Cmd::Service { action } => match action {
-            ServiceAction::Install { at } => {
-                let (h, m) = at
-                    .split_once(':')
-                    .and_then(|(h, m)| Some((h.parse::<u8>().ok()?, m.parse::<u8>().ok()?)))
-                    .filter(|(h, m)| *h < 24 && *m < 60)
-                    .context("--at takes HH:MM")?;
-                for p in service::install(h, m)? {
+            ServiceAction::Install { every } => {
+                let secs = clove_core::config::parse_duration(every)?.max(300);
+                for p in service::install(secs)? {
                     eprintln!("{} {}", paint(GREEN, "✓"), tilde(&p));
                 }
-                eprintln!("clones remount at login; golden images refresh daily at {at}");
+                eprintln!(
+                    "clones remount at login; every {} stale golden images refresh (per [refresh] in each repo)",
+                    clove_core::util::human_age(secs)
+                );
             }
             ServiceAction::Uninstall => {
                 for p in service::uninstall()? {
@@ -566,6 +615,15 @@ fn print_plan(c: &Clove) {
         };
         eprintln!("  steps  {}{}", names.join(", "), paint(DIM, src));
     }
+    let copy = c.resolve_copy();
+    if !copy.is_empty() {
+        let src = if c.config.copy.is_none() {
+            " (detected, not in git)"
+        } else {
+            ""
+        };
+        eprintln!("  copy   {}{}", copy.join(", "), paint(DIM, src));
+    }
     if c.config.exec != Exec::None {
         eprintln!("  env    {}", format!("{:?}", c.config.exec).to_lowercase());
     }
@@ -618,10 +676,49 @@ fn cmd_new(cli: &Cli, a: &NewArgs, r: &dyn clove_core::Reporter) -> Result<()> {
     if let Some(cmd) = &a.exec {
         return exec_in(&c, &info.name, &info.path, cmd);
     }
+    maybe_background_refresh(&c, cli.json);
     if !a.no_cd && !cli.json && !shell::request_cd(&info.path) && std::io::stdout().is_terminal() {
         hint_shell_init();
     }
     Ok(())
+}
+
+/// Starts `clove refresh --if-stale` in the background when the golden image is
+/// stale, so the next clone starts from a fresh one. Never blocks `new`.
+fn maybe_background_refresh(c: &Clove, quiet: bool) {
+    if !c.config.refresh.auto || std::env::var_os("CLOVE_NO_AUTO_REFRESH").is_some() {
+        return;
+    }
+    let Ok(Some(f)) = c.freshness() else { return };
+    if !f.stale || f.refreshing.is_some() {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    let log = c.logs_dir().join("refresh.log");
+    let _ = std::fs::create_dir_all(c.logs_dir());
+    let Ok(out) = std::fs::File::create(&log) else {
+        return;
+    };
+    let err = out.try_clone().ok();
+    use std::os::unix::process::CommandExt;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("-C")
+        .arg(&c.root)
+        .args(["refresh", "--if-stale"])
+        .stdin(std::process::Stdio::null())
+        .stdout(out)
+        .process_group(0);
+    if let Some(e) = err {
+        cmd.stderr(e);
+    }
+    if cmd.spawn().is_ok() && !quiet {
+        eprintln!(
+            "  {} golden image is {}; refreshing in the background ({})",
+            paint(DIM, "↻"),
+            f.reason.unwrap_or_default(),
+            paint(DIM, tilde(&log))
+        );
+    }
 }
 
 fn hint_shell_init() {
@@ -742,6 +839,27 @@ fn cmd_status(cli: &Cli) -> Result<()> {
             );
         }
         None => println!("  golden  {}", paint(YELLOW, "not built (clove init)")),
+    }
+    if let Some(f) = &s.freshness {
+        let p = &c.config.refresh;
+        let policy = paint(
+            DIM,
+            format!(
+                "(stale after {} or {} commits; auto refresh {})",
+                clove_core::util::human_age(p.max_age_secs),
+                p.max_behind,
+                if p.auto { "on" } else { "off" }
+            ),
+        );
+        let state = match (&f.refreshing, &f.reason) {
+            (Some(pid), _) => paint(CYAN, format!("refreshing now (pid {pid})")),
+            (None, Some(why)) => paint(YELLOW, format!("stale: {why}")),
+            (None, None) => paint(GREEN, "fresh"),
+        };
+        println!("  fresh   {state} {policy}");
+    }
+    if !s.copy.is_empty() {
+        println!("  copies  {}", s.copy.join(", "));
     }
     let names: Vec<_> = s.steps.iter().map(|x| x.name.as_str()).collect();
     println!(

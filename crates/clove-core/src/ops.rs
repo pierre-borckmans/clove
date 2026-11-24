@@ -41,6 +41,25 @@ pub struct NewOptions {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct RefreshOptions {
+    /// Rerun every warm step, even those whose inputs did not change.
+    pub full: bool,
+}
+
+/// How current the golden image is, against the configured policy.
+#[derive(Debug, Clone, Serialize)]
+pub struct Freshness {
+    pub age_secs: u64,
+    /// Commits on the base not in the golden image (as of the last fetch).
+    pub behind: Option<u32>,
+    pub stale: bool,
+    /// Why it is stale, for display.
+    pub reason: Option<String>,
+    /// Pid of a refresh in progress.
+    pub refreshing: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct RemoveOptions {
     /// Remove even with uncommitted changes, and force-unmount busy volumes.
     pub force: bool,
@@ -72,6 +91,9 @@ pub struct RepoStatus {
     pub mounted: usize,
     pub steps: Vec<Step>,
     pub steps_detected: bool,
+    pub freshness: Option<Freshness>,
+    /// Files clove copies from the main checkout into the golden image and clones.
+    pub copy: Vec<String>,
 }
 
 /// Unmounts the golden image when an operation bails halfway.
@@ -91,7 +113,58 @@ impl Drop for GoldenGuard<'_> {
 impl Clove {
     fn refresh_lock(&self) -> Result<FileLock> {
         std::fs::create_dir_all(&self.state)?;
-        FileLock::acquire(&self.state.join("refresh.lock"))
+        let path = self.state.join("refresh.lock");
+        let lock = FileLock::acquire(&path)?;
+        let _ = std::fs::write(&path, std::process::id().to_string());
+        Ok(lock)
+    }
+
+    /// Pid of the process refreshing the golden image right now, if any.
+    pub fn refreshing(&self) -> Option<u32> {
+        let path = self.state.join("refresh.lock");
+        if !path.exists() {
+            return None;
+        }
+        match FileLock::try_acquire(&path) {
+            Ok(_) => None,
+            Err(_) => std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .or(Some(0)),
+        }
+    }
+
+    /// Golden image age and distance from its base, judged against `[refresh]`.
+    pub fn freshness(&self) -> Result<Option<Freshness>> {
+        let Some(meta) = self.golden_meta()? else {
+            return Ok(None);
+        };
+        let age_secs = now_unix().saturating_sub(meta.created_at);
+        let behind = git::count_commits(&self.root, &format!("{}..{}", meta.commit, self.config.base));
+        let policy = &self.config.refresh;
+        let reason = if behind.is_some_and(|b| b > policy.max_behind) {
+            Some(format!(
+                "{} commits behind {}",
+                behind.unwrap_or(0),
+                self.config.base
+            ))
+        } else if age_secs > policy.max_age_secs {
+            Some(format!("{} old", crate::util::human_age(age_secs)))
+        } else if meta.base != self.config.base {
+            Some(format!(
+                "built from {}, config says {}",
+                meta.base, self.config.base
+            ))
+        } else {
+            None
+        };
+        Ok(Some(Freshness {
+            age_secs,
+            behind,
+            stale: reason.is_some(),
+            reason,
+            refreshing: self.refreshing(),
+        }))
     }
 
     fn lock(&self) -> Result<FileLock> {
@@ -180,7 +253,7 @@ impl Clove {
         };
         self.save_record(&record)?;
 
-        let meta = self.warm_and_snapshot(r, &mut timings, generation, &gen_dir)?;
+        let meta = self.warm_and_snapshot(r, &mut timings, generation, &gen_dir, None)?;
         timed(r, &mut timings, "unmount", || self.unmount_golden(r, &mount))?;
         guard.armed = false;
         self.set_current_generation(generation)?;
@@ -191,8 +264,15 @@ impl Clove {
     /// current image and swaps it in at the end, so `new` keeps working meanwhile
     /// and existing clones are never affected.
     pub fn refresh(&self, r: &dyn Reporter) -> Result<GoldenMeta> {
+        self.refresh_with(&RefreshOptions::default(), r)
+    }
+
+    /// Like [`refresh`](Self::refresh). Warm steps whose `watch` paths did not
+    /// change since the previous golden commit are skipped unless `full`.
+    pub fn refresh_with(&self, opts: &RefreshOptions, r: &dyn Reporter) -> Result<GoldenMeta> {
         let _refresh = self.refresh_lock()?;
         let record = self.require_record()?;
+        let prev = self.golden_meta()?;
         let cur = self
             .current_generation()?
             .context("golden image missing; run `clove init`")?;
@@ -231,7 +311,8 @@ impl Clove {
                     &["checkout", "--quiet", "--force", "--detach", &self.config.base],
                 )
             })?;
-            let meta = self.warm_and_snapshot(r, &mut timings, next, &next_dir)?;
+            let prev = if opts.full { None } else { prev.as_ref() };
+            let meta = self.warm_and_snapshot(r, &mut timings, next, &next_dir, prev)?;
             timed(r, &mut timings, "unmount", || self.unmount_golden(r, &mount))?;
             guard.armed = false;
             Ok(meta)
@@ -287,12 +368,38 @@ impl Clove {
         timings: &mut Vec<Timing>,
         generation: u32,
         gen_dir: &Path,
+        prev: Option<&GoldenMeta>,
     ) -> Result<GoldenMeta> {
         let wt = self.golden_worktree();
         let env = self.step_env(&wt, "golden");
+        let copied = self.resolve_copy();
+        if !copied.is_empty() {
+            timed(r, timings, "copy files", || {
+                self.copy_into(&wt, &copied).map(|_| ())
+            })?;
+        }
+        let mut hashes = BTreeMap::new();
         for step in &self.config.steps {
+            let hash = step_hash(step);
+            hashes.insert(step.name.clone(), hash.clone());
             let Some(cmd) = &step.warm else { continue };
             let label = format!("warm {}", step.name);
+            // Skip a step when its definition and its watched inputs are unchanged
+            // since the previous golden image, whose output this clone carries.
+            if let Some(p) = prev
+                && !step.watch.is_empty()
+                && p.step_hashes.get(&step.name) == Some(&hash)
+            {
+                let mut args = vec!["diff", "--quiet", p.commit.as_str(), "HEAD", "--"];
+                args.extend(step.watch.iter().map(String::as_str));
+                if git::ok(&wt, &args) {
+                    r.event(Event::Skip {
+                        step: label,
+                        reason: format!("unchanged since gen {}", p.generation),
+                    });
+                    continue;
+                }
+            }
             timed(r, timings, &label, || {
                 run_step(
                     r,
@@ -332,9 +439,17 @@ impl Clove {
             timings: timings.clone(),
             steps: self.config.steps.iter().map(|s| s.name.clone()).collect(),
             dirty,
+            step_hashes: hashes,
+            copied,
         };
         write_json(&gen_dir.join("meta.json"), &meta)?;
         Ok(meta)
+    }
+
+    /// Fetches the configured base now (for staleness checks), ignoring the interval.
+    pub fn fetch(&self) -> Result<()> {
+        let mut t = vec![];
+        self.fetch_base(&crate::events::Silent, &mut t, &self.config.base, Some(true))
     }
 
     fn fetch_base(
@@ -499,9 +614,18 @@ impl Clove {
                 ),
             });
         }
+        // Fresh copies of local-only files: the golden ones may be older.
+        if !golden.copied.is_empty() {
+            let files = golden.copied.clone();
+            timed(r, &mut timings, "copy files", || {
+                self.copy_into(&wt, &files).map(|_| ())
+            })?;
+        }
         let mut failed = vec![];
+        let mut setup_commit = None;
         if !opts.no_setup {
-            failed = self.setup(r, &mut timings, &wt, &name, &golden.commit);
+            failed = self.setup(r, &mut timings, &wt, &name, Some(&golden.commit));
+            setup_commit = git::head_commit(&wt).ok();
         }
 
         let meta = CloneMeta {
@@ -516,6 +640,7 @@ impl Clove {
             timings,
             total_ms: started.elapsed().as_secs_f64() * 1000.0,
             failed_steps: failed,
+            setup_commit,
         };
         write_json(&dir.join("meta.json"), &meta)?;
         self.info(&name, false)
@@ -535,28 +660,31 @@ impl Clove {
         }
     }
 
-    /// Runs setup steps whose watched paths changed since the golden commit.
-    /// Returns the steps that failed; a failed step leaves a usable clone.
+    /// Runs setup steps whose watched paths changed since `since` (all of them
+    /// when `since` is None). Returns the steps that failed; a failed step leaves
+    /// a usable clone.
     fn setup(
         &self,
         r: &dyn Reporter,
         timings: &mut Vec<Timing>,
         wt: &Path,
         name: &str,
-        golden_commit: &str,
+        since: Option<&str>,
     ) -> Vec<String> {
         let env = self.step_env(wt, name);
         let mut failed = vec![];
         for step in &self.config.steps {
             let Some(cmd) = &step.setup else { continue };
             let label = format!("setup {}", step.name);
-            if !step.watch.is_empty() {
-                let mut args = vec!["diff", "--quiet", golden_commit, "HEAD", "--"];
+            if let Some(since) = since
+                && !step.watch.is_empty()
+            {
+                let mut args = vec!["diff", "--quiet", since, "HEAD", "--"];
                 args.extend(step.watch.iter().map(String::as_str));
                 if git::ok(wt, &args) {
                     r.event(Event::Skip {
                         step: label,
-                        reason: "unchanged since golden".into(),
+                        reason: "unchanged".into(),
                     });
                     continue;
                 }
@@ -845,6 +973,8 @@ impl Clove {
             clones: clones.len(),
             steps: self.config.steps.clone(),
             steps_detected: self.config.steps_detected,
+            freshness: self.freshness()?,
+            copy: self.golden_meta()?.map(|g| g.copied).unwrap_or_default(),
         })
     }
 
@@ -944,4 +1074,114 @@ fn admin_name_of(wt: &Path) -> Result<String> {
         .context("admin dir name")?
         .to_string_lossy()
         .to_string())
+}
+
+/// Patterns for files that live only in a developer's checkout.
+const DETECT_COPY: &[&str] = &["**/.env", "**/.env.*", "**/.envrc.local", "**/.dev.vars"];
+
+fn step_hash(step: &Step) -> String {
+    use sha2::{Digest, Sha256};
+    let json = serde_json::to_vec(step).unwrap_or_default();
+    Sha256::digest(&json)
+        .iter()
+        .take(8)
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+impl Clove {
+    /// Untracked files in the main checkout matching `copy` (or the detected
+    /// env-file patterns). Ignored directories are not descended into.
+    pub fn resolve_copy(&self) -> Vec<String> {
+        let patterns: Vec<String> = match &self.config.copy {
+            Some(p) => p.clone(),
+            None => DETECT_COPY.iter().map(|s| s.to_string()).collect(),
+        };
+        if patterns.is_empty() {
+            return vec![];
+        }
+        let specs: Vec<String> = patterns
+            .iter()
+            .map(|p| {
+                if p.contains(['*', '?', '[']) {
+                    format!(":(glob){p}")
+                } else {
+                    p.clone()
+                }
+            })
+            .collect();
+        let mut files = std::collections::BTreeSet::new();
+        for ignored in [false, true] {
+            let mut args = vec!["ls-files", "-z", "--others", "--exclude-standard"];
+            if ignored {
+                args.extend(["--ignored", "--directory", "--no-empty-directory"]);
+            }
+            args.push("--");
+            args.extend(specs.iter().map(String::as_str));
+            if let Ok(out) = crate::util::output(git::cmd(&self.root).args(&args)) {
+                for f in String::from_utf8_lossy(&out.stdout).split('\0') {
+                    let skip = f.is_empty()
+                        || f.ends_with('/')
+                        || f.split('/').any(|c| c == "node_modules")
+                        || f.contains(".example")
+                        || f.contains(".sample")
+                        || f.contains(".template");
+                    if !skip && self.root.join(f).is_file() {
+                        files.insert(f.to_string());
+                    }
+                }
+            }
+        }
+        files.into_iter().collect()
+    }
+
+    /// Copies `files` (relative to the main checkout) into `wt`, overwriting.
+    /// Returns how many existed and were copied.
+    fn copy_into(&self, wt: &Path, files: &[String]) -> Result<usize> {
+        let mut n = 0;
+        for f in files {
+            let src = self.root.join(f);
+            if !src.is_file() {
+                continue;
+            }
+            let dst = wt.join(f);
+            if let Some(p) = dst.parent() {
+                std::fs::create_dir_all(p)?;
+            }
+            std::fs::copy(&src, &dst).with_context(|| format!("copy {f}"))?;
+            n += 1;
+        }
+        Ok(n)
+    }
+
+    /// Brings an existing clone's environment up to date after its branch moved
+    /// (a pull, a rebase, a checkout): copies local files again and reruns the
+    /// setup steps whose inputs changed since setup last ran. `all` reruns every step.
+    pub fn setup_clone(&self, name: &str, all: bool, r: &dyn Reporter) -> Result<CloneInfo> {
+        let mut meta = self
+            .clone_meta(name)?
+            .with_context(|| format!("no clone named `{name}`"))?;
+        let wt = self.mount(name)?;
+        let mut timings = vec![];
+        let golden = self.golden_meta()?;
+        let files = golden.map(|g| g.copied).unwrap_or_default();
+        if !files.is_empty() {
+            timed(r, &mut timings, "copy files", || {
+                self.copy_into(&wt, &files).map(|_| ())
+            })?;
+        }
+        let since = if all {
+            None
+        } else {
+            Some(
+                meta.setup_commit
+                    .clone()
+                    .unwrap_or_else(|| meta.golden_commit.clone()),
+            )
+        };
+        meta.failed_steps = self.setup(r, &mut timings, &wt, name, since.as_deref());
+        meta.setup_commit = git::head_commit(&wt).ok();
+        write_json(&self.clone_dir(name).join("meta.json"), &meta)?;
+        self.info(name, false)
+    }
 }

@@ -56,7 +56,8 @@ clove ls                      # clones, branch, dirty/ahead/behind, own disk
 clove cd feat-login           # jump to a clone; `clove cd` goes back to the main checkout
 clove run feat-login -- pnpm test   # run inside the clone's dev environment
 clove rm feat-login -D        # unmount, delete, delete the branch
-clove refresh                 # rebuild the golden image on the latest base
+clove setup                   # in a clone, after a pull: rerun the setup steps that changed
+clove refresh                 # bring the golden image to the latest base (incremental)
 clove doctor                  # check the setup, with a fix for each problem
 ```
 
@@ -70,7 +71,15 @@ path=$(clove new --json agent/task-42 | jq -r .path)
 
 To make Claude Code put its worktrees (`claude --worktree`, subagents) in clones, merge the block from `clove hook claude` into `~/.claude/settings.json`. The create hook makes a clone named after the worktree, and the remove hook deletes it, along with the branch if the branch has no commits of its own.
 
-`clove refresh` builds the next golden generation from a clone of the current one and swaps it in atomically. `clove new` keeps working while it runs, and existing clones never change. `clove service install` adds two launchd agents: one remounts clones at login, the other refreshes every golden image at 04:30.
+## Staying fresh
+
+The golden image is a recipe, not a snapshot of your checkout: the base branch, plus the files listed in `copy`, plus the `warm` steps. clove rebuilds it from that recipe and keeps it current.
+
+- **Refresh is incremental.** `clove refresh` clones the current golden image, checks out the latest base and reruns only the warm steps whose `watch` paths changed since the previous golden commit, or whose definition changed. On the monorepo, a refresh where nothing relevant changed takes 4.3s. `--full` reruns everything.
+- **Stale images refresh themselves.** The golden image is stale when it's older than `max_age` or more than `max_behind` commits behind the base. When `clove new` finds it stale, it starts a refresh in the background and doesn't wait, so the next clone starts fresh. `clove status` shows how fresh it is and whether a refresh is running.
+- **The service checks hourly.** `clove service install` adds two launchd agents: one remounts clones at login, the other runs `clove refresh --all-repos --if-stale` every hour. A repo that is still fresh costs one `git fetch`.
+- **Refreshing never touches existing clones.** It builds the next generation next to the current one and swaps it in atomically, and `clove new` keeps working while it runs.
+- **Clones catch up with `clove setup`.** After a `git pull` or a rebase in a clone, it copies your local files again and reruns only the setup steps whose inputs changed since they last ran.
 
 ## Configure
 
@@ -90,6 +99,17 @@ name = "codegen"
 warm = "make generate"
 setup = "make generate"
 watch = ["proto/"]
+```
+
+Files that only exist in your checkout, like `.env` or `.envrc.local`, never reach a fresh checkout. clove detects the ones git ignores (`**/.env`, `**/.env.*`, `**/.envrc.local`, `**/.dev.vars`). It copies them into the golden image before warming, so codegen can read them, and again into each new clone, so the clone gets their current contents. List them yourself to override:
+
+```toml
+copy = [".env", "apps/*/.env.local", "config/dev.secrets.json"]
+
+[refresh]
+auto = true        # refresh in the background when `clove new` finds the image stale
+max_age = "24h"
+max_behind = 100   # commits
 ```
 
 Steps run inside the repo's environment (`direnv exec`, or `mise exec`). `[[step]]` replaces the detected steps; `[[add_step]]` appends to them. Settings layer in this order, last wins:

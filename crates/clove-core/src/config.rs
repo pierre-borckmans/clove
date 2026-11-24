@@ -31,12 +31,56 @@ pub struct FileConfig {
     /// Extra environment for every step and `clove run`.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    /// Files that exist only in your checkout (`.env`, `*.local`), copied into the
+    /// golden image before warming and into every new clone. Git pathspecs; globs
+    /// allowed. Unset: env-like files git ignores are detected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copy: Option<Vec<String>>,
+    /// When the golden image counts as stale, and whether clove refreshes it on its own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh: Option<RefreshFile>,
     /// Replaces the detected steps.
     #[serde(rename = "step", skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<Step>,
     /// Appended after the detected or configured steps.
     #[serde(rename = "add_step", skip_serializing_if = "Vec::is_empty")]
     pub add_steps: Vec<Step>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RefreshFile {
+    /// Refresh in the background when a `clove new` finds the golden image stale.
+    pub auto: Option<bool>,
+    /// Stale after this long, e.g. "12h", "2d".
+    pub max_age: Option<String>,
+    /// Stale when the base has moved this many commits past the golden commit.
+    pub max_behind: Option<u32>,
+}
+
+/// Resolved freshness policy.
+#[derive(Debug, Clone, Serialize)]
+pub struct RefreshPolicy {
+    pub auto: bool,
+    pub max_age_secs: u64,
+    pub max_behind: u32,
+}
+
+/// Parses "90", "30m", "12h", "2d" into seconds.
+pub fn parse_duration(s: &str) -> Result<u64> {
+    let s = s.trim();
+    let (num, mult) = match s.char_indices().last() {
+        Some((i, 's')) => (&s[..i], 1),
+        Some((i, 'm')) => (&s[..i], 60),
+        Some((i, 'h')) => (&s[..i], 3600),
+        Some((i, 'd')) => (&s[..i], 86_400),
+        _ => (s, 1),
+    };
+    let n: u64 = num
+        .trim()
+        .parse()
+        .with_context(|| format!("bad duration {s:?} (use 30m, 12h, 2d)"))?;
+    Ok(n * mult)
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -103,6 +147,9 @@ pub struct Config {
     pub env: BTreeMap<String, String>,
     pub steps: Vec<Step>,
     pub steps_detected: bool,
+    /// Explicit copy pathspecs, or None to detect env-like ignored files.
+    pub copy: Option<Vec<String>>,
+    pub refresh: RefreshPolicy,
     pub sources: Vec<PathBuf>,
 }
 
@@ -187,6 +234,15 @@ impl Config {
             env,
             steps,
             steps_detected,
+            copy: pick(&layers, |l| l.copy.clone()),
+            refresh: RefreshPolicy {
+                auto: pick(&layers, |l| l.refresh.as_ref().and_then(|r| r.auto)).unwrap_or(true),
+                max_age_secs: match pick(&layers, |l| l.refresh.as_ref().and_then(|r| r.max_age.clone())) {
+                    Some(d) => parse_duration(&d)?,
+                    None => 24 * 3600,
+                },
+                max_behind: pick(&layers, |l| l.refresh.as_ref().and_then(|r| r.max_behind)).unwrap_or(100),
+            },
             sources,
         })
     }
@@ -195,6 +251,7 @@ impl Config {
     pub fn to_repo_toml(&self) -> String {
         let file = FileConfig {
             base: Some(self.base.clone()),
+            copy: self.copy.clone(),
             steps: self.steps.clone(),
             ..Default::default()
         };
@@ -291,5 +348,17 @@ mod layer_tests {
         assert_eq!(names, ["pnpm", "build"], "detected steps plus add_step");
         assert!(c.steps_detected);
         assert_eq!(c.sources.len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod duration_tests {
+    #[test]
+    fn durations() {
+        assert_eq!(super::parse_duration("90").unwrap(), 90);
+        assert_eq!(super::parse_duration("30m").unwrap(), 1800);
+        assert_eq!(super::parse_duration("12h").unwrap(), 43_200);
+        assert_eq!(super::parse_duration("2d").unwrap(), 172_800);
+        assert!(super::parse_duration("soon").is_err());
     }
 }

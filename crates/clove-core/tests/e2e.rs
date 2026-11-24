@@ -3,9 +3,10 @@
 
 #![cfg(target_os = "macos")]
 
-use clove_core::{Clove, NewOptions, RemoveOptions, Silent};
+use clove_core::{Clove, Event, NewOptions, RefreshOptions, RemoveOptions, Silent};
 use std::path::Path;
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::Instant;
 
 fn sh(dir: &Path, script: &str) {
@@ -61,6 +62,9 @@ impl Drop for UnmountOnDrop {
 
 const CONFIG: &str = r#"
 image_size = "2G"
+[refresh]
+auto = false
+max_behind = 0
 [[step]]
 name = "deps"
 warm = "mkdir -p deps && cp lock.txt deps/installed && echo warmed > deps/warm-ran"
@@ -94,7 +98,7 @@ fn full_lifecycle() {
     let seed = t.join("seed");
     sh(&t, &format!("git clone -q {} seed", remote.display()));
     std::fs::write(seed.join(".clove.toml"), CONFIG).unwrap();
-    std::fs::write(seed.join(".gitignore"), "deps/\n").unwrap();
+    std::fs::write(seed.join(".gitignore"), "deps/\n.env\n").unwrap();
     std::fs::write(seed.join("lock.txt"), "v1\n").unwrap();
     std::fs::write(seed.join("app.txt"), "hello\n").unwrap();
     sh(
@@ -104,6 +108,8 @@ fn full_lifecycle() {
     let root = t.join("app");
     sh(&t, &format!("git clone -q {} app", remote.display()));
 
+    // a local-only file, ignored by git: clones should get it
+    std::fs::write(root.join(".env"), "SECRET=1\n").unwrap();
     let c = Clove::discover(&root).unwrap();
     assert_eq!(c.config.base, "origin/main");
 
@@ -111,6 +117,8 @@ fn full_lifecycle() {
     let g = c.init(&Silent).expect("init");
     assert_eq!(g.generation, 1);
     assert!(!g.dirty, "golden should be clean");
+    assert_eq!(g.copied, vec![".env".to_string()]);
+    assert!(!c.freshness().unwrap().unwrap().stale, "fresh right after init");
 
     // new: O(1) clone, setup skipped because lock.txt is unchanged
     let start = Instant::now();
@@ -198,6 +206,51 @@ fn full_lifecycle() {
     std::fs::write(a.path.join("deps/only-a"), "x").unwrap();
     assert!(!b.path.join("deps/only-a").exists());
 
+    // clones get the current copy of local-only files
+    assert_eq!(
+        std::fs::read_to_string(a.path.join(".env")).unwrap(),
+        "SECRET=1\n"
+    );
+    std::fs::write(root.join(".env"), "SECRET=2\n").unwrap();
+    let e = c
+        .new_clone(
+            &NewOptions {
+                branch: Some("env-check".into()),
+                ..Default::default()
+            },
+            &Silent,
+        )
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(e.path.join(".env")).unwrap(),
+        "SECRET=2\n"
+    );
+    c.remove(
+        "env-check",
+        &RemoveOptions {
+            force: false,
+            delete_branch: true,
+        },
+        &Silent,
+    )
+    .unwrap();
+
+    // `setup` after the clone's branch moved reruns only the changed steps
+    std::fs::remove_file(a.path.join("deps/setup-ran")).ok();
+    sh(&a.path, "echo v3 > lock.txt && git commit -qam lock3");
+    c.setup_clone("feat-a", false, &Silent).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(a.path.join("deps/installed")).unwrap(),
+        "v3\n"
+    );
+    assert!(a.path.join("deps/setup-ran").exists());
+    std::fs::remove_file(a.path.join("deps/setup-ran")).unwrap();
+    c.setup_clone("feat-a", false, &Silent).unwrap();
+    assert!(
+        !a.path.join("deps/setup-ran").exists(),
+        "nothing changed since last setup"
+    );
+
     // unmount / mount round trip keeps state
     c.unmount("feat-a", false).unwrap();
     assert!(!c.info("feat-a", false).unwrap().mounted);
@@ -209,10 +262,36 @@ fn full_lifecycle() {
         &seed,
         "git push -q origin main:main --force && echo more >> app.txt && git commit -qam more && git push -q origin HEAD:main",
     );
+    c.fetch().unwrap();
+    let f = c.freshness().unwrap().unwrap();
+    assert!(
+        f.stale && f.behind.unwrap_or(0) >= 1,
+        "behind with max_behind = 0: {f:?}"
+    );
+    // lock.txt changed on main (the bump commit), so the deps warm step runs
     let g2 = c.refresh(&Silent).expect("refresh");
+    assert!(g2.timings.iter().any(|t| t.step == "warm deps"));
+    assert!(!c.freshness().unwrap().unwrap().stale);
     assert_eq!(g2.generation, 2);
     assert_eq!(g2.commit, git(&root, &["rev-parse", "origin/main"]));
     assert!(c.info("feat-a", true).unwrap().mounted);
+    // incremental: a commit that leaves lock.txt alone skips the deps warm step
+    sh(
+        &seed,
+        "echo again >> app.txt && git commit -qam again && git push -q origin HEAD:main",
+    );
+    let events = Mutex::new(vec![]);
+    let collect = |e: Event| events.lock().unwrap().push(e);
+    c.refresh(&collect).expect("incremental refresh");
+    let skipped = events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|e| matches!(e, Event::Skip { step, .. } if step == "warm deps"));
+    assert!(skipped, "warm deps should be skipped when lock.txt is unchanged");
+    // --full reruns everything
+    let g3 = c.refresh_with(&RefreshOptions { full: true }, &Silent).unwrap();
+    assert!(g3.timings.iter().any(|t| t.step == "warm deps"));
     let n = c
         .new_clone(
             &NewOptions {

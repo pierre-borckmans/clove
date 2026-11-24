@@ -16,7 +16,7 @@ fail() { print -P "%F{red}✗ $1%f"; exit 1 }
 git init -q --bare -b main $T/remote.git
 git clone -q $T/remote.git $T/seed 2>/dev/null
 cd $T/seed
-print 'image_size = "2G"\n[[step]]\nname = "deps"\nwarm = "mkdir -p deps && touch deps/ok"\nsetup = "touch deps/setup"\nwatch = ["lock.txt"]' > .clove.toml
+print 'image_size = "2G"\n[refresh]\nmax_behind = 0\n[[step]]\nname = "deps"\nwarm = "mkdir -p deps && touch deps/ok"\nsetup = "touch deps/setup"\nwatch = ["lock.txt"]' > .clove.toml
 print 'deps/' > .gitignore; print v1 > lock.txt
 git add -A && git commit -qm init && git push -q origin main
 git clone -q $T/remote.git $T/app 2>/dev/null
@@ -66,6 +66,16 @@ print '{"worktree_path":"'$hp'","cwd":"'$T/app'"}' | command clove hook worktree
 [[ ! -d $hp ]] || fail "hook removed the clone"
 git -C $T/app rev-parse --verify --quiet refs/heads/agent-x >/dev/null && fail "merged branch deleted by remove hook"
 pass "claude worktree hooks"
+
+# a stale golden image refreshes itself in the background after `new`
+(cd $T/seed && print x >> lock.txt && git commit -qam bump && git push -q origin main)
+gen() { command clove status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["golden"]["generation"])' }
+g0=$(gen)
+clove new --fetch --no-cd auto-refresh >/dev/null 2>&1 || fail "new on a stale golden"
+for i in {1..60}; do [[ $(gen) -gt $g0 ]] && break; sleep 0.5; done
+[[ $(gen) -gt $g0 ]] || fail "background refresh did not produce a new generation"
+for i in {1..20}; do command clove status --json | grep -q '"refreshing": null' && break; sleep 0.5; done
+pass "auto refresh in the background (gen $g0 -> $(gen))"
 
 clove rm --all >/dev/null 2>&1 || fail "rm --all"
 [[ -z $(command clove gc --json | python3 -c 'import json,sys; print(*json.load(sys.stdin)["actions"])') ]] || fail "gc clean"

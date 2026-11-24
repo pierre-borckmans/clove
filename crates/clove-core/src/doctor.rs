@@ -150,20 +150,36 @@ pub fn repo(c: &Clove) -> Vec<Check> {
     }
     match c.golden_meta() {
         Ok(Some(m)) => {
-            let behind =
-                crate::git::count_commits(&c.root, &format!("{}..{}", m.commit, m.base)).unwrap_or(0);
-            let level = if behind > 200 { Level::Warn } else { Level::Ok };
+            let f = c.freshness().ok().flatten();
+            let (level, detail, fix) = match f.as_ref().and_then(|f| f.reason.clone()) {
+                _ if f.as_ref().is_some_and(|f| f.refreshing.is_some()) => {
+                    (Level::Ok, "refreshing now".to_string(), None)
+                }
+                Some(why) => (
+                    Level::Warn,
+                    format!("stale: {why}"),
+                    Some(if c.config.refresh.auto {
+                        "clove refresh (or let the next `clove new` start one; `clove service install` checks hourly)"
+                            .to_string()
+                    } else {
+                        "clove refresh".to_string()
+                    }),
+                ),
+                None => (Level::Ok, "fresh".to_string(), None),
+            };
             out.push(check(
                 "golden",
                 level,
                 format!(
-                    "gen {} at {} ({behind} commits behind {})",
+                    "gen {} at {}, {detail}",
                     m.generation,
-                    &m.commit[..m.commit.len().min(10)],
-                    m.base
+                    &m.commit[..m.commit.len().min(10)]
                 ),
-                (behind > 200).then(|| "clove refresh".to_string()),
+                fix,
             ));
+            if !m.copied.is_empty() {
+                out.push(check("copy", Level::Ok, m.copied.join(", "), None));
+            }
             if m.dirty {
                 out.push(check(
                     "golden clean",

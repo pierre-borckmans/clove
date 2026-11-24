@@ -38,6 +38,12 @@ pub struct GoldenMeta {
     pub steps: Vec<String>,
     /// Warm steps left tracked files modified; clones would inherit the changes.
     pub dirty: bool,
+    /// Fingerprint of each step's definition, so a changed command reruns on refresh.
+    #[serde(default)]
+    pub step_hashes: std::collections::BTreeMap<String, String>,
+    /// Files copied from the main checkout (see `copy`).
+    #[serde(default)]
+    pub copied: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +62,9 @@ pub struct CloneMeta {
     pub total_ms: f64,
     #[serde(default)]
     pub failed_steps: Vec<String>,
+    /// HEAD when setup steps last ran; `clove setup` diffs against it.
+    #[serde(default)]
+    pub setup_commit: Option<String>,
 }
 
 /// What `clove ls` shows for one clone.

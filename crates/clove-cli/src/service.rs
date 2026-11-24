@@ -63,14 +63,14 @@ fn uid() -> String {
     unsafe { libc::getuid() }.to_string()
 }
 
-pub fn install(hour: u8, minute: u8) -> Result<Vec<PathBuf>> {
+/// Checks every `every` seconds and refreshes the repos whose golden image is
+/// stale per their `[refresh]` policy. Fresh repos cost one fetch.
+pub fn install(every: u64) -> Result<Vec<PathBuf>> {
     let mount = plist(MOUNT, &["mount", "--all-repos"], "  <key>RunAtLoad</key><true/>")?;
     let refresh = plist(
         REFRESH,
-        &["refresh", "--all-repos"],
-        &format!(
-            "  <key>StartCalendarInterval</key>\n  <dict><key>Hour</key><integer>{hour}</integer><key>Minute</key><integer>{minute}</integer></dict>"
-        ),
+        &["refresh", "--all-repos", "--if-stale"],
+        &format!("  <key>StartInterval</key><integer>{every}</integer>"),
     )?;
     let mut written = vec![];
     for (label, body) in [(MOUNT, mount), (REFRESH, refresh)] {

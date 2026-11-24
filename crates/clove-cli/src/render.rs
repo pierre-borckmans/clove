@@ -102,9 +102,9 @@ impl Reporter for TermReporter {
             Event::Skip { step, reason } => {
                 self.clear();
                 eprintln!(
-                    "  {} {:<24} {}",
+                    "  {} {} {}",
                     paint(DIM, "·"),
-                    paint(DIM, &step),
+                    paint(DIM, format!("{step:<24}")),
                     paint(DIM, reason)
                 );
             }

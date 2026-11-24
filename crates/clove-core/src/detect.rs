@@ -15,11 +15,19 @@ pub fn steps(root: &Path) -> Vec<Step> {
     let mut out = vec![];
 
     if has("mise.toml") || has(".mise.toml") || has(".tool-versions") {
+        // Trust is keyed by path, so every clone needs it; it is instant.
+        out.push(Step {
+            name: "mise-trust".into(),
+            warm: Some("mise trust --quiet --yes .".into()),
+            setup: Some("mise trust --quiet --yes .".into()),
+            wrap: false,
+            ..Default::default()
+        });
+        // Tools install once into the golden image and rerun when mise's config changes.
         out.push(Step {
             name: "mise".into(),
-            warm: Some("mise trust --quiet --yes . && mise install --yes".into()),
-            setup: Some("mise trust --quiet --yes .".into()),
-            watch: vec![],
+            warm: Some("mise install --yes".into()),
+            watch: s(&["mise.toml", ".mise.toml", ".tool-versions", "mise.lock", ".mise"]),
             wrap: false,
             ..Default::default()
         });
@@ -135,7 +143,7 @@ pub fn wrap(exec: Exec, command: &str) -> Vec<String> {
 /// Tools a step needs on PATH, for `clove doctor`.
 pub fn required_tool(step: &Step) -> Option<&'static str> {
     match step.name.as_str() {
-        "mise" => Some("mise"),
+        "mise" | "mise-trust" => Some("mise"),
         "direnv" | "direnv-allow" => Some("direnv"),
         "pnpm" => Some("pnpm"),
         "bun" => Some("bun"),
@@ -157,7 +165,7 @@ mod tests {
             std::fs::write(d.path().join(f), "").unwrap();
         }
         let names: Vec<_> = steps(d.path()).into_iter().map(|s| s.name).collect();
-        assert_eq!(names, ["mise", "direnv-allow", "direnv", "pnpm"]);
+        assert_eq!(names, ["mise-trust", "mise", "direnv-allow", "direnv", "pnpm"]);
     }
 
     #[test]

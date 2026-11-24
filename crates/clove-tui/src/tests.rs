@@ -89,6 +89,8 @@ fn status(golden: bool, n: usize) -> RepoStatus {
                 timings: vec![],
                 steps: vec!["deps".into()],
                 dirty: false,
+                step_hashes: Default::default(),
+                copied: vec![],
             },
             age_secs: 7200,
             behind: Some(4),
@@ -98,6 +100,8 @@ fn status(golden: bool, n: usize) -> RepoStatus {
         mounted: n.saturating_sub(1),
         steps: vec![],
         steps_detected: true,
+        freshness: None,
+        copy: vec![],
     }
 }
 
@@ -313,6 +317,8 @@ fn refresh_finished() {
             timings: vec![],
             steps: vec![],
             dirty: false,
+            step_hashes: Default::default(),
+            copied: vec![],
         })),
     ));
     let (s, _) = render(&mut app, 100, 26);
