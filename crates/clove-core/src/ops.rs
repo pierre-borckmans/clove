@@ -484,6 +484,15 @@ impl Clove {
         })();
         result.map_err(cleanup)?;
 
+        if let Some(n) = git::count_commits(&self.root, &format!("{}..{base}", golden.commit))
+            && n > 200
+        {
+            r.event(Event::Warn {
+                message: format!(
+                    "the golden image is {n} commits behind {base}, so checkout and setup do more work; `clove refresh` (or `clove service install` to do it nightly)"
+                ),
+            });
+        }
         let mut failed = vec![];
         if !opts.no_setup {
             failed = self.setup(r, &mut timings, &wt, &name, &golden.commit);
