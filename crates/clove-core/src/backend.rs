@@ -22,11 +22,15 @@ impl Backend {
         if !cfg!(target_os = "macos") {
             bail!("clove needs macOS (APFS clonefile + disk images); Linux support is planned");
         }
-        let asif = Command::new("diskutil")
-            .args(["image", "create", "blank", "--help"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+        // macOS 15 has `diskutil image` but not the ASIF format; check the help text.
+        let asif = std::env::var("CLOVE_BACKEND")
+            .map(|b| b != "sparse")
+            .unwrap_or(true)
+            && Command::new("diskutil")
+                .args(["image", "create", "blank", "--help"])
+                .output()
+                .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("ASIF"))
+                .unwrap_or(false);
         Ok(if asif { Self::Asif } else { Self::Sparse })
     }
 
