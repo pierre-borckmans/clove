@@ -134,7 +134,8 @@ pub fn start_op(app: AppHandle, op: OpRequest) -> CmdResult<String> {
     Ok(id)
 }
 
-fn run(op: &OpRequest, r: &dyn clove_core::Reporter) -> anyhow::Result<serde_json::Value> {
+/// Runs one operation to completion on the calling thread.
+pub fn run(op: &OpRequest, r: &dyn clove_core::Reporter) -> anyhow::Result<serde_json::Value> {
     Ok(match op {
         OpRequest::Init { root } => serde_json::to_value(Clove::discover(root)?.init(r)?)?,
         OpRequest::Refresh { root } => serde_json::to_value(Clove::open(root)?.refresh(r)?)?,

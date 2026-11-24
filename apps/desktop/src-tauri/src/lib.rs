@@ -1,5 +1,5 @@
-mod commands;
-mod ops;
+pub mod commands;
+pub mod ops;
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
