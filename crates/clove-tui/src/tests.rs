@@ -677,7 +677,7 @@ fn toasts_sit_bottom_right() {
 }
 
 #[test]
-fn hover_underlines_what_a_click_would_do() {
+fn hover_highlights_what_a_click_would_do() {
     use ratatui::style::Modifier;
     let mut hov = app();
     let (s, _) = render(&mut hov, 120, 24);
@@ -693,18 +693,27 @@ fn hover_underlines_what_a_click_would_do() {
     let (x, y) = find(&s, "n new");
     moved(&mut hov, x, y);
     let (_, buf) = render(&mut hov, 120, 24);
-    assert!(buf[(x, y)].modifier.contains(Modifier::UNDERLINED));
+    assert!(buf[(x, y)].modifier.contains(Modifier::BOLD));
+    assert_eq!(buf[(x + 2, y)].fg, crate::theme::SAGE);
     assert!(hov.pointer, "hand pointer over a hint");
     // A clone row.
     let (x, y) = find(&s, "fix-race");
     moved(&mut hov, x, y);
     let (_, buf) = render(&mut hov, 120, 24);
-    assert!(buf[(x, y)].modifier.contains(Modifier::UNDERLINED));
+    assert!(buf[(x, y)].modifier.contains(Modifier::BOLD));
     // Empty space: nothing, plain pointer.
     moved(&mut hov, 60, 20);
     let (_, buf) = render(&mut hov, 120, 24);
-    assert!(!buf[(60, 20)].modifier.contains(Modifier::UNDERLINED));
+    assert!(!buf[(60, 20)].modifier.contains(Modifier::BOLD));
     assert!(!hov.pointer);
+    // Behind an open modal: a click closes it, but hover highlights nothing.
+    key(&mut hov, KeyCode::Char('s'));
+    moved(&mut hov, 2, 2);
+    let (_, buf) = render(&mut hov, 120, 24);
+    assert_ne!(buf[(2, 2)].fg, crate::theme::SAGE);
+    assert!(!hov.pointer, "no hand over the backdrop");
+    click(&mut hov, 2, 2);
+    assert!(hov.modal.is_none(), "a click outside still closes it");
 }
 
 #[test]

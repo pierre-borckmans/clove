@@ -51,8 +51,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_hover(f, app);
 }
 
-/// Underlines whatever a click would act on under the mouse, so it's clear
-/// the UI takes the mouse. The runtime also turns the pointer into a hand.
+/// Highlights whatever a click would act on under the mouse (bold, green text),
+/// so it's clear the UI takes the mouse. The runtime also turns the pointer
+/// into a hand.
 fn draw_hover(f: &mut Frame, app: &mut App) {
     let hit = app.hover.and_then(|p| {
         app.hits
@@ -63,9 +64,18 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
             .map(|(r, _)| *r)
     });
     app.pointer = hit.is_some();
-    if let Some(r) = hit {
-        f.buffer_mut()
-            .set_style(r, Style::new().add_modifier(Modifier::UNDERLINED));
+    let Some(r) = hit else { return };
+    let buf = f.buffer_mut();
+    for y in r.top()..r.bottom() {
+        for x in r.left()..r.right() {
+            if let Some(c) = buf.cell_mut((x, y)) {
+                c.modifier.insert(Modifier::BOLD);
+                // On a filled cell (the selected row) green text would vanish.
+                if c.bg == ratatui::style::Color::Reset {
+                    c.fg = SAGE;
+                }
+            }
+        }
     }
 }
 
@@ -1241,7 +1251,7 @@ fn open_modal(f: &mut Frame, hits: &mut Vec<(Rect, Hit)>, area: Rect, rect: Rect
     dim_backdrop(f, area);
     f.render_widget(Clear, rect);
     let above_footer = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
-    hits.push((above_footer, Hit::Key(KeyCode::Esc, KeyModifiers::NONE)));
+    hits.push((above_footer, Hit::Dismiss));
     hits.push((rect, Hit::Inert));
 }
 

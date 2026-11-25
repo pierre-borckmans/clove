@@ -1442,6 +1442,7 @@ impl App {
             }
             MouseEventKind::Down(MouseButton::Left) => match hit {
                 Some(Hit::Key(code, mods)) => self.on_key(KeyEvent::new(code, mods)),
+                Some(Hit::Dismiss) => self.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
                 Some(Hit::Repo(i)) if self.modal.is_none() => self.switch_repo(i),
                 Some(Hit::Row(i)) if self.modal.is_none() => {
                     let double = self

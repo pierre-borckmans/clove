@@ -544,6 +544,8 @@ pub enum Hit {
     SettingsRow(SettingsAction),
     /// Swallows clicks (a modal's body over the click-to-close backdrop).
     Inert,
+    /// Outside an open modal: a click closes it, hover shows nothing.
+    Dismiss,
 }
 
 impl Hit {
@@ -551,7 +553,12 @@ impl Hit {
     pub fn clickable(&self) -> bool {
         !matches!(
             self,
-            Hit::ScrollList | Hit::ScrollLog | Hit::ScrollDoctor | Hit::ScrollSettings | Hit::Inert
+            Hit::ScrollList
+                | Hit::ScrollLog
+                | Hit::ScrollDoctor
+                | Hit::ScrollSettings
+                | Hit::Inert
+                | Hit::Dismiss
         )
     }
 }
