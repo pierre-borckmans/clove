@@ -12,8 +12,17 @@ pub fn detach(mount_point: &Path, force: bool) -> Result<()> {
     if !is_mounted(mount_point) {
         return Ok(());
     }
-    let plain = output(Command::new("diskutil").arg("eject").arg(mount_point));
-    if plain.is_ok() {
+    let mut plain = output(Command::new("diskutil").arg("eject").arg(mount_point));
+    // Nobody we can see holds it: a system service (Spotlight on a fresh
+    // volume) does, briefly. Wait it out before calling the volume busy.
+    for wait_ms in [300, 700, 1500] {
+        if plain.is_ok() || !users(mount_point).is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(wait_ms));
+        plain = output(Command::new("diskutil").arg("eject").arg(mount_point));
+    }
+    if plain.is_ok() || !is_mounted(mount_point) {
         return Ok(());
     }
     if !force {
