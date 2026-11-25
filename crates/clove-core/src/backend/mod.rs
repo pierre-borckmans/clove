@@ -192,6 +192,29 @@ pub struct VolumeUser {
     pub command: String,
 }
 
+/// A human name for a process holding a volume, from its full command line.
+pub fn describe(u: &VolumeUser) -> String {
+    let args = std::process::Command::new("ps")
+        .args(["-o", "args=", "-p", &u.pid.to_string()])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
+        .unwrap_or_default();
+    let named = [
+        ("fsmonitor--daemon", "git fsmonitor"),
+        ("bazel", "bazel"),
+        ("gradle", "gradle daemon"),
+        ("kotlin-daemon", "kotlin daemon"),
+        ("turbo", "turbo daemon"),
+        ("nx/", "nx daemon"),
+        ("watchman", "watchman"),
+    ];
+    match named.iter().find(|(needle, _)| args.contains(needle)) {
+        Some((_, name)) if !name.contains(u.command.as_str()) => format!("{name} ({})", u.command),
+        Some((_, name)) => name.to_string(),
+        None => u.command.clone(),
+    }
+}
+
 /// Stops every process using the volume: SIGTERM, then SIGKILL after `grace`.
 /// Only for volumes clove owns outright (the golden image while warming), where
 /// anything still running is a daemon a warm step started (bazel, gradle, turbo).

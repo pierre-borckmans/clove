@@ -31,6 +31,8 @@ export type Op = {
   error?: string;
   steps: StepState[];
   warnings: string[];
+  /** Neutral notes, e.g. background servers clove stopped. */
+  notes: string[];
   result?: unknown;
   dismissed: boolean;
 };
@@ -79,7 +81,7 @@ export function describe(req: OpRequest): { title: string; subject: string } {
 function update(id: string, f: (op: Op) => void) {
   const op = ops.get(id);
   if (!op) return;
-  const next = { ...op, steps: [...op.steps], warnings: [...op.warnings] };
+  const next = { ...op, steps: [...op.steps], warnings: [...op.warnings], notes: [...op.notes] };
   f(next);
   ops.set(id, next);
   emit();
@@ -119,6 +121,7 @@ export function wireOps(qc: QueryClient, hooks: Hooks) {
       status: "running",
       steps: [],
       warnings: [],
+      notes: [],
       dismissed: false,
     });
     emit();
@@ -156,6 +159,9 @@ export function wireOps(qc: QueryClient, hooks: Hooks) {
         }
         case "warn":
           op.warnings.push(event.message);
+          break;
+        case "info":
+          op.notes.push(event.message);
           break;
       }
     });

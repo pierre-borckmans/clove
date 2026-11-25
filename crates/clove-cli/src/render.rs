@@ -240,6 +240,10 @@ impl Reporter for TermReporter {
                     }
                 }
             }
+            Event::Info { message } => {
+                clear(&mut s);
+                eprintln!("  {} {}", paint(DIM, "·"), paint(DIM, message));
+            }
             Event::Warn { message } => {
                 clear(&mut s);
                 for (i, l) in message.lines().enumerate() {

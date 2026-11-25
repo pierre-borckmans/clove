@@ -112,7 +112,8 @@ export type CloveEvent =
   | { event: "done"; step: string; took: number }
   | { event: "skip"; step: string; reason: string }
   | { event: "output"; step: string; line: string }
-  | { event: "warn"; message: string };
+  | { event: "warn"; message: string }
+  | { event: "info"; message: string };
 
 export type OpStarted = { id: string; at: number; op: OpRequest };
 export type OpEvent = { id: string; at: number; event: CloveEvent };

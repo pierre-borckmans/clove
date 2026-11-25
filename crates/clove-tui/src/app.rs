@@ -402,6 +402,11 @@ impl App {
                 text: fmt::clean_line(&line),
                 kind: LogKind::Out,
             }),
+            Event::Info { message } => job.push_log(LogLine {
+                step: None,
+                text: fmt::clean_line(&message),
+                kind: LogKind::Info,
+            }),
             Event::Warn { message } => {
                 for s in job.steps.iter_mut() {
                     if matches!(s.state, StepState::Running { .. })

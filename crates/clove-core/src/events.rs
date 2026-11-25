@@ -21,6 +21,8 @@ pub enum Event {
     Output { step: String, line: String },
     /// Something the user should know about that does not stop the operation.
     Warn { message: String },
+    /// Worth showing, nothing to act on.
+    Info { message: String },
 }
 
 fn ser_ms<S: serde::Serializer>(d: &Duration, s: S) -> Result<S::Ok, S::Error> {

@@ -110,6 +110,11 @@ export function OpCard({ op, embedded }: { op: Op; embedded?: boolean }) {
               ))}
             </div>
           )}
+          {op.notes.map((n) => (
+            <div key={n} className="selectable mt-2 text-[12px] leading-snug text-muted-foreground">
+              {n}
+            </div>
+          ))}
           {op.warnings.map((w) => (
             <div key={w} className="mt-2 flex gap-1.5 text-[12px] leading-snug text-amber">
               <TriangleAlert className="mt-px size-3.5 shrink-0" />

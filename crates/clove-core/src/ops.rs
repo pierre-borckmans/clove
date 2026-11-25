@@ -265,6 +265,7 @@ impl Clove {
 
     /// Builds the golden image: a checkout of `base` with every warm step run.
     pub fn init(&self, r: &dyn Reporter) -> Result<GoldenMeta> {
+        let _no_fsmonitor = git::golden_git();
         let _refresh = self.refresh_lock()?;
         if self.current_generation()?.is_some() {
             bail!(
@@ -365,6 +366,7 @@ impl Clove {
     /// Like [`refresh`](Self::refresh). Warm steps whose `watch` paths did not
     /// change since the previous golden commit are skipped unless `full`.
     pub fn refresh_with(&self, opts: &RefreshOptions, r: &dyn Reporter) -> Result<GoldenMeta> {
+        let _no_fsmonitor = git::golden_git();
         let _refresh = self.refresh_lock()?;
         let record = self.require_record()?;
         let prev = self.golden_meta()?;
@@ -436,11 +438,18 @@ impl Clove {
 
     /// Unmounts (or seals) the golden volume, stopping daemons the warm steps left behind.
     fn unmount_golden(&self, r: &dyn Reporter, store: &dyn Store, generation: u32) -> Result<()> {
-        let stopped = backend::stop_users(&store.golden_mount(self), std::time::Duration::from_secs(10));
+        let mount = store.golden_mount(self);
+        // Name them before stopping them: `java` alone says little.
+        let names: Vec<String> = backend::users(&mount).iter().map(backend::describe).collect();
+        let stopped = backend::stop_users(&mount, std::time::Duration::from_secs(10));
         if !stopped.is_empty() {
-            let names: Vec<_> = stopped.iter().map(|u| u.command.as_str()).collect();
-            r.event(Event::Warn {
-                message: format!("stopped processes a warm step left running: {}", names.join(", ")),
+            let mut names = names;
+            names.dedup();
+            r.event(Event::Info {
+                message: format!(
+                    "stopped background servers the warm steps left running: {}",
+                    names.join(", ")
+                ),
             });
         }
         store.golden_seal(self, generation)
@@ -469,7 +478,13 @@ impl Clove {
         wt: &Path,
         prev: Option<&GoldenMeta>,
     ) -> Result<GoldenMeta> {
-        let env = self.step_env(wt, "golden");
+        let mut env = self.step_env(wt, "golden");
+        // git run by the steps themselves: no fsmonitor daemon in the image.
+        if !env.contains_key("GIT_CONFIG_COUNT") {
+            env.insert("GIT_CONFIG_COUNT".into(), "1".into());
+            env.insert("GIT_CONFIG_KEY_0".into(), "core.fsmonitor".into());
+            env.insert("GIT_CONFIG_VALUE_0".into(), "false".into());
+        }
         let copied = self.resolve_copy();
         if !copied.is_empty() {
             timed(r, timings, "copy files", || {

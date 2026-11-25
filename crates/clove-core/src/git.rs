@@ -4,8 +4,29 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// `git -C <dir>` with locale and pager pinned so output is parseable.
+/// Set while a golden image is built: git's fsmonitor daemon would start in
+/// the image and keep it from unmounting.
+static GOLDEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Turns off fsmonitor for clove's git commands until dropped.
+pub struct GoldenGit(());
+
+pub fn golden_git() -> GoldenGit {
+    GOLDEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    GoldenGit(())
+}
+
+impl Drop for GoldenGit {
+    fn drop(&mut self) {
+        GOLDEN.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 pub fn cmd(dir: &Path) -> Command {
     let mut c = Command::new("git");
+    if GOLDEN.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+        c.args(["-c", "core.fsmonitor=false"]);
+    }
     c.arg("-C").arg(dir);
     c.env("LC_ALL", "C").env("GIT_TERMINAL_PROMPT", "0");
     c
