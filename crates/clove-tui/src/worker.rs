@@ -83,6 +83,18 @@ pub fn load(tx: Sender<Msg>, root: PathBuf) {
     });
 }
 
+/// Asks GitHub about the clones' PRs; the result lands in the prune cache,
+/// which the next load reads. Unmounted clones are not mounted for this.
+pub fn check_prs(tx: Sender<Msg>, root: PathBuf) {
+    std::thread::spawn(move || {
+        let _ = guarded(|| {
+            let c = Clove::open(&root).map_err(|e| format!("{e:#}"))?;
+            c.merge_checks(false).map_err(|e| format!("{e:#}"))
+        });
+        let _ = tx.send(Msg::PrsChecked);
+    });
+}
+
 pub fn load_refs(tx: Sender<Msg>, root: PathBuf) {
     std::thread::spawn(move || {
         let out = clove_core::git::out(
@@ -97,9 +109,13 @@ pub fn load_refs(tx: Sender<Msg>, root: PathBuf) {
             ],
         )
         .unwrap_or_default();
+        let candidates = Clove::open(&root)
+            .map(|c| c.branch_candidates())
+            .unwrap_or_default();
         let _ = tx.send(Msg::Refs {
             root,
             refs: parse_refs(&out),
+            candidates,
         });
     });
 }
@@ -169,7 +185,13 @@ fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Res
         Task::Init => c.init(r).map(Outcome::Golden).map_err(e),
         Task::Refresh => c.refresh(r).map(Outcome::Golden).map_err(e),
         Task::New(opts) => c.new_clone(&opts, r).map(Outcome::Clone).map_err(e),
-        Task::Remove { name, opts } => c.remove(&name, &opts, r).map(|_| Outcome::Removed).map_err(e),
+        Task::Remove { name, opts } => match c.remove_or_defer(&name, &opts, r).map_err(e)? {
+            clove_core::Removal::Removed => Ok(Outcome::Removed),
+            clove_core::Removal::WhenFree(users) => {
+                spawn_pending_waiter(&c.root);
+                Ok(Outcome::RemovedWhenFree(users))
+            }
+        },
         Task::Mount { name } => c.mount(&name).map(Outcome::Mounted).map_err(e),
         Task::Unmount { name } => c.unmount(&name, false).map(|_| Outcome::Unmounted).map_err(e),
         Task::Gc { apply } => cleanup(&c, apply, r).map(Outcome::Gc).map_err(e),
@@ -204,6 +226,23 @@ fn cleanup(c: &Clove, apply: bool, r: &dyn clove_core::Reporter) -> anyhow::Resu
         warning,
         removed,
     })
+}
+
+/// A detached `clove remove-pending` (this binary), outside any clone, that
+/// removes marked clones once nothing uses them.
+fn spawn_pending_waiter(root: &Path) {
+    let Ok(exe) = std::env::current_exe() else { return };
+    use std::os::unix::process::CommandExt;
+    let _ = std::process::Command::new(exe)
+        .arg("-C")
+        .arg(root)
+        .arg("remove-pending")
+        .current_dir(root)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn();
 }
 
 /// Turns a panic in a worker into an error message instead of a dead thread.

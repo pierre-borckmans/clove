@@ -151,6 +151,13 @@ enum Cmd {
     },
     /// Every repo clove manages: clones, golden image state, merged clones.
     Repos,
+    /// Refresh the PR cache `clove ls` shows (run in the background by ls).
+    #[command(hide = true)]
+    CheckPrs,
+    /// Wait for clones marked "remove when free" and remove them (run in the
+    /// background by `clove rm`).
+    #[command(hide = true)]
+    RemovePending,
     /// Delete the golden image and clove's state for this repo.
     Deinit,
     /// Background agents: remount clones at login, keep golden images fresh.
@@ -412,6 +419,7 @@ fn run(cli: Cli) -> Result<()> {
             let cwd = std::env::current_dir().ok();
             let inside = |n: &String| cwd.as_ref().is_some_and(|d| d.starts_with(c.clone_mount(n)));
             let mut removed = vec![];
+            let mut when_free = std::collections::BTreeMap::new();
             for n in &names {
                 if inside(n) && !a.force {
                     let mut args = vec!["rm".to_string()];
@@ -428,14 +436,13 @@ fn run(cli: Cli) -> Result<()> {
                         );
                         continue;
                     }
-                    bail!(
-                        "you are inside `{n}`; cd out first (or set up `clove shell-init`, which does it for you)"
-                    );
+                    // No shell integration (an agent, a script): the clone
+                    // is busy, so it goes once whatever runs in it exits.
                 }
                 if !cli.json {
                     eprintln!("{} {}", paint(MAGENTA, "−"), paint(BOLD, n));
                 }
-                c.remove(
+                let res = c.remove_or_defer(
                     n,
                     &RemoveOptions {
                         force: a.force,
@@ -444,13 +451,32 @@ fn run(cli: Cli) -> Result<()> {
                     },
                     r,
                 )?;
-                if inside(n) {
-                    shell::request_cd(&c.root);
+                match res {
+                    clove_core::Removal::Removed => {
+                        if inside(n) {
+                            shell::request_cd(&c.root);
+                        }
+                        removed.push(n.clone());
+                    }
+                    clove_core::Removal::WhenFree(users) => {
+                        if !cli.json {
+                            eprintln!(
+                                "  {} in use by {}: removing it as soon as {} exit{} (--force to pull it now)",
+                                paint(CYAN, "↻"),
+                                users.join(", "),
+                                if users.len() == 1 { "it" } else { "they" },
+                                if users.len() == 1 { "s" } else { "" },
+                            );
+                        }
+                        when_free.insert(n.clone(), users);
+                    }
                 }
-                removed.push(n.clone());
+            }
+            if !when_free.is_empty() {
+                spawn_pending_waiter(&c);
             }
             if cli.json {
-                return emit(&serde_json::json!({ "removed": removed }));
+                return emit(&serde_json::json!({ "removed": removed, "when_free": when_free }));
             }
         }
         Cmd::Cd { clone } => {
@@ -566,6 +592,12 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Cmd::Repos => cmd_repos(&cli)?,
+        Cmd::CheckPrs => {
+            repo(&cli)?.merge_checks(false)?;
+        }
+        Cmd::RemovePending => {
+            repo(&cli)?.wait_and_remove_pending(std::time::Duration::from_secs(12 * 3600), &Silent)?;
+        }
         Cmd::Config { write, edit } => {
             let c = repo(&cli)?;
             if let Some(layer) = edit {
@@ -895,6 +927,9 @@ fn cmd_new(cli: &Cli, a: &NewArgs, r: &dyn clove_core::Reporter) -> Result<()> {
         return exec_in(&c, &info.name, &info.path, cmd);
     }
     maybe_background_refresh(&c, cli.json);
+    if !c.pending_removals().is_empty() {
+        spawn_pending_waiter(&c);
+    }
     if !a.no_cd && !cli.json {
         if !shell::request_cd(&info.path) {
             if std::io::stdout().is_terminal() {
@@ -909,6 +944,57 @@ fn cmd_new(cli: &Cli, a: &NewArgs, r: &dyn clove_core::Reporter) -> Result<()> {
 
 /// Starts `clove refresh --if-stale` in the background when the golden image is
 /// stale, so the next clone starts from a fresh one. Never blocks `new`.
+/// Starts a detached waiter, outside any clone, that removes clones marked
+/// "remove when free" once nothing uses them. One per repo (it takes a lock).
+fn spawn_pending_waiter(c: &Clove) {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let log = c.logs_dir().join("remove-pending.log");
+    let _ = std::fs::create_dir_all(c.logs_dir());
+    let out = std::fs::File::create(&log).ok();
+    use std::os::unix::process::CommandExt;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("-C")
+        .arg(&c.root)
+        .arg("remove-pending")
+        // Its own cwd must not hold the clone it waits for.
+        .current_dir(&c.root)
+        .stdin(std::process::Stdio::null())
+        .process_group(0);
+    if let Some(o) = out {
+        if let Ok(e) = o.try_clone() {
+            cmd.stderr(e);
+        }
+        cmd.stdout(o);
+    }
+    let _ = cmd.spawn();
+}
+
+/// When the PR cache is older than a few minutes, refresh it in a detached
+/// process so the next `clove ls` shows merges other tools made.
+fn maybe_background_pr_check(c: &Clove) {
+    // A waiter that died (reboot) is restarted by the next command.
+    if !c.pending_removals().is_empty() {
+        spawn_pending_waiter(c);
+    }
+    let fresh = c
+        .prune_cache()
+        .is_some_and(|p| clove_core::util::now_unix().saturating_sub(p.checked_at) < 300);
+    if fresh || c.clone_names().map(|n| n.is_empty()).unwrap_or(true) {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    use std::os::unix::process::CommandExt;
+    let _ = std::process::Command::new(exe)
+        .arg("-C")
+        .arg(&c.root)
+        .arg("check-prs")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn();
+}
+
 fn maybe_background_refresh(c: &Clove, quiet: bool) {
     if !c.config.refresh.auto || std::env::var_os("CLOVE_NO_AUTO_REFRESH").is_some() {
         return;
@@ -993,6 +1079,7 @@ fn exec_in(c: &Clove, name: &str, path: &std::path::Path, command: &[String]) ->
 fn cmd_list(cli: &Cli, status: bool) -> Result<()> {
     let c = repo(cli)?;
     let clones = c.list(status)?;
+    maybe_background_pr_check(&c);
     if cli.json {
         return emit(&clones);
     }
@@ -1017,6 +1104,7 @@ fn cmd_list(cli: &Cli, status: bool) -> Result<()> {
     headers.extend(["AGE", "OWN", "PATH"]);
     let mut t = Table::new(&headers);
     let mut prunable = 0;
+    let mut broken = 0;
     let now = clove_core::util::now_unix();
     let cwd = std::env::current_dir().unwrap_or_default();
     for i in &clones {
@@ -1042,7 +1130,12 @@ fn cmd_list(cli: &Cli, status: bool) -> Result<()> {
         if let Some(b) = i.behind.filter(|b| *b > 0) {
             changes.push_str(&format!("↓{b}"));
         }
-        let changes = if changes.is_empty() && i.mounted && status {
+        let changes = if let Some(issue) = &i.issue {
+            broken += 1;
+            styled(YELLOW, issue.clone())
+        } else if i.removing_when_free {
+            styled(CYAN, "removing when free")
+        } else if changes.is_empty() && i.mounted && status {
             styled(DIM, "clean")
         } else if !i.mounted {
             styled(DIM, "-")
@@ -1075,6 +1168,15 @@ fn cmd_list(cli: &Cli, status: bool) -> Result<()> {
         t.row(row);
     }
     t.print();
+    if broken > 0 {
+        eprintln!(
+            "\n{} {broken} clone{} broken outside clove: {} finishes removing {}",
+            paint(YELLOW, "!"),
+            if broken == 1 { " was" } else { "s were" },
+            paint(BOLD, "clove gc --apply"),
+            if broken == 1 { "it" } else { "them" }
+        );
+    }
     if prunable > 0 {
         eprintln!(
             "\n{} {prunable} merged clone{} can go: {}",

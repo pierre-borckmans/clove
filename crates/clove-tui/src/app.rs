@@ -19,6 +19,8 @@ pub enum Effect {
     Load,
     /// Read git refs for completion.
     LoadRefs,
+    /// Ask GitHub which clones' PRs are merged (in the background).
+    CheckPrs,
     /// Run job `id` (its task lives on the job) on a background thread.
     Spawn {
         id: u64,
@@ -40,6 +42,9 @@ pub enum Exit {
 }
 
 pub const RELOAD_MS: u64 = 3000;
+/// How often an open TUI asks GitHub about PRs: merges by other tools and
+/// agents show up without the background service.
+pub const PR_CHECK_MS: u64 = 5 * 60 * 1000;
 const DOUBLE_CLICK_MS: u64 = 400;
 
 pub struct App {
@@ -64,6 +69,8 @@ pub struct App {
     next_id: u64,
     pub toasts: Vec<Toast>,
     pub refs: Vec<GitRef>,
+    /// Branch suggestions for a new clone (see `Clove::branch_candidates`).
+    pub candidates: Vec<clove_core::BranchCandidate>,
     pub refs_root: Option<PathBuf>,
     pub now_ms: u64,
     pub now_unix: u64,
@@ -75,6 +82,8 @@ pub struct App {
     pending_select: Option<String>,
     last_click: Option<(u64, usize)>,
     pub log_height: usize,
+    /// When the current repo's PRs were last checked.
+    pub prs_checked: HashMap<PathBuf, u64>,
     /// Where the mouse is, for hover feedback.
     pub hover: Option<Position>,
     /// The mouse is over something clickable (the pointer shows a hand).
@@ -110,6 +119,7 @@ impl App {
             next_id: 1,
             toasts: vec![],
             refs: vec![],
+            candidates: vec![],
             refs_root: None,
             now_ms: 0,
             now_unix: 0,
@@ -121,6 +131,7 @@ impl App {
             log_height: 10,
             hover: None,
             pointer: false,
+            prs_checked: HashMap::new(),
             start_dir: PathBuf::new(),
             integrated: false,
             service: None,
@@ -195,6 +206,18 @@ impl App {
             .find(|j| j.repo == root && matches!(j.task, Task::Init | Task::Refresh))
     }
 
+    /// Time to ask GitHub again about the current repo's PRs.
+    pub fn needs_pr_check(&self) -> bool {
+        let Some(d) = self.current() else {
+            return false;
+        };
+        !d.clones.is_empty()
+            && self
+                .prs_checked
+                .get(&d.root)
+                .is_none_or(|t| self.now_ms.saturating_sub(*t) >= PR_CHECK_MS)
+    }
+
     pub fn needs_reload(&self) -> bool {
         !self.loading
             && self.repo().is_some()
@@ -208,17 +231,12 @@ impl App {
     /// Candidates for the focused field of the new-clone form, best first.
     pub fn suggestions(&self, form: &NewForm) -> Vec<String> {
         let q = form.field().text.to_lowercase();
-        let mut seen = std::collections::HashSet::new();
         let pool: Vec<&str> = if form.focus == 0 {
-            self.refs
-                .iter()
-                .filter(|r| r.kind != RefKind::Tag)
-                .map(|r| match r.kind {
-                    RefKind::Remote => r.name.split_once('/').map(|x| x.1).unwrap_or(&r.name),
-                    _ => r.name.as_str(),
-                })
-                .filter(|n| seen.insert(n.to_string()))
-                .collect()
+            // An empty branch field means "new branch": nothing to pick yet.
+            if q.is_empty() {
+                return vec![];
+            }
+            self.candidates.iter().map(|b| b.name.as_str()).collect()
         } else {
             self.refs.iter().map(|r| r.name.as_str()).collect()
         };
@@ -249,7 +267,10 @@ impl App {
         };
         let b = form.branch.text.trim();
         if b.is_empty() {
-            return (format!("a generated name, new branch from {base}"), None);
+            return (
+                format!("a generated name, new branch from {base} · or type an existing branch"),
+                None,
+            );
         }
         let name = sanitize_name(b);
         if name.is_empty() {
@@ -526,6 +547,16 @@ impl App {
                 self.pending_select = Some(info.name.clone());
                 Ok(s)
             }
+            Ok(Outcome::RemovedWhenFree(users)) => {
+                let s = format!(
+                    "{} is in use by {}: removing it as soon as {} exit",
+                    job.target().unwrap_or(""),
+                    users.join(", "),
+                    if users.len() == 1 { "it" } else { "they" }
+                );
+                toasts.push((ToastKind::Info, s.clone()));
+                Ok(s)
+            }
             Ok(Outcome::Removed) => {
                 let s = format!("removed {}", job.target().unwrap_or(""));
                 toasts.push((ToastKind::Ok, s.clone()));
@@ -635,9 +666,18 @@ impl App {
                 }
                 vec![]
             }
-            Msg::Refs { root, refs } => {
+            Msg::PrsChecked => {
+                self.loaded_ms = None;
+                vec![]
+            }
+            Msg::Refs {
+                root,
+                refs,
+                candidates,
+            } => {
                 self.refs_root = Some(root);
                 self.refs = refs;
+                self.candidates = candidates;
                 vec![]
             }
             Msg::Event(id, ev) => {

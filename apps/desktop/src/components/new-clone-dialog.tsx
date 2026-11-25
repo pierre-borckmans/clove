@@ -6,7 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Switch } from "@/components/ui/switch";
 import { since } from "@/lib/format";
 import { startOp } from "@/lib/ops";
-import { useClones, useRefs, useRepos } from "@/lib/queries";
+import { useBranchCandidates, useClones, useRefs, useRepos } from "@/lib/queries";
 import type { GitRef } from "@/lib/types";
 import { setUi, useUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
@@ -41,6 +41,7 @@ function NewCloneForm({ initialRoot, initialBranch }: { initialRoot: string | nu
   const [root, setRoot] = useState(initialRoot ?? repos?.[0]?.root ?? "");
   const repo = repos?.find((r) => r.root === root);
   const { data: refs } = useRefs(root);
+  const { data: candidates } = useBranchCandidates(root);
   const { data: clones } = useClones(root);
   const [query, setQuery] = useState(initialBranch ?? "");
   const [base, setBase] = useState<string | null>(null);
@@ -54,19 +55,22 @@ function NewCloneForm({ initialRoot, initialBranch }: { initialRoot: string | nu
   const q = query.trim();
   const taken = new Map((clones ?? []).filter((c) => c.branch).map((c) => [c.branch as string, c.name]));
 
+  // Existing branches show once you type: an empty field means "new branch",
+  // and only branches worth a clone are offered (same rules as the CLI/TUI).
   const { local, remote } = useMemo(() => {
+    if (!q) return { local: [], remote: [] };
     const all = refs?.refs ?? [];
-    const localNames = new Set(all.filter((r) => r.kind === "local").map((r) => r.name));
-    const match = (n: string) => !q || n.toLowerCase().includes(q.toLowerCase());
+    const ok = new Map((candidates ?? []).map((c) => [c.name, c.remote]));
+    const match = (n: string) => n.toLowerCase().includes(q.toLowerCase());
     return {
-      local: all.filter((r) => r.kind === "local" && match(r.name)).slice(0, 30),
+      local: all.filter((r) => r.kind === "local" && ok.get(r.name) === false && match(r.name)).slice(0, 30),
       remote: all
         .filter((r) => r.kind === "remote" && r.name.includes("/"))
         .map((r) => ({ ...r, short: r.name.slice(r.name.indexOf("/") + 1) }))
-        .filter((r) => r.short !== "HEAD" && !localNames.has(r.short) && match(r.short))
+        .filter((r) => ok.get(r.short) === true && match(r.short))
         .slice(0, 30),
     };
-  }, [refs, q]);
+  }, [refs, candidates, q]);
 
   const exists = refs?.refs.some(
     (r) => (r.kind === "local" && r.name === q) || (r.kind === "remote" && r.name.endsWith(`/${q}`)),

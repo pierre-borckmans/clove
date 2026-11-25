@@ -88,6 +88,14 @@ pub struct CloneInfo {
     pub timings: Vec<Timing>,
     pub total_ms: f64,
     pub failed_steps: Vec<String>,
+    /// Something done to the clone outside clove left it broken, e.g. its
+    /// worktree deleted or unregistered from git. Cleanup finishes removing it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<String>,
+    /// Removal was asked while something used the clone; it goes as soon as
+    /// nothing does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub removing_when_free: bool,
 }
 
 pub struct Clove {

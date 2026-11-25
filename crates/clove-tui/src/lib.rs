@@ -56,6 +56,9 @@ pub fn run(start_dir: &Path) -> Result<()> {
         if app.needs_reload() {
             effects.push(Effect::Load);
         }
+        if app.needs_pr_check() {
+            effects.push(Effect::CheckPrs);
+        }
         for e in effects.drain(..) {
             perform(e, &mut app, &tx, &mut term);
         }
@@ -134,6 +137,12 @@ fn perform(e: Effect, app: &mut App, tx: &mpsc::Sender<Msg>, term: &mut Term) {
             } else if let Some(root) = app.root() {
                 app.loading = true;
                 worker::load(tx.clone(), root);
+            }
+        }
+        Effect::CheckPrs => {
+            if let Some(root) = app.root() {
+                app.prs_checked.insert(root.clone(), app.now_ms);
+                worker::check_prs(tx.clone(), root);
             }
         }
         Effect::LoadRefs => {

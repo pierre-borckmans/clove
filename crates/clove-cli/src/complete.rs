@@ -26,26 +26,19 @@ pub fn clones(current: &OsStr) -> Vec<CompletionCandidate> {
         .collect()
 }
 
+/// Existing branches worth a clone: the same list the TUI and app offer
+/// (no base, no agent scaffolding, nothing merged or checked out elsewhere).
 pub fn branches(current: &OsStr) -> Vec<CompletionCandidate> {
     let prefix = current.to_string_lossy();
     let Some(c) = repo() else { return vec![] };
-    let out = clove_core::git::out(
-        &c.root,
-        &[
-            "for-each-ref",
-            "--sort=-committerdate",
-            "--format=%(refname:short)",
-            "refs/heads",
-            "refs/remotes/origin",
-        ],
-    )
-    .unwrap_or_default();
-    let mut seen = std::collections::HashSet::new();
-    out.lines()
-        .map(|l| l.strip_prefix("origin/").unwrap_or(l))
-        .filter(|b| *b != "HEAD" && b.starts_with(prefix.as_ref()) && seen.insert(b.to_string()))
+    c.branch_candidates()
+        .into_iter()
+        .filter(|b| b.name.starts_with(prefix.as_ref()))
         .take(200)
-        .map(CompletionCandidate::new)
+        .map(|b| {
+            let help = if b.remote { "on origin" } else { "local" };
+            CompletionCandidate::new(b.name).help(Some(help.into()))
+        })
         .collect()
 }
 

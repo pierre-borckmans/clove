@@ -76,6 +76,24 @@ pub struct RepoSummary {
     pub prunable: usize,
 }
 
+/// An existing branch `new` can check out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BranchCandidate {
+    pub name: String,
+    /// Only on origin; `new` creates a local tracking branch.
+    pub remote: bool,
+}
+
+/// What `remove_or_defer` did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "result", content = "users")]
+pub enum Removal {
+    Removed,
+    /// Something still uses the clone (named here); it is marked and goes as
+    /// soon as nothing does.
+    WhenFree(Vec<String>),
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RemoveOptions {
     /// Remove even with uncommitted changes, and force-unmount busy volumes.
@@ -712,12 +730,7 @@ impl Clove {
         timings.extend(fetch_timings);
 
         let result = (|| -> Result<()> {
-            self.write_admin(
-                &admin,
-                &wt,
-                &dir,
-                &format!("clove clone {name} (image may be detached)"),
-            )?;
+            self.write_admin(&admin, &wt, &dir, &lock_reason(&name))?;
             timed(r, &mut timings, "checkout", || {
                 self.checkout(&wt, branch.as_deref(), &base)
             })?;
@@ -992,8 +1005,12 @@ impl Clove {
             .clone_meta(name)?
             .with_context(|| format!("no clone named `{name}`"))?;
         record.backend.store()?.clone_attach(self, name, &meta.mount)?;
-        // Clones made before this file existed get it on their next mount.
+        // Clones made before these existed get them on their next mount.
         let _ = self.write_clone_env(&meta.path, name);
+        let admin = self.clone_admin(name);
+        if admin.exists() {
+            let _ = std::fs::write(admin.join("locked"), lock_reason(name));
+        }
         Ok(meta.path)
     }
 
@@ -1048,6 +1065,7 @@ impl Clove {
             }
         }
         let (image_bytes, own_bytes) = store.clone_bytes(self, name, &meta.mount);
+        let issue = self.clone_issue(name, &meta.path, mounted);
         Ok(CloneInfo {
             name: meta.name,
             path: meta.path,
@@ -1064,7 +1082,194 @@ impl Clove {
             timings: meta.timings,
             total_ms: meta.total_ms,
             failed_steps: meta.failed_steps,
+            issue,
+            removing_when_free: self.clone_dir(name).join(PENDING_FILE).exists(),
         })
+    }
+
+    /// Removes the clone now if nothing uses it; otherwise marks it to go as
+    /// soon as nothing does (see [`Clove::remove_pending`]) and says who holds
+    /// it. Uncommitted changes refuse either way, unless `force`.
+    pub fn remove_or_defer(&self, name: &str, opts: &RemoveOptions, r: &dyn Reporter) -> Result<Removal> {
+        let meta = self
+            .clone_meta(name)?
+            .with_context(|| format!("no clone named `{name}`"))?;
+        if !opts.force {
+            let store = self.store()?;
+            if store.clone_attached(self, name, &meta.mount) {
+                if git::is_dirty(&meta.path).unwrap_or(false) {
+                    bail!(
+                        "`{name}` has uncommitted changes; commit them, or `clove rm --force {name}` to discard"
+                    );
+                }
+                stop_fsmonitor(&meta.path);
+                let users = backend::users(&meta.mount);
+                if !users.is_empty() {
+                    let pending = serde_json::json!({
+                        "delete_branch": opts.delete_branch,
+                        "branch_merged": opts.branch_merged,
+                        "asked_at": now_unix(),
+                    });
+                    write_json(&self.clone_dir(name).join(PENDING_FILE), &pending)?;
+                    let mut names: Vec<String> = users.iter().map(backend::describe).collect();
+                    names.sort();
+                    names.dedup();
+                    return Ok(Removal::WhenFree(names));
+                }
+            }
+        }
+        self.remove(name, opts, r)?;
+        Ok(Removal::Removed)
+    }
+
+    /// Clones marked to go once nothing uses them.
+    pub fn pending_removals(&self) -> Vec<String> {
+        self.clone_names()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|n| self.clone_dir(n).join(PENDING_FILE).exists())
+            .collect()
+    }
+
+    /// Removes the marked clones nothing uses any more. Returns what went and
+    /// what failed (a clone that got uncommitted changes since is unmarked
+    /// and kept, with the reason).
+    pub fn remove_pending(&self, r: &dyn Reporter) -> (Vec<String>, Vec<(String, String)>) {
+        let (mut done, mut kept) = (vec![], vec![]);
+        for name in self.pending_removals() {
+            let Ok(Some(meta)) = self.clone_meta(&name) else {
+                continue;
+            };
+            let marker = self.clone_dir(&name).join(PENDING_FILE);
+            let opts: serde_json::Value = read_json(&marker).ok().flatten().unwrap_or_default();
+            let opts = RemoveOptions {
+                force: false,
+                delete_branch: opts["delete_branch"].as_bool().unwrap_or(false),
+                branch_merged: opts["branch_merged"].as_bool().unwrap_or(false),
+            };
+            let attached = self
+                .store()
+                .is_ok_and(|s| s.clone_attached(self, &name, &meta.mount));
+            if attached && !backend::users(&meta.mount).is_empty() {
+                continue;
+            }
+            match self.remove(&name, &opts, r) {
+                Ok(()) => done.push(name),
+                Err(e) => {
+                    let _ = std::fs::remove_file(&marker);
+                    kept.push((name, format!("{e:#}")));
+                }
+            }
+        }
+        (done, kept)
+    }
+
+    /// Waits for the marked clones to be free and removes them, checking every
+    /// few seconds, until none are left or `max` has passed. One waiter per
+    /// repo; a second call returns at once.
+    pub fn wait_and_remove_pending(&self, max: std::time::Duration, r: &dyn Reporter) -> Result<()> {
+        let Ok(_lock) = FileLock::try_acquire(&self.state.join("remove-pending.lock")) else {
+            return Ok(());
+        };
+        let start = std::time::Instant::now();
+        while !self.pending_removals().is_empty() && start.elapsed() < max {
+            self.remove_pending(r);
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+        Ok(())
+    }
+
+    /// Existing branches worth offering for `new`, newest first: local ones,
+    /// then origin-only ones. Leaves out the base, agent scaffolding
+    /// (`worktree-agent-*`), branches checked out in a worktree (git refuses a
+    /// second checkout), and branches already merged: into the base by
+    /// ancestry, or by a PR the last check saw merged (squash merges).
+    pub fn branch_candidates(&self) -> Vec<BranchCandidate> {
+        let base = &self.config.base;
+        let base_short = base.split_once('/').map(|(_, b)| b).unwrap_or(base).to_string();
+        let lines = |args: &[&str]| -> Vec<String> {
+            git::out(&self.root, args)
+                .map(|s| s.lines().map(|l| l.trim().to_string()).collect())
+                .unwrap_or_default()
+        };
+        let checked_out: std::collections::HashSet<String> = lines(&["worktree", "list", "--porcelain"])
+            .into_iter()
+            .filter_map(|l| l.strip_prefix("branch refs/heads/").map(str::to_string))
+            .collect();
+        let mut merged: std::collections::HashSet<String> =
+            lines(&["branch", "--format=%(refname:short)", "--merged", base])
+                .into_iter()
+                .collect();
+        merged.extend(
+            lines(&["branch", "-r", "--format=%(refname:short)", "--merged", base])
+                .into_iter()
+                .filter_map(|r| r.split_once('/').map(|(_, b)| b.to_string())),
+        );
+        if let Some(p) = self.prune_cache() {
+            merged.extend(p.checks.iter().filter_map(|m| {
+                let pr = m.pr.as_ref()?;
+                (pr.state == crate::prune::PrState::Merged)
+                    .then(|| m.branch.clone())
+                    .flatten()
+            }));
+        }
+        let skip = |b: &str| {
+            b == base_short
+                || b == "HEAD"
+                || b.starts_with("worktree-agent-")
+                || checked_out.contains(b)
+                || merged.contains(b)
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut out = vec![];
+        for (args, remote) in [
+            (
+                &[
+                    "for-each-ref",
+                    "--sort=-committerdate",
+                    "--format=%(refname:short)",
+                    "refs/heads",
+                ][..],
+                false,
+            ),
+            (
+                &[
+                    "for-each-ref",
+                    "--sort=-committerdate",
+                    "--format=%(refname:short)",
+                    "refs/remotes/origin",
+                ][..],
+                true,
+            ),
+        ] {
+            for r in lines(args) {
+                let name = if remote {
+                    match r.strip_prefix("origin/") {
+                        Some(n) => n.to_string(),
+                        None => continue,
+                    }
+                } else {
+                    r
+                };
+                if name.is_empty() || skip(&name) || !seen.insert(name.clone()) {
+                    continue;
+                }
+                out.push(BranchCandidate { name, remote });
+            }
+        }
+        out
+    }
+
+    /// What an outside tool broke, if anything. A clone needs its git
+    /// registration (the admin dir) and, when mounted, its worktree.
+    fn clone_issue(&self, name: &str, wt: &Path, mounted: bool) -> Option<String> {
+        if !self.clone_admin(name).exists() {
+            return Some("unregistered from git outside clove".into());
+        }
+        if mounted && !wt.join(".git").exists() {
+            return Some("worktree deleted outside clove".into());
+        }
+        None
     }
 
     pub fn list(&self, status: bool) -> Result<Vec<CloneInfo>> {
@@ -1165,6 +1370,35 @@ impl Clove {
                 }
             }
         }
+        let pending = self.pending_removals();
+        for n in &pending {
+            actions.push(format!("remove clone {n} once nothing uses it (asked earlier)"));
+        }
+        // remove() takes the repo lock itself: release ours around it.
+        let _lock = if apply && !pending.is_empty() {
+            drop(_lock);
+            self.remove_pending(&crate::events::Silent);
+            self.lock()?
+        } else {
+            _lock
+        };
+        // Clones an outside tool broke: worktree deleted, or unregistered.
+        for n in &names {
+            let Ok(Some(meta)) = self.clone_meta(n) else {
+                continue;
+            };
+            let mounted = store.clone_attached(self, n, &meta.mount);
+            if let Some(issue) = self.clone_issue(n, &meta.path, mounted) {
+                actions.push(format!("remove clone {n}: {issue}"));
+                if apply {
+                    let _ = store.clone_detach(self, n, &meta.mount, true);
+                    let _ = std::fs::remove_dir_all(self.clone_admin(n));
+                    let _ = store.clone_delete(self, n, &meta.mount);
+                    let _ = std::fs::remove_dir_all(self.clone_dir(n));
+                    let _ = std::fs::remove_dir(&meta.mount);
+                }
+            }
+        }
         if let Ok(rd) = std::fs::read_dir(self.common_dir.join("worktrees")) {
             for e in rd.flatten() {
                 let n = e.file_name().to_string_lossy().to_string();
@@ -1240,6 +1474,15 @@ impl Clove {
             Ok(())
         })
     }
+}
+
+/// Inside a clone's state dir: removal asked while the clone was in use.
+pub const PENDING_FILE: &str = "remove-when-free.json";
+
+/// The lock reason git prints when something tries `git worktree remove` on a
+/// clone: it names the command that works.
+fn lock_reason(name: &str) -> String {
+    format!("clove clone: remove it with `clove rm {name}` (git can't unmount or delete its disk image)")
 }
 
 /// git's fsmonitor daemon (core.fsmonitor) keeps running in a worktree and

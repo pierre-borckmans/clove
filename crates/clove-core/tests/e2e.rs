@@ -338,6 +338,48 @@ fn full_lifecycle() {
     }
     assert!(c.prune_cache().is_some_and(|p| p.checks.len() == checks.len()));
 
+    // Branch suggestions for `new`: not the base, not one a clone has.
+    let cands: Vec<String> = c.branch_candidates().into_iter().map(|b| b.name).collect();
+    assert!(!cands.iter().any(|b| b == "main" || b == "feat/a"), "{cands:?}");
+
+    // Broken outside clove: registration deleted (git worktree remove -f -f,
+    // prune), or the worktree deleted while mounted. Both are flagged, and gc
+    // finishes removing them.
+    for (name, how) in [("gone-admin", "unregistered"), ("gone-tree", "worktree deleted")] {
+        let b = c
+            .new_clone(
+                &NewOptions {
+                    detach: true,
+                    name: Some(name.into()),
+                    ..Default::default()
+                },
+                &Silent,
+            )
+            .unwrap();
+        if name == "gone-admin" {
+            std::fs::remove_dir_all(root.join(".git/worktrees").join(format!("clove-{name}"))).unwrap();
+        } else {
+            std::fs::remove_dir_all(&b.path).unwrap();
+        }
+        let issue = c.info(name, false).unwrap().issue.unwrap_or_default();
+        assert!(issue.contains(how), "{name}: {issue}");
+    }
+    let plan = c.gc(false).unwrap();
+    assert!(
+        plan.iter().any(|a| a.contains("remove clone gone-admin")),
+        "{plan:?}"
+    );
+    assert!(
+        plan.iter().any(|a| a.contains("remove clone gone-tree")),
+        "{plan:?}"
+    );
+    c.gc(true).unwrap();
+    let names = c.clone_names().unwrap();
+    assert!(!names.iter().any(|n| n.starts_with("gone-")), "{names:?}");
+    // A healthy clone's lock tells git users what to run instead.
+    let lock = std::fs::read_to_string(root.join(".git/worktrees/clove-peek/locked")).unwrap();
+    assert!(lock.contains("clove rm peek"), "{lock}");
+
     // remove refuses dirty clones without --force
     std::fs::write(a.path.join("app.txt"), "dirty\n").unwrap();
     assert!(c.remove("feat-a", &RemoveOptions::default(), &Silent).is_err());

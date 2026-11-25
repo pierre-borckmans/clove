@@ -29,7 +29,7 @@ import { useHotkey } from "@/hooks/use-hotkey";
 import { bytes, since } from "@/lib/format";
 import { useOps } from "@/lib/ops";
 import { APP_LABELS, usePrefs } from "@/lib/prefs";
-import { copyPath, copyText, openIn, useMountToggle, usePrs } from "@/lib/queries";
+import { copyPath, copyText, openIn, useMountToggle, usePrCheck, usePrs } from "@/lib/queries";
 import type { CloneInfo, MergeCheck } from "@/lib/types";
 import { setUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
@@ -56,6 +56,7 @@ export function CloneList({
   const mount = useMountToggle(root);
   const ops = useOps();
   const { data: prs } = usePrs(root);
+  usePrCheck(root);
 
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -243,7 +244,7 @@ function CloneRow({
 }) {
   const prefs = usePrefs();
   const failed = c.failed_steps.length > 0;
-  const state = busy ? "busy" : !c.mounted ? "unmounted" : failed ? "warn" : "mounted";
+  const state = busy ? "busy" : c.issue ? "warn" : !c.mounted ? "unmounted" : failed ? "warn" : "mounted";
   return (
     <div
       role="option"
@@ -268,11 +269,13 @@ function CloneRow({
         <TooltipContent side="right">
           {busy
             ? "Removing…"
-            : !c.mounted
-              ? "Unmounted. Mount it to use the worktree."
-              : failed
-                ? `Setup failed: ${c.failed_steps.join(", ")}`
-                : "Mounted"}
+            : c.issue
+              ? `${c.issue}. Cleanup finishes removing it.`
+              : !c.mounted
+                ? "Unmounted. Mount it to use the worktree."
+                : failed
+                  ? `Setup failed: ${c.failed_steps.join(", ")}`
+                  : "Mounted"}
         </TooltipContent>
       </Tooltip>
 
@@ -281,6 +284,17 @@ function CloneRow({
           <span className={cn("truncate text-[13px] font-medium", !c.mounted && "text-muted-foreground")}>
             {c.name}
           </span>
+          {c.removing_when_free && (
+            <span className="shrink-0 rounded-full bg-foreground/[0.06] px-1.5 text-[11px] leading-[18px] text-muted-foreground">
+              removing when free
+            </span>
+          )}
+          {c.issue && (
+            <span className="flex shrink-0 items-center gap-1 rounded-full bg-amber/12 px-1.5 text-[11px] leading-[18px] text-amber">
+              <TriangleAlert className="size-3" />
+              {c.issue}
+            </span>
+          )}
           {failed && (
             <span className="flex shrink-0 items-center gap-1 rounded-full bg-amber/12 px-1.5 text-[11px] leading-[18px] text-amber">
               <TriangleAlert className="size-3" />

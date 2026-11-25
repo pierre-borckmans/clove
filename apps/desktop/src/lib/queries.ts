@@ -57,6 +57,16 @@ export function useRefs(root: string | undefined, enabled = true) {
   });
 }
 
+/** Existing branches worth offering for a new clone. */
+export function useBranchCandidates(root: string | undefined) {
+  return useQuery({
+    queryKey: ["branch-candidates", root ?? ""],
+    queryFn: () => api.branchCandidates(root as string),
+    enabled: !!root,
+    staleTime: 10_000,
+  });
+}
+
 export function useRepoConfig(root: string | undefined) {
   return useQuery({
     queryKey: keys.config(root ?? ""),
@@ -74,6 +84,28 @@ export function usePrs(root: string | undefined) {
     enabled: !!root,
     refetchInterval: 15_000,
     select: (list) => new Map(list.map((m) => [m.clone, m])),
+  });
+}
+
+/**
+ * While a repo is on screen, asks GitHub about its clones' PRs every few
+ * minutes, so merges made by other tools and agents show up here without the
+ * background service.
+ */
+export function usePrCheck(root: string | undefined) {
+  const qc = useQueryClient();
+  return useQuery({
+    queryKey: ["prs-check", root ?? ""],
+    queryFn: async () => {
+      const checks = await api.checkPrs(root as string);
+      qc.setQueryData(keys.prs(root as string), checks);
+      void qc.invalidateQueries({ queryKey: keys.repos });
+      return checks.length;
+    },
+    enabled: !!root,
+    refetchInterval: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    retry: false,
   });
 }
 

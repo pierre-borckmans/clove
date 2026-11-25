@@ -168,8 +168,24 @@ pub fn run(op: &OpRequest, r: &dyn clove_core::Reporter) -> anyhow::Result<serde
                 delete_branch: *delete_branch,
                 branch_merged: false,
             };
-            Clove::open(root)?.remove(name, &opts, r)?;
-            serde_json::Value::Null
+            let c = Clove::open(root)?;
+            match c.remove_or_defer(name, &opts, r)? {
+                clove_core::Removal::Removed => serde_json::Value::Null,
+                clove_core::Removal::WhenFree(users) => {
+                    // The app stays up, so it waits itself; a later clove
+                    // command picks the removal up if the app quits first.
+                    let root = root.clone();
+                    std::thread::spawn(move || {
+                        if let Ok(c) = Clove::open(&root) {
+                            let _ = c.wait_and_remove_pending(
+                                std::time::Duration::from_secs(12 * 3600),
+                                &clove_core::Silent,
+                            );
+                        }
+                    });
+                    serde_json::json!({ "when_free": users })
+                }
+            }
         }
         OpRequest::Deinit { root } => {
             Clove::open(root)?.deinit(r)?;

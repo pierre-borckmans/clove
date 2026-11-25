@@ -387,6 +387,11 @@ const commands: Record<string, (a: Args) => unknown> = {
     return serviceOn;
   },
   prs: (a) => get(a.root as string).prs,
+  check_prs: (a) => get(a.root as string).prs,
+  branch_candidates: (a) =>
+    get(a.root as string)
+      .refs.filter((r) => r.kind !== "tag" && !/^(main|master|HEAD)$/.test(r.name.replace(/^origin\//, "")))
+      .map((r) => ({ name: r.name.replace(/^origin\//, ""), remote: r.kind === "remote" })),
   shell_status: () => ({
     shell: "zsh",
     installed: shellOn,

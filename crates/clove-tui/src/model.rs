@@ -82,6 +82,8 @@ pub enum Outcome {
     Golden(GoldenMeta),
     Clone(CloneInfo),
     Removed,
+    /// In use (by these); removed once nothing uses it.
+    RemovedWhenFree(Vec<String>),
     Mounted(PathBuf),
     Unmounted,
     Gc(Cleanup),
@@ -111,7 +113,11 @@ pub enum Msg {
     Refs {
         root: PathBuf,
         refs: Vec<GitRef>,
+        /// Existing branches worth offering for a new clone.
+        candidates: Vec<clove_core::BranchCandidate>,
     },
+    /// A background PR check finished; reload to show it.
+    PrsChecked,
     Event(u64, clove_core::Event),
     Done(u64, Result<Outcome, String>),
 }

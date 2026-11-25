@@ -74,6 +74,10 @@ export type CloneInfo = {
   golden_generation: number;
   timings: Timing[];
   failed_steps: string[];
+  /** Broken outside clove (worktree deleted, unregistered); cleanup removes it. */
+  issue?: string;
+  /** Removal asked while in use; it goes once nothing uses it. */
+  removing_when_free?: boolean;
 };
 
 export type CheckLevel = "ok" | "warn" | "fail";

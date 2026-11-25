@@ -99,6 +99,8 @@ pub fn run() {
             commands::service_status,
             commands::service_set,
             commands::prs,
+            commands::check_prs,
+            commands::branch_candidates,
             commands::cleanup,
             commands::shell_status,
             commands::shell_install,

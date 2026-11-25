@@ -180,7 +180,13 @@ export function wireOps(qc: QueryClient, hooks: Hooks) {
     if (op.status === "ok") hooks.onSuccess?.(op);
     if (!hooks.toasts) return;
     const took = ms(e.at - op.startedAt);
-    if (op.status === "ok") {
+    const later = (op.result as { when_free?: string[] } | null)?.when_free;
+    if (op.status === "ok" && later) {
+      toast.info(`${op.subject} is in use`, {
+        id: op.id,
+        description: `By ${later.join(", ")}. clove removes it as soon as ${later.length === 1 ? "it exits" : "they exit"}.`,
+      });
+    } else if (op.status === "ok") {
       const clone = op.req.kind === "new" ? (op.result as CloneInfo | null) : null;
       toast.success(doneTitle(op), {
         id: op.id,

@@ -51,6 +51,8 @@ fn clone(name: &str, branch: Option<&str>, mounted: bool) -> CloneInfo {
         ],
         total_ms: 1047.0,
         failed_steps: vec![],
+        issue: None,
+        removing_when_free: false,
     }
 }
 
@@ -262,6 +264,43 @@ fn refs() -> Vec<GitRef> {
     ]
 }
 
+/// What core would offer from refs(): no base (main), nothing checked out in
+/// a clone (feat/login, fix/race).
+fn candidates() -> Vec<clove_core::BranchCandidate> {
+    ["feat/search", "feat/settings-page"]
+        .into_iter()
+        .map(|n| clove_core::BranchCandidate {
+            name: n.into(),
+            remote: true,
+        })
+        .collect()
+}
+
+#[test]
+fn branch_suggestions_wait_for_typing_and_skip_taken_branches() {
+    let mut app = app();
+    key(&mut app, KeyCode::Char('n'));
+    app.on_msg(Msg::Refs {
+        root: "/work/app".into(),
+        refs: refs(),
+        candidates: candidates(),
+    });
+    let Some(Modal::New(f)) = app.modal.clone() else {
+        panic!()
+    };
+    assert!(app.suggestions(&f).is_empty(), "empty field: no list");
+    typed(&mut app, "f");
+    let Some(Modal::New(f)) = app.modal.clone() else {
+        panic!()
+    };
+    let s = app.suggestions(&f);
+    assert_eq!(
+        s,
+        vec!["feat/search", "feat/settings-page"],
+        "fix/race is checked out in a clone"
+    );
+}
+
 // ---- snapshots ---------------------------------------------------------
 
 #[test]
@@ -417,6 +456,7 @@ fn new_clone_form() {
     app.on_msg(Msg::Refs {
         root: "/work/app".into(),
         refs: refs(),
+        candidates: candidates(),
     });
     typed(&mut app, "feat/se");
     key(&mut app, KeyCode::Down);
@@ -735,6 +775,7 @@ fn never_panics_at_any_size() {
                         app.on_msg(Msg::Refs {
                             root: "/work/app".into(),
                             refs: refs(),
+                            candidates: candidates(),
                         });
                         typed(&mut app, "f");
                     }
@@ -762,6 +803,7 @@ fn creates_a_clone_and_selects_it() {
     app.on_msg(Msg::Refs {
         root: "/work/app".into(),
         refs: refs(),
+        candidates: candidates(),
     });
     typed(&mut app, "feat/sea");
     // Tab completes to the only match, Enter creates.

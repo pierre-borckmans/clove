@@ -742,6 +742,10 @@ fn changes<'a>(app: &App, c: &CloneInfo, w: usize) -> Vec<Span<'a>> {
     let mut parts: Vec<(String, Style)> = vec![];
     if let Some(j) = app.busy(&c.name) {
         parts.push((format!("{}…", j.verb()), fg(BOTTLE)));
+    } else if let Some(issue) = &c.issue {
+        parts.push((issue.clone(), fg(AMBER)));
+    } else if c.removing_when_free {
+        parts.push(("removing when free".into(), muted()));
     } else if !c.mounted {
         parts.push(("unmounted".into(), muted()));
     } else {
@@ -1371,10 +1375,9 @@ fn highlight<'a>(s: &str, q: &str) -> Vec<Span<'a>> {
 fn ref_tag(app: &App, name: &str, focus: usize) -> &'static str {
     let has = |k: RefKind, n: &str| app.refs.iter().any(|r| r.kind == k && r.name == n);
     if focus == 0 {
-        if has(RefKind::Local, name) {
-            "local"
-        } else {
-            "origin"
+        match app.candidates.iter().find(|b| b.name == name) {
+            Some(b) if b.remote => "origin",
+            _ => "local",
         }
     } else if has(RefKind::Local, name) {
         "local"

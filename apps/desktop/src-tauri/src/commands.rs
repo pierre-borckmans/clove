@@ -353,6 +353,20 @@ pub async fn prs(root: PathBuf) -> CmdResult<Vec<MergeCheck>> {
     .await
 }
 
+/// Existing branches worth offering for a new clone (same rules as the CLI
+/// and TUI: no base, scaffolding, merged or checked-out branches).
+#[tauri::command]
+pub async fn branch_candidates(root: PathBuf) -> CmdResult<Vec<clove_core::BranchCandidate>> {
+    block(move || Ok(Clove::open(&root)?.branch_candidates())).await
+}
+
+/// Asks GitHub about the clones' PRs (without mounting any) and returns the
+/// fresh checks; they also land in the cache `prs` reads.
+#[tauri::command]
+pub async fn check_prs(root: PathBuf) -> CmdResult<Vec<MergeCheck>> {
+    block(move || Ok(Clove::open(&root)?.merge_checks(false)?.0)).await
+}
+
 #[derive(Serialize)]
 pub struct Cleanup {
     pub leftovers: Vec<String>,
