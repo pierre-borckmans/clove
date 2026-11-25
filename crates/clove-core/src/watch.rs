@@ -262,11 +262,21 @@ mod tests {
         }
         /// Runs `f`, then reports how many times `on_change` ran.
         fn after(&self, f: impl FnOnce()) -> usize {
-            self.hits.store(0, Ordering::SeqCst);
-            f();
-            std::thread::sleep(Duration::from_millis(900));
-            self.hits.load(Ordering::SeqCst)
+            settle(&self.hits, f)
         }
+    }
+
+    /// Runs `f`, waits up to 3s for a first `on_change` (CI runners deliver
+    /// FSEvents slowly), lets any extra ones land, and returns the count.
+    fn settle(hits: &AtomicUsize, f: impl FnOnce()) -> usize {
+        hits.store(0, Ordering::SeqCst);
+        f();
+        let start = std::time::Instant::now();
+        while hits.load(Ordering::SeqCst) == 0 && start.elapsed() < Duration::from_secs(3) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::sleep(MAX_WAIT);
+        hits.load(Ordering::SeqCst)
     }
 
     #[test]
@@ -329,11 +339,9 @@ mod tests {
         std::fs::create_dir_all(r.state.join("clones")).unwrap();
         r.sync();
         assert!(r.w.watched().contains(&r.state.join("clones")));
-        std::thread::sleep(Duration::from_millis(300));
-        assert_eq!(
-            r.after(|| std::fs::write(r.state.join("repo.json"), "{}").unwrap()),
-            1
-        );
+        // A fresh watch can replay the dir's own creation too: at least one.
+        let n = r.after(|| std::fs::write(r.state.join("repo.json"), "{}").unwrap());
+        assert!(n >= 1, "{n}");
     }
 
     /// Real git against `Clove::watch_targets`: what agents and users actually run.
@@ -378,12 +386,7 @@ mod tests {
         .unwrap();
         w.sync(c.watch_targets());
         std::thread::sleep(Duration::from_millis(300));
-        let after = |f: &dyn Fn()| {
-            hits.store(0, Ordering::SeqCst);
-            f();
-            std::thread::sleep(Duration::from_millis(900));
-            hits.load(Ordering::SeqCst)
-        };
+        let after = |f: &dyn Fn()| settle(&hits, f);
         let wt = base.join("wt");
         let wt_s = wt.to_str().unwrap().to_string();
         // The first worktree creates `.git/worktrees`, which then gets watched.
