@@ -7,6 +7,8 @@
 mod app;
 mod fmt;
 mod model;
+mod panes;
+mod split;
 mod theme;
 mod ui;
 mod worker;
@@ -48,7 +50,8 @@ pub fn run(start_dir: &Path) -> Result<()> {
     let mut term = Term::enter()?;
     let start = Instant::now();
     let mut effects = vec![];
-    let mut pointer_shown = false;
+    let mut pointer_shown = model::Pointer::Default;
+    app.panes = panes::Panes::load(&panes::Panes::path());
     // Without it (no inotify watches left, say) the TUI polls faster instead.
     let watcher = {
         let tx = tx.clone();
@@ -175,6 +178,11 @@ fn perform(e: Effect, app: &mut App, tx: &mpsc::Sender<Msg>, term: &mut Term) {
             Ok(msg) => app.toast(model::ToastKind::Ok, msg),
             Err(e) => app.toast(model::ToastKind::Err, format!("{e:#}")),
         },
+        Effect::SaveLayout => {
+            if let Err(e) = app.panes.save(&panes::Panes::path()) {
+                app.toast(model::ToastKind::Err, format!("saving panel sizes: {e}"));
+            }
+        }
         Effect::EditConfig(path) => {
             let res = clove_core::config::ensure_file(&path).and_then(|_| open_editor(term, &path));
             match res {
@@ -307,18 +315,18 @@ fn setup() -> Result<()> {
     Ok(())
 }
 
-/// OSC 22: a hand over clickable things in terminals that support pointer
-/// shapes (ghostty, kitty, WezTerm, foot); others ignore it.
-fn set_pointer(hand: bool) {
+/// OSC 22: a hand over clickable things, a resize arrow over dividers, in
+/// terminals that support pointer shapes (ghostty, kitty, WezTerm, foot);
+/// others ignore it.
+fn set_pointer(shape: model::Pointer) {
     use std::io::Write;
-    let shape = if hand { "pointer" } else { "default" };
     let mut e = std::io::stderr();
-    let _ = write!(e, "\x1b]22;{shape}\x1b\\");
+    let _ = write!(e, "\x1b]22;{}\x1b\\", shape.name());
     let _ = e.flush();
 }
 
 fn restore() {
-    set_pointer(false);
+    set_pointer(model::Pointer::Default);
     let _ = execute!(
         std::io::stderr(),
         DisableBracketedPaste,

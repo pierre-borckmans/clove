@@ -2,35 +2,35 @@
 source: crates/clove-tui/src/tests.rs
 expression: s
 ---
-╭ clove ───────────────────────────────────────────────────────────────────────────────────────────╮
-│ app  /work/app                                                              5 clones · 4 mounted │
-│ golden  ● gen 3 · a1╭ keys ────────────────────────────────────────────────╮                     │
-╰─────────────────────│                                                      │─────────────────────╯
-╭ repos ─────────────╮│  CLONES                                              │─────────────────────╮
-│ ▌ app          5 ● ││             ⏎   cd into it and quit                  │       AGE    SIZE   │
-│   mono         2 ● ││             n   new clone on a branch                │2       5m     14M   │
-│   web       set up ││             d   remove (asks first)                  │        3h    230M   │
-│                    ││         m / u   mount / unmount                      │ed      3h     14M   │
-│                    ││             o   open in $EDITOR                      │        4d     14M   │
-│                    ││             /   filter by name or branch             │        3h     14M   │
-│                    ││         ↑↓ jk   move · wheel scrolls                 │                     │
-│                    ││                                                      │                     │
+╭ clove ──────────────╭ keys ────────────────────────────────────────────────╮─────────────────────╮
+│ app  /work/app      │                                                      │5 clones · 4 mounted │
+│ golden  ● gen 3 · a1│  CLONES                                              │                     │
+╰─────────────────────│             ⏎   cd into it and quit                  │─────────────────────╯
+╭ repos ─────────────╮│             n   new clone on a branch                │─────────────────────╮
+│ ▌ app          5 ● ││             d   remove (asks first)                  │       AGE    SIZE   │
+│   mono         2 ● ││         m / u   mount / unmount                      │2       5m     14M   │
+│   web       set up ││             o   open in $EDITOR                      │        3h    230M   │
+│                    ││             /   filter by name or branch             │ed      3h     14M   │
+│                    ││         ↑↓ jk   move · wheel scrolls                 │        4d     14M   │
+│                    ││                                                      │        3h     14M   │
 │                    ││  GOLDEN IMAGE                                        │                     │
 │                    ││             r   refresh to latest base               │                     │
 │                    ││             i   build it (first time)                │                     │
 │                    ││             l   watch the last operation             │                     │
 │                    ││                                                      │                     │
-│                    ││  ANYWHERE                                            │─────────────────────╯
-│                    ││   tab [ ] 1-9   switch repository                    │─────────────────────╮
-│                    ││             s   settings, service                    │                     │
-│                    ││             g   cleanup: merged clones, leftovers    │                     │
+│                    ││  ANYWHERE                                            │                     │
+│                    ││   tab [ ] 1-9   switch repository                    │                     │
+│                    ││             s   settings, service                    │─────────────────────╯
+│                    ││             g   cleanup: merged clones, leftovers    │─────────────────────╮
 │                    ││             D   doctor                               │                     │
 │                    ││        ctrl-r   reload now                           │                     │
 │                    ││         q esc   quit                                 │                     │
-│ ────────────────── ││                                                      │                     │
-│ s settings         ││  rows, tabs, buttons and hints are clickable         │                     │
+│                    ││                                                      │                     │
+│                    ││  PANELS                                              │                     │
+│ ────────────────── ││     < > / { }   move the detail / sidebar border     │                     │
+│ s settings         ││             =   reset sizes · or double-click        │                     │
 │ g cleanup          ││                                                      │               3.2s  │
-│ D doctor           │╰──────────────────────────────────────────────────────╯                6ms  │
-│ S service          ││                                                                            │
-╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯
+│ D doctor           ││  rows, tabs and hints are clickable; borders drag    │                6ms  │
+│ S service          ││                                                      │                     │
+╰────────────────────╯╰──────────────────────────────────────────────────────╯─────────────────────╯
  esc close
