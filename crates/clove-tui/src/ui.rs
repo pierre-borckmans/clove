@@ -1730,16 +1730,19 @@ fn settings_lines(app: &App, iw: usize) -> Vec<Line<'static>> {
     };
     if st.copy.is_empty() {
         l.push(kv(
-            "copied in",
-            vec![Span::styled(format!("nothing ({copy_src})"), muted())],
+            "local files",
+            vec![Span::styled(format!("none ({copy_src})"), muted())],
         ));
     }
     for (i, p) in st.copy.iter().enumerate() {
         let mut v = vec![Span::raw(trunc(p, iw.saturating_sub(kw + 16)))];
         if i == 0 {
-            v.push(Span::styled(format!("  {copy_src}"), muted()));
+            v.push(Span::styled(
+                format!("  {copy_src}, copied into each clone"),
+                muted(),
+            ));
         }
-        l.push(kv(if i == 0 { "copied in" } else { "" }, v));
+        l.push(kv(if i == 0 { "local files" } else { "" }, v));
     }
     l.push(Line::from(""));
 

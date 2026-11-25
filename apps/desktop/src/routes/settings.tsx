@@ -196,16 +196,16 @@ function RepoSections({ cfg }: { cfg: RepoConfig }) {
             </Mono>
           </Row>
         ))}
-        <Row label="Copied in">
+        <Row label="Local files">
           {cfg.copy.length === 0 ? (
-            <Plain muted>Nothing ({c.copy ? "configured" : "detected"})</Plain>
+            <Plain muted>None ({c.copy ? "configured" : "detected"})</Plain>
           ) : (
             <div className="flex flex-col gap-0.5">
               {cfg.copy.map((p) => (
                 <Mono key={p}>{p}</Mono>
               ))}
               <span className="text-[11.5px] text-faint">
-                {c.copy ? "configured" : "detected: env-like files git ignores"}
+                {c.copy ? "configured" : "env files git ignores, detected"}, copied into each clone
               </span>
             </div>
           )}

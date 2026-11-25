@@ -1249,7 +1249,11 @@ fn cmd_status(cli: &Cli) -> Result<()> {
         println!("  fresh   {state} {policy}");
     }
     if !s.copy.is_empty() {
-        println!("  copies  {}", s.copy.join(", "));
+        println!(
+            "  local   {} {}",
+            s.copy.join(", "),
+            paint(DIM, "(gitignored, copied into each clone)")
+        );
     }
     let names: Vec<_> = s.steps.iter().map(|x| x.name.as_str()).collect();
     println!(

@@ -178,7 +178,20 @@ pub fn repo(c: &Clove) -> Vec<Check> {
                 fix,
             ));
             if !m.copied.is_empty() {
-                out.push(check("copy", Level::Ok, m.copied.join(", "), None));
+                let how = if c.config.copy.is_some() {
+                    "listed in `copy`"
+                } else {
+                    "gitignored env files, detected"
+                };
+                out.push(check(
+                    "local files",
+                    Level::Ok,
+                    format!(
+                        "copied into each clone, since git won't bring them ({how}): {}",
+                        m.copied.join(", ")
+                    ),
+                    None,
+                ));
             }
             if m.dirty {
                 out.push(check(
