@@ -3,7 +3,7 @@ mod complete;
 mod render;
 mod shell;
 
-use anstream::{eprint, eprintln, println};
+use anstream::{eprintln, println};
 use anyhow::{Context, Result, bail};
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::engine::ArgValueCompleter;
@@ -708,12 +708,15 @@ fn after_init() -> Result<()> {
     if !shell::active() {
         match shell::detect() {
             Some(sh) if interactive => {
-                eprint!(
-                    "\nLet clove cd into new clones? Adds `{}` to {}. [Y/n] ",
-                    shell::rc_line(sh),
-                    tilde(&shell::rc_path(sh))
-                );
-                if ask_yes()? {
+                let yes = ask(
+                    "Let clove cd you into new clones?",
+                    &[
+                        format!("Adds one line to {}:", tilde(&shell::rc_path(sh))),
+                        shell::rc_line(sh).to_string(),
+                    ],
+                    true,
+                )?;
+                if yes {
                     let (path, _) = shell::install(sh)?;
                     eprintln!(
                         "{} added; open a new terminal (or `source {}`)",
@@ -740,13 +743,18 @@ fn after_init() -> Result<()> {
         );
         return Ok(());
     }
-    eprint!(
-        "\nKeep golden images fresh in the background? Installs {}: \
-         one refreshes a stale image when you fetch or pull (and every 4h), one remounts \
-         clones at login. [Y/n] ",
-        clove_core::service::AGENTS
-    );
-    if ask_yes()? {
+    let yes = ask(
+        "Keep golden images fresh in the background?",
+        &[
+            "Refreshes a stale golden image when you fetch or pull, and every 4h.".to_string(),
+            format!(
+                "Remounts clones after a reboot. Installs {}.",
+                clove_core::service::AGENTS
+            ),
+        ],
+        true,
+    )?;
+    if yes {
         for p in clove_core::service::install(clove_core::service::DEFAULT_EVERY)? {
             eprintln!("{} {}", paint(GREEN, "✓"), tilde(&p));
         }
@@ -776,8 +784,15 @@ fn fstab_prompt(c: &Clove, json: bool) -> Result<()> {
         );
         return Ok(());
     }
-    eprint!("\nclove needs one line in /etc/fstab so it can mount its image without sudo. Add it? [Y/n] ");
-    if ask_yes()? {
+    let yes = ask(
+        "Mount clove's image without sudo?",
+        &[
+            "Adds one line to /etc/fstab (asks for your password once):".to_string(),
+            line.clone(),
+        ],
+        true,
+    )?;
+    if yes {
         match c.add_fstab_line(&line) {
             Ok(()) => eprintln!("{} added to /etc/fstab: {line}", paint(GREEN, "✓")),
             Err(e) => eprintln!("{} {e:#}; later: {}", paint(YELLOW, "!"), paint(BOLD, &cmd)),
@@ -790,14 +805,6 @@ fn fstab_prompt(c: &Clove, json: bool) -> Result<()> {
         );
     }
     Ok(())
-}
-
-/// Reads a [Y/n] answer. End of input (Ctrl-D, a closed pipe) counts as no;
-/// only Enter takes the default.
-fn ask_yes() -> Result<bool> {
-    let mut answer = String::new();
-    let read = std::io::stdin().read_line(&mut answer)?;
-    Ok(read > 0 && matches!(answer.trim().to_ascii_lowercase().as_str(), "" | "y" | "yes"))
 }
 
 fn print_plan(c: &Clove) {
@@ -1106,10 +1113,7 @@ fn cmd_prune(cli: &Cli, apply: bool, r: &dyn clove_core::Reporter) -> Result<()>
             clove_core::util::human_bytes(freed)
         );
         if interactive {
-            eprint!("\nRemove {what}? [y/N] ");
-            let mut answer = String::new();
-            std::io::stdin().read_line(&mut answer)?;
-            confirmed = matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+            confirmed = ask(&format!("Remove {what}?"), &[], false)?;
         } else {
             eprintln!("\n{what} can go: {}", paint(BOLD, "clove prune --apply"));
         }

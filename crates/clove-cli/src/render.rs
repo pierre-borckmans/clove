@@ -285,6 +285,51 @@ pub fn timing_bars(timings: &[Timing]) {
     }
 }
 
+/// Asks a yes/no question: a short bold question, then the details on dim,
+/// indented lines wrapped to the terminal, then the answer hint. End of
+/// input (Ctrl-D, a closed pipe) counts as no; Enter takes the default.
+pub fn ask(question: &str, details: &[String], default_yes: bool) -> std::io::Result<bool> {
+    let width = term_width().clamp(40, 100) - 4;
+    eprintln!("\n{} {}", paint(ACCENT, "?"), paint(BOLD, question));
+    for d in details {
+        for l in wrap(d, width) {
+            eprintln!("    {}", paint(DIM, l));
+        }
+    }
+    let hint = if default_yes { "[Y/n]" } else { "[y/N]" };
+    let mut e = anstream::stderr();
+    let _ = write!(e, "  {} ", paint(DIM, hint));
+    let _ = e.flush();
+    let mut answer = String::new();
+    let read = std::io::stdin().read_line(&mut answer)?;
+    let a = answer.trim().to_ascii_lowercase();
+    Ok(read > 0
+        && match a.as_str() {
+            "" => default_yes,
+            "y" | "yes" => true,
+            _ => false,
+        })
+}
+
+/// Greedy word wrap; a word longer than the width gets its own line.
+fn wrap(s: &str, width: usize) -> Vec<String> {
+    let mut out = vec![];
+    let mut line = String::new();
+    for w in s.split_whitespace() {
+        if !line.is_empty() && line.chars().count() + 1 + w.chars().count() > width {
+            out.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(w);
+    }
+    if !line.is_empty() {
+        out.push(line);
+    }
+    out
+}
+
 /// Left-aligned columns, widths from content. Styled cells must pass their
 /// visible width so ANSI codes do not break alignment.
 pub struct Table {
@@ -342,4 +387,19 @@ pub fn styled(style: Style, s: impl Into<String>) -> (String, usize) {
     let s = s.into();
     let w = s.chars().count();
     (paint(style, s), w)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn wraps_on_words() {
+        assert_eq!(
+            super::wrap("one two three four", 9),
+            vec!["one two", "three", "four"]
+        );
+        assert_eq!(
+            super::wrap("averyveryverylongword x", 5),
+            vec!["averyveryverylongword", "x"]
+        );
+    }
 }
