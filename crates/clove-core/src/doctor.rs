@@ -189,6 +189,28 @@ pub fn repo(c: &Clove) -> Vec<Check> {
         },
         None,
     ));
+    if c.config.steps_detected {
+        let nested = crate::detect::nested_projects(&c.root);
+        if nested.len() > crate::detect::MAX_NESTED {
+            let shown: Vec<_> = nested.iter().take(6).map(String::as_str).collect();
+            let more = nested.len().saturating_sub(shown.len());
+            out.push(check(
+                "nested projects",
+                Level::Ok,
+                format!(
+                    "{} have their own lockfile and aren't warmed (too many to build by default): {}{}",
+                    nested.len(),
+                    shown.join(", "),
+                    if more > 0 {
+                        format!(" and {more} more")
+                    } else {
+                        String::new()
+                    }
+                ),
+                Some("add [[add_step]] entries to .clove.toml for the ones you work on".into()),
+            ));
+        }
+    }
     for s in &c.config.steps {
         if let Some(tool) = required_tool(s)
             && which(tool).is_none()

@@ -286,7 +286,13 @@ mod private_size_tests {
             super::private_bytes(&b) < 1 << 20,
             "fresh clone shares its blocks"
         );
-        std::fs::write(&b, vec![9u8; 4 << 20]).unwrap();
+        {
+            use std::io::Write;
+            let mut f = std::fs::File::create(&b).unwrap();
+            f.write_all(&vec![9u8; 4 << 20]).unwrap();
+            // APFS allocates on flush; measuring before it can read low.
+            f.sync_all().unwrap();
+        }
         assert!(super::private_bytes(&b) >= 4 << 20);
     }
 }
