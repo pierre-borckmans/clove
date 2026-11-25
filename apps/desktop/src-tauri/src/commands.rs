@@ -73,6 +73,12 @@ pub async fn repos() -> CmdResult<Vec<RepoSummary>> {
     .await
 }
 
+/// Drops remembered git answers: a manual refresh asks git again.
+#[tauri::command]
+pub fn forget_cache() {
+    clove_core::memo::clear();
+}
+
 #[tauri::command]
 pub async fn repo_status(root: PathBuf) -> CmdResult<RepoStatus> {
     block(move || Clove::open(&root)?.status()).await

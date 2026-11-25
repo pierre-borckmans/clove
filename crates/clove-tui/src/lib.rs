@@ -80,14 +80,14 @@ pub fn run(start_dir: &Path) -> Result<()> {
         for e in effects.drain(..) {
             perform(e, &mut app, &tx, &mut term);
         }
-        let busy = app.animate();
+        let tick = app.tick_ms();
         term.terminal.draw(|f| ui::draw(f, &mut app))?;
         if app.pointer != pointer_shown {
             set_pointer(app.pointer);
             pointer_shown = app.pointer;
         }
 
-        let timeout = Duration::from_millis(if busy { 40 } else { 250 });
+        let timeout = Duration::from_millis(tick);
         if event::poll(timeout)? {
             app.now_ms = start.elapsed().as_millis() as u64;
             loop {

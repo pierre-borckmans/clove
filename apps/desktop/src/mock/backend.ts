@@ -608,6 +608,7 @@ const commands: Record<string, (a: Args) => unknown> = {
   open_main: () => null,
   hide_popover: () => null,
   quit: () => null,
+  forget_cache: () => null,
 };
 
 // Repos "on disk" the add-repo dialog offers: root, branch, seconds since last use.

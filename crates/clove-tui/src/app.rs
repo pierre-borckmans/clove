@@ -403,7 +403,20 @@ impl App {
     }
 
     /// Advances animations and expires toasts. Returns true while anything moves.
-    pub fn animate(&mut self) -> bool {
+    /// How long the event loop may sleep before the next frame: short while
+    /// something scrolls, a spinner's frame while something runs, else idle.
+    pub fn tick_ms(&mut self) -> u64 {
+        if self.advance() {
+            40
+        } else if self.waiting() {
+            crate::theme::SPINNER_MS
+        } else {
+            250
+        }
+    }
+
+    /// Steps smooth scrolls and drops expired toasts; true while one moves.
+    fn advance(&mut self) -> bool {
         let now = self.now_ms;
         self.toasts.retain(|t| now.saturating_sub(t.born_ms) < t.ttl_ms());
         let mut moving = self.list_scroll.tick();
@@ -418,10 +431,18 @@ impl App {
             moving |= v.scroll.tick();
         }
         moving
-            || !self.toasts.is_empty()
-            || self.running().next().is_some()
-            || self.loading
-            || self.tip_pending()
+    }
+
+    /// Advances animations one frame; true while anything still needs frames.
+    #[cfg(test)]
+    pub fn animate(&mut self) -> bool {
+        self.advance() || self.waiting()
+    }
+
+    /// Something shows progress or is about to change: toasts, jobs, a load,
+    /// a tooltip on its way.
+    fn waiting(&self) -> bool {
+        !self.toasts.is_empty() || self.running().next().is_some() || self.loading || self.tip_pending()
     }
 
     /// A tooltip may be about to show: keep redrawing so it appears on time.
@@ -1006,7 +1027,11 @@ impl App {
             KeyCode::Char(c @ '1'..='9') => {
                 return self.switch_repo(c as usize - '1' as usize);
             }
-            KeyCode::Char('r') if ctrl => return vec![Effect::Load],
+            KeyCode::Char('r') if ctrl => {
+                // A manual reload asks git again instead of trusting the memo.
+                clove_core::memo::clear();
+                return vec![Effect::Load];
+            }
             KeyCode::Char('n') | KeyCode::Char('a') => return self.open_new(),
             KeyCode::Char('d') | KeyCode::Delete => self.open_remove(),
             KeyCode::Char('m') => return self.mount_selected(After::Nothing),

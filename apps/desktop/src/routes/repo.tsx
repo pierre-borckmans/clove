@@ -9,6 +9,7 @@ import { RepoMark } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WorktreeList } from "@/components/worktree-list";
+import { api } from "@/lib/api";
 import { tildify } from "@/lib/format";
 import { copyPath, useClones, useRepo, useStatus, useWorktrees } from "@/lib/queries";
 import { setUi } from "@/lib/ui";
@@ -22,9 +23,12 @@ export function RepoPage() {
 
   useEffect(() => {
     const refetch = () => {
-      void status.refetch();
-      void clones.refetch();
-      void worktrees.refetch();
+      // Ask git again rather than reuse what the backend remembers.
+      void api.forgetCache().then(() => {
+        void status.refetch();
+        void clones.refetch();
+        void worktrees.refetch();
+      });
     };
     window.addEventListener("clove:refetch", refetch);
     return () => window.removeEventListener("clove:refetch", refetch);

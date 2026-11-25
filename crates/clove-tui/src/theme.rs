@@ -45,8 +45,11 @@ pub fn title() -> Style {
 
 pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+/// One spinner frame: also how often a busy screen redraws.
+pub const SPINNER_MS: u64 = 80;
+
 pub fn spinner(now_ms: u64) -> &'static str {
-    SPINNER[((now_ms / 80) % SPINNER.len() as u64) as usize]
+    SPINNER[((now_ms / SPINNER_MS) % SPINNER.len() as u64) as usize]
 }
 
 /// The clove mark as half-block lines (6 rows). The c uses the terminal's own

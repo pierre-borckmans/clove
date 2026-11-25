@@ -107,6 +107,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::repos,
             commands::repo_status,
+            commands::forget_cache,
             commands::clones,
             commands::worktrees,
             commands::refs,

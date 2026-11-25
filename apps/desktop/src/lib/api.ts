@@ -30,6 +30,7 @@ export function normStep(s: Partial<Step> & { name: string }): Step {
 
 export const api = {
   repos: () => invoke<RepoSummary[]>("repos"),
+  forgetCache: () => invoke<null>("forget_cache"),
   status: (root: string) =>
     invoke<RepoStatus>("repo_status", { root }).then((s) => ({ ...s, steps: s.steps.map(normStep) })),
   clones: (root: string, status: boolean) => invoke<CloneInfo[]>("clones", { root, status }),
