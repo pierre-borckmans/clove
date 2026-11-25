@@ -87,6 +87,35 @@ pub fn get<T: Clone + Send + 'static>(key: &str, deps: &[Dep], compute: impl FnO
     lookup(key, None, deps, compute)
 }
 
+/// `compute`'s answer for `key`, reused for `max_age`: for numbers that drift
+/// slowly and are only shown, like disk usage.
+pub fn get_aged<T: Clone + Send + 'static>(key: &str, max_age: Duration, compute: impl FnOnce() -> T) -> T {
+    {
+        let m = MEMO.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(e) = m.get(key)
+            && e.at.elapsed() < max_age
+            && let Some(v) = e.value.downcast_ref::<T>()
+        {
+            return v.clone();
+        }
+    }
+    let v = compute();
+    let entry = Entry {
+        tree: None,
+        stamp: vec![],
+        at: Instant::now(),
+        stale: false,
+        value: Box::new(v.clone()),
+    };
+    MEMO.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key.to_string(), entry);
+    v
+}
+
+/// How long disk usage figures are reused.
+pub const SIZE_TTL: Duration = Duration::from_secs(60);
+
 /// Like [`get`] for answers that read the working tree at `tree`.
 pub fn get_tree<T: Clone + Send + 'static>(
     key: &str,

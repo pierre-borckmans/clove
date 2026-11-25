@@ -27,6 +27,16 @@ const DEBOUNCE: Duration = Duration::from_millis(150);
 /// A steady stream of events still reloads this often.
 const MAX_WAIT: Duration = Duration::from_secs(1);
 
+/// What an event means, in rising order of urgency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Hit {
+    None,
+    /// An edit in a working tree.
+    Tree,
+    /// Clove or git state: worktrees, refs, golden images.
+    State,
+}
+
 /// One directory to watch and which of its entries count.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target {
@@ -187,37 +197,61 @@ impl Watcher {
         let targets: Arc<Mutex<Vec<Target>>> = Arc::default();
         let seen = targets.clone();
         let relevant = move |ev: &notify::Result<notify::Event>| {
-            let Ok(ev) = ev else { return true };
+            let Ok(ev) = ev else { return Hit::State };
             if matches!(
                 ev.kind,
                 EventKind::Access(_) | EventKind::Modify(notify::event::ModifyKind::Metadata(_))
             ) {
-                return false;
+                return Hit::None;
             }
             let t = seen.lock().unwrap_or_else(|e| e.into_inner());
-            let mut hit = None;
+            let mut hit = Hit::None;
+            let mut first = None;
             for p in &ev.paths {
                 for t in t.iter().filter(|t| t.counts(p)) {
                     if t.tree {
                         crate::memo::invalidate_under(p);
+                        hit = hit.max(Hit::Tree);
+                    } else {
+                        hit = Hit::State;
                     }
-                    hit = Some(p);
+                    first.get_or_insert(p);
                 }
             }
-            if let (Some(p), Some(log)) = (hit, std::env::var_os("CLOVE_WATCH_LOG")) {
+            if let (Some(p), Some(log)) = (first, std::env::var_os("CLOVE_WATCH_LOG")) {
                 // Debug aid: which change woke the watcher.
                 use std::io::Write;
                 if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) {
                     let _ = writeln!(f, "{} {:?} {}", crate::util::now_unix(), ev.kind, p.display());
                 }
             }
-            hit.is_some()
+            hit
         };
         std::thread::Builder::new()
             .name("clove-watch".into())
             .spawn(move || {
-                while let Ok(ev) = rx.recv() {
-                    if !relevant(&ev) {
+                let mut last_fire: Option<Instant> = None;
+                // Edits held back (see below) are reported then.
+                let mut trailing: Option<Instant> = None;
+                loop {
+                    let ev = match trailing {
+                        Some(at) => match rx.recv_timeout(at.saturating_duration_since(Instant::now())) {
+                            Ok(ev) => ev,
+                            Err(RecvTimeoutError::Timeout) => {
+                                trailing = None;
+                                last_fire = Some(Instant::now());
+                                on_change();
+                                continue;
+                            }
+                            Err(RecvTimeoutError::Disconnected) => return,
+                        },
+                        None => match rx.recv() {
+                            Ok(ev) => ev,
+                            Err(_) => return,
+                        },
+                    };
+                    let mut hit = relevant(&ev);
+                    if hit == Hit::None {
                         continue;
                     }
                     let start = Instant::now();
@@ -229,12 +263,31 @@ impl Watcher {
                             break;
                         }
                         match rx.recv_timeout(until - now) {
-                            Ok(ev) if relevant(&ev) => quiet_until = Instant::now() + DEBOUNCE,
-                            Ok(_) => {}
+                            Ok(ev) => {
+                                let h = relevant(&ev);
+                                if h != Hit::None {
+                                    hit = hit.max(h);
+                                    quiet_until = Instant::now() + DEBOUNCE;
+                                }
+                            }
                             Err(RecvTimeoutError::Timeout) => break,
                             Err(RecvTimeoutError::Disconnected) => return,
                         }
                     }
+                    // Edits in a working tree: their status is recomputed at
+                    // most every MIN_RECHECK, so reporting them more often
+                    // only makes UIs reload for nothing. Hold them till then.
+                    if hit == Hit::Tree
+                        && let Some(t) = last_fire
+                        && t.elapsed() < crate::memo::MIN_RECHECK
+                    {
+                        trailing.get_or_insert(t + crate::memo::MIN_RECHECK);
+                        continue;
+                    }
+                    if hit == Hit::State {
+                        trailing = None;
+                    }
+                    last_fire = Some(Instant::now());
                     on_change();
                 }
             })?;
@@ -484,7 +537,8 @@ mod tests {
         assert!(after(&|| git(&root, &["worktree", "add", "-q", "-b", "y", &wt_s])) >= 1);
         assert!(after(&|| git(&root, &["fetch", "-q", "origin"])) >= 1);
         w.sync(c.watch_targets());
-        std::thread::sleep(Duration::from_millis(300));
+        // Edits right after a report are held until the memo would recheck.
+        std::thread::sleep(crate::memo::MIN_RECHECK);
         // An edit in a worktree is news on macOS, where its tree is watched.
         let n = after(&|| std::fs::write(wt.join("f"), "x").unwrap());
         assert_eq!(n >= 1, TREES, "edit in a worktree: {n}");
@@ -501,6 +555,39 @@ mod tests {
             std::fs::write(wt.join("node_modules/x/a.js"), "x").unwrap();
         });
         assert_eq!(n, 0, "build output is not a change");
+    }
+
+    /// A burst of edits reports once at once and once when the memo would
+    /// recompute, not every MAX_WAIT.
+    #[test]
+    fn edit_bursts_report_at_most_every_recheck() {
+        if !TREES {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let tree = tmp.path().canonicalize().unwrap().join("wt");
+        std::fs::create_dir_all(&tree).unwrap();
+        let fired: Arc<Mutex<Vec<Instant>>> = Arc::default();
+        let f = fired.clone();
+        let w = Watcher::new(move || f.lock().unwrap().push(Instant::now())).unwrap();
+        w.sync(vec![Target::tree(tree.clone())]);
+        std::thread::sleep(Duration::from_millis(500));
+        fired.lock().unwrap().clear();
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(4) {
+            std::fs::write(tree.join("a.ts"), format!("{:?}", Instant::now())).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let edits_done = Instant::now();
+        std::thread::sleep(crate::memo::MIN_RECHECK + Duration::from_secs(2));
+        let fired = fired.lock().unwrap();
+        // Unthrottled, 4s of edits would report every MAX_WAIT.
+        assert!((1..=2).contains(&fired.len()), "{} reports", fired.len());
+        // The last edits are still reported once the recheck is due.
+        assert!(
+            fired.last().is_some_and(|t| *t > edits_done),
+            "no trailing report"
+        );
     }
 
     #[test]

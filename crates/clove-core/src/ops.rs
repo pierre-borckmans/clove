@@ -1093,7 +1093,11 @@ impl Clove {
                 (dirty, ahead, behind)
             });
         }
-        let (image_bytes, own_bytes) = store.clone_bytes(self, name, &meta.mount);
+        let (image_bytes, own_bytes) = crate::memo::get_aged(
+            &format!("clone-bytes:{}:{name}", self.root.display()),
+            crate::memo::SIZE_TTL,
+            || store.clone_bytes(self, name, &meta.mount),
+        );
         let issue = self.clone_issue(name, &meta.path, mounted);
         Ok(CloneInfo {
             name: meta.name,
@@ -1362,7 +1366,13 @@ impl Clove {
                 let image_bytes = record
                     .as_ref()
                     .and_then(|r| r.backend.store().ok())
-                    .map_or(0, |s| s.golden_bytes(self, meta.generation));
+                    .map_or(0, |s| {
+                        crate::memo::get_aged(
+                            &format!("golden-bytes:{}:{}", self.root.display(), meta.generation),
+                            crate::memo::SIZE_TTL,
+                            || s.golden_bytes(self, meta.generation),
+                        )
+                    });
                 Some(GoldenStatus {
                     age_secs: now_unix().saturating_sub(meta.created_at),
                     behind,

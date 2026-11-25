@@ -208,7 +208,7 @@ impl Clove {
     /// golden worktree. `status` adds dirty and orphan-commit counts (a
     /// `git status` each, run in parallel).
     pub fn other_worktrees(&self, status: bool) -> Result<Vec<OtherWorktree>> {
-        let out = git::out(&self.root, &["worktree", "list", "--porcelain"])?;
+        let out = self.worktree_list()?;
         let owned = self.owned_worktrees();
         let is_owned =
             |p: &Path| p.starts_with(&self.state) || owned.iter().any(|o| o == p || same_file(o, p));
@@ -255,6 +255,38 @@ impl Clove {
             }
         }
         Ok(list)
+    }
+
+    /// `git worktree list --porcelain`, reused while no worktree is added,
+    /// removed, moved, locked, switched or committed to (see `memo`).
+    fn worktree_list(&self) -> Result<String> {
+        use crate::memo::Dep;
+        let wts = self.common_dir.join("worktrees");
+        let mut deps = vec![Dep::file(&wts), Dep::git_ref(&self.common_dir, "HEAD")];
+        if let Ok(rd) = std::fs::read_dir(&wts) {
+            for e in rd.flatten() {
+                let a = e.path();
+                deps.extend([
+                    Dep::file(a.join("HEAD")),
+                    Dep::file(a.join("locked")),
+                    Dep::file(a.join("gitdir")),
+                ]);
+                if let Ok(h) = std::fs::read_to_string(a.join("HEAD"))
+                    && let Some(r) = h.trim().strip_prefix("ref: ")
+                {
+                    deps.push(Dep::git_ref(&self.common_dir, r));
+                }
+                // A worktree whose folder is gone shows as prunable.
+                if let Ok(g) = std::fs::read_to_string(a.join("gitdir")) {
+                    deps.push(Dep::file(g.trim()));
+                }
+            }
+        }
+        let key = format!("worktree-list:{}", self.root.display());
+        crate::memo::get(&key, &deps, || {
+            git::out(&self.root, &["worktree", "list", "--porcelain"]).map_err(|e| format!("{e:#}"))
+        })
+        .map_err(anyhow::Error::msg)
     }
 
     /// Fills a worktree's changes, detached commits and blockers. Reused until
