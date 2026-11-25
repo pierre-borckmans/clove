@@ -214,7 +214,7 @@ fn main_screen() {
     insta::assert_snapshot!(s);
     // The selected row is filled with the accent.
     let (x, y) = find(&s, "● fix-race");
-    assert_eq!(buf[(x + 2, y)].bg, theme::RUST);
+    assert_eq!(buf[(x + 2, y)].bg, theme::BOTTLE);
     let (x, y) = find(&s, "● feat-login");
     assert_eq!(buf[(x + 2, y)].bg, ratatui::style::Color::Reset);
 }
@@ -802,7 +802,7 @@ fn long_list_scrolls_with_a_scrollbar() {
     let (s, buf) = render(&mut app, 100, 24);
     insta::assert_snapshot!(s);
     let (_, y) = find(&s, "● task-25");
-    assert_eq!(buf[(4, y)].bg, theme::RUST, "selection stays in view");
+    assert_eq!(buf[(4, y)].bg, theme::BOTTLE, "selection stays in view");
     assert!(s.contains('┃'), "scrollbar thumb drawn");
     // Easing: right after a jump the offset is still travelling.
     key(&mut app, KeyCode::Home);

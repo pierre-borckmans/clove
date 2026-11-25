@@ -6,7 +6,7 @@ const CLOVE = "M50 8 C62 28 74 52 70 76 C68 90 32 90 30 76 C26 52 38 28 50 8Z";
 
 /**
  * The clove mark: a lowercase c holding a clove. The c takes the text colour,
- * the clove stays rust unless `mono` is set.
+ * the clove stays bottle green unless `mono` is set.
  */
 export function Glyph({ className, mono = false }: { className?: string; mono?: boolean }) {
   return (
@@ -15,7 +15,7 @@ export function Glyph({ className, mono = false }: { className?: string; mono?: 
       <path
         d={CLOVE}
         transform="translate(53 51) rotate(16) scale(0.33) translate(-50 -49)"
-        fill={mono ? "currentColor" : "var(--rust)"}
+        fill={mono ? "currentColor" : "var(--bottle)"}
       />
     </svg>
   );

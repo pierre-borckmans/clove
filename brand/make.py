@@ -17,20 +17,22 @@ def mark(c, clove):
     return (f'<path d="{C_PATH}" fill="none" stroke="{c}" stroke-width="{STROKE}" stroke-linecap="round"/>'
             f'<path d="{CLOVE}" transform="{CLOVE_TF}" fill="{clove}"/>')
 
-INK, PAPER, RUST, RUST_HI, RUST_LO = "#1a1714", "#f6f1e7", "#b4532a", "#c8693c", "#a2471f"
+# Bottle: garlic-shoot green, with the peeled clove in pale yellow.
+INK, PAPER, BOTTLE, BOTTLE_LIGHT = "#16201b", "#f1f2ec", "#2f6b4c", "#7cc49b"
+BOTTLE_HI, BOTTLE_LO, CREAM, PEEL = "#2f6b4c", "#163a28", "#f3efd6", "#e3c95e"
 def svg(body, vb="0 0 100 100"):
     return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{vb}">{body}</svg>\n'
 
-open("mark.svg", "w").write(svg(f"<title>clove</title>{mark(INK, RUST)}"))
-open("mark-on-dark.svg", "w").write(svg(f"<title>clove</title>{mark(PAPER, RUST)}"))
+open("mark.svg", "w").write(svg(f"<title>clove</title>{mark(INK, BOTTLE)}"))
+open("mark-on-dark.svg", "w").write(svg(f"<title>clove</title>{mark(PAPER, BOTTLE_LIGHT)}"))
 # App icon on Apple's 1024 grid: 824 tile, mark about 62% of the tile.
 open("icon.svg", "w").write(svg(f'''<defs>
-<linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{RUST_HI}"/><stop offset="1" stop-color="{RUST_LO}"/></linearGradient>
+<linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{BOTTLE_HI}"/><stop offset="1" stop-color="{BOTTLE_LO}"/></linearGradient>
 <linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".16"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>
 <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#g)"/>
 <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#s)"/>
-<g transform="translate(232 232) scale(5.6)">{mark(PAPER, INK)}</g>''', "0 0 1024 1024"))
-open("favicon.svg", "w").write(svg(f'<title>clove</title><rect width="100" height="100" rx="22" fill="{RUST}"/><g transform="translate(9 9) scale(.82)">{mark(PAPER, INK)}</g>'))
+<g transform="translate(232 232) scale(5.6)">{mark(CREAM, PEEL)}</g>''', "0 0 1024 1024"))
+open("favicon.svg", "w").write(svg(f'<title>clove</title><rect width="100" height="100" rx="22" fill="{BOTTLE}"/><g transform="translate(9 9) scale(.82)">{mark(CREAM, PEEL)}</g>'))
 # Menu-bar template image: alpha only.
 open("tray.svg", "w").write(svg(mark("#000", "#000")))
 print(C_PATH)

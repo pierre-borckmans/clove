@@ -24,7 +24,7 @@ export function Section({
   return (
     <section id={id} className="scroll-mt-8 border-t border-rule">
       <div className="mx-auto grid grid-cols-[minmax(0,1fr)] max-w-[74rem] gap-x-12 px-4 py-16 sm:px-8 sm:py-24 lg:grid-cols-[10rem_minmax(0,1fr)]">
-        <p className="mb-3 font-mono text-[0.75rem] tracking-wide text-rust lg:mt-3 lg:mb-0">
+        <p className="mb-3 font-mono text-[0.75rem] tracking-wide text-bottle lg:mt-3 lg:mb-0">
           {label}
         </p>
         <div className="min-w-0">
@@ -56,7 +56,7 @@ export function CopyCommand({
     <div
       className={`flex items-stretch overflow-hidden rounded-md border border-rule bg-paper-2 font-mono text-[0.8rem] ${className}`}
     >
-      <span className="select-none py-3 pr-2 pl-4 text-rust" aria-hidden="true">
+      <span className="select-none py-3 pr-2 pl-4 text-bottle" aria-hidden="true">
         $
       </span>
       <code
@@ -107,9 +107,9 @@ export function Term({
 }
 
 // Terminal colors, matching the CLI's styles (green, dim, bold, magenta).
-export const ok = "text-[#9cc2a2]";
+export const ok = "text-[#a9dcbf]";
 export const dim = "text-term-dim";
-export const accent = "text-[#e8936a]";
+export const accent = "text-[#7cc49b]";
 
 export function Prompt({ cwd }: { cwd?: string }) {
   return (

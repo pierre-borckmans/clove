@@ -3,68 +3,70 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Light. Neutral surfaces with a faint warm cast; rust is the one accent. */
+/* Light. Neutral surfaces with a faint warm cast; bottle green is the one accent. */
 :root {
   --radius: 0.5rem;
-  --background: oklch(0.993 0.001 75);
-  --foreground: oklch(0.21 0.006 60);
+  --background: oklch(0.993 0.001 160);
+  --foreground: oklch(0.21 0.006 160);
   --card: oklch(1 0 0);
   --card-foreground: var(--foreground);
   --popover: oklch(1 0 0);
   --popover-foreground: var(--foreground);
-  --primary: #b4532a;
-  --primary-foreground: oklch(0.99 0.004 75);
-  --secondary: oklch(0.962 0.003 75);
+  --primary: #2f6b4c;
+  --primary-foreground: oklch(0.99 0.004 160);
+  --secondary: oklch(0.962 0.003 160);
   --secondary-foreground: var(--foreground);
-  --muted: oklch(0.962 0.003 75);
-  --muted-foreground: oklch(0.53 0.008 65);
-  --faint-foreground: oklch(0.68 0.006 65);
-  --accent: oklch(0.955 0.004 75);
+  --muted: oklch(0.962 0.003 160);
+  --muted-foreground: oklch(0.53 0.008 160);
+  --faint-foreground: oklch(0.68 0.006 160);
+  --accent: oklch(0.955 0.004 160);
   --accent-foreground: var(--foreground);
   --destructive: oklch(0.56 0.19 27);
-  --border: oklch(0.915 0.004 75);
-  --input: oklch(0.89 0.004 75);
-  --ring: color-mix(in oklab, #b4532a 55%, transparent);
-  --rust: #b4532a;
-  --rust-soft: color-mix(in oklab, #b4532a 11%, transparent);
-  --sage: #6b8f71;
-  --sage-soft: color-mix(in oklab, #6b8f71 14%, transparent);
+  --border: oklch(0.915 0.004 160);
+  --input: oklch(0.89 0.004 160);
+  --ring: color-mix(in oklab, #2f6b4c 55%, transparent);
+  --bottle: #2f6b4c;
+  --bottle-soft: color-mix(in oklab, #2f6b4c 11%, transparent);
+  --sage: #2f6b4c;
+  --sage-soft: color-mix(in oklab, #2f6b4c 13%, transparent);
+  --peel: #d9b945;
   --amber: oklch(0.7 0.13 70);
-  --sidebar: oklch(0.958 0.004 75 / 0.94);
+  --sidebar: oklch(0.958 0.004 160 / 0.94);
   --sidebar-line: oklch(0.2 0 0 / 0.07);
   --pane-shadow: 0 0 0 1px oklch(0.2 0 0 / 0.06), 0 1px 3px oklch(0.2 0 0 / 0.04);
-  --popover-surface: oklch(0.975 0.003 75 / 0.97);
+  --popover-surface: oklch(0.975 0.003 160 / 0.97);
 }
 
 .dark {
-  --background: oklch(0.195 0.004 65);
-  --foreground: oklch(0.93 0.004 75);
-  --card: oklch(0.225 0.004 65);
+  --background: oklch(0.195 0.004 160);
+  --foreground: oklch(0.93 0.004 160);
+  --card: oklch(0.225 0.004 160);
   --card-foreground: var(--foreground);
-  --popover: oklch(0.235 0.004 65);
+  --popover: oklch(0.235 0.004 160);
   --popover-foreground: var(--foreground);
-  --primary: #c8643a;
-  --primary-foreground: oklch(0.99 0.004 75);
-  --secondary: oklch(0.26 0.004 65);
+  --primary: #3a7d58;
+  --primary-foreground: oklch(0.99 0.004 160);
+  --secondary: oklch(0.26 0.004 160);
   --secondary-foreground: var(--foreground);
-  --muted: oklch(0.255 0.004 65);
-  --muted-foreground: oklch(0.67 0.006 70);
-  --faint-foreground: oklch(0.5 0.006 70);
-  --accent: oklch(0.265 0.005 65);
+  --muted: oklch(0.255 0.004 160);
+  --muted-foreground: oklch(0.67 0.006 160);
+  --faint-foreground: oklch(0.5 0.006 160);
+  --accent: oklch(0.265 0.005 160);
   --accent-foreground: var(--foreground);
   --destructive: oklch(0.64 0.19 25);
   --border: oklch(1 0 0 / 0.08);
   --input: oklch(1 0 0 / 0.12);
-  --ring: color-mix(in oklab, #c8643a 60%, transparent);
-  --rust: #d2703f;
-  --rust-soft: color-mix(in oklab, #d2703f 16%, transparent);
-  --sage: #8fb394;
-  --sage-soft: color-mix(in oklab, #8fb394 15%, transparent);
+  --ring: color-mix(in oklab, #7cc49b 60%, transparent);
+  --bottle: #7cc49b;
+  --bottle-soft: color-mix(in oklab, #7cc49b 16%, transparent);
+  --sage: #7cc49b;
+  --sage-soft: color-mix(in oklab, #7cc49b 15%, transparent);
+  --peel: #e3c95e;
   --amber: oklch(0.78 0.12 75);
-  --sidebar: oklch(0.165 0.004 65 / 0.94);
+  --sidebar: oklch(0.165 0.004 160 / 0.94);
   --sidebar-line: oklch(1 0 0 / 0.06);
   --pane-shadow: 0 0 0 1px oklch(1 0 0 / 0.06), 0 1px 3px oklch(0 0 0 / 0.3);
-  --popover-surface: oklch(0.21 0.004 65 / 0.97);
+  --popover-surface: oklch(0.21 0.004 160 / 0.97);
 }
 
 /* Inside Tauri the window has native vibrancy behind transparent surfaces. */
@@ -99,10 +101,11 @@ html[data-shell="native"] {
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-rust: var(--rust);
-  --color-rust-soft: var(--rust-soft);
+  --color-bottle: var(--bottle);
+  --color-bottle-soft: var(--bottle-soft);
   --color-sage: var(--sage);
   --color-sage-soft: var(--sage-soft);
+  --color-peel: var(--peel);
   --color-amber: var(--amber);
   --color-sidebar: var(--sidebar);
   --color-sidebar-line: var(--sidebar-line);
@@ -163,7 +166,7 @@ html[data-shell="native"] {
     cursor: default;
   }
   ::selection {
-    background: color-mix(in oklab, var(--rust) 25%, transparent);
+    background: color-mix(in oklab, var(--bottle) 25%, transparent);
   }
   .tabular {
     font-variant-numeric: tabular-nums;

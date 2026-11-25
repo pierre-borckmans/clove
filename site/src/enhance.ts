@@ -91,7 +91,7 @@ function replay() {
           tick();
         }
         const ms = Number(l.dataset.ms);
-        l.innerHTML = `  <span style="color:#e8936a">◌</span> <span class="text-term-dim">${l.dataset.step}</span>\n`;
+        l.innerHTML = `  <span style="color:#7cc49b">◌</span> <span class="text-term-dim">${l.dataset.step}</span>\n`;
         l.style.visibility = "visible";
         await sleep(ms);
         l.innerHTML = original[i];

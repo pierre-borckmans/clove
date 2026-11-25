@@ -6,10 +6,10 @@ import tuiNarrow from "./tui-narrow_screen.txt?raw";
 // bars in the CLI's colors. Runs of the same class become one span.
 function classOf(ch: string): string {
   const c = ch.codePointAt(0) ?? 0;
-  if (c >= 0x2500 && c <= 0x257f) return "text-[#a99d8c]";
-  if (c >= 0x2580 && c <= 0x259f) return "text-[#e8936a]";
-  if (ch === "◆") return "text-[#e8936a]";
-  if (ch === "●") return "text-[#9cc2a2]";
+  if (c >= 0x2500 && c <= 0x257f) return "text-[#85908a]";
+  if (c >= 0x2580 && c <= 0x259f) return "text-[#7cc49b]";
+  if (ch === "◆") return "text-[#7cc49b]";
+  if (ch === "●") return "text-[#a9dcbf]";
   if (ch === "○") return "text-term-dim";
   return "";
 }

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs>
-<linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c8693c"/><stop offset="1" stop-color="#a2471f"/></linearGradient>
+<linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2f6b4c"/><stop offset="1" stop-color="#163a28"/></linearGradient>
 <linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".16"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>
 <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#g)"/>
 <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#s)"/>
-<g transform="translate(232 232) scale(5.6)"><path d="M73.04 29.26 A31 31 0 1 0 73.04 70.74" fill="none" stroke="#f6f1e7" stroke-width="19" stroke-linecap="round"/><path d="M50 8 C62 28 74 52 70 76 C68 90 32 90 30 76 C26 52 38 28 50 8Z" transform="translate(53 51) rotate(16) scale(0.33) translate(-50 -49)" fill="#1a1714"/></g></svg>
+<g transform="translate(232 232) scale(5.6)"><path d="M73.04 29.26 A31 31 0 1 0 73.04 70.74" fill="none" stroke="#f3efd6" stroke-width="19" stroke-linecap="round"/><path d="M50 8 C62 28 74 52 70 76 C68 90 32 90 30 76 C26 52 38 28 50 8Z" transform="translate(53 51) rotate(16) scale(0.33) translate(-50 -49)" fill="#e3c95e"/></g></svg>

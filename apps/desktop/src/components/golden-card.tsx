@@ -9,7 +9,7 @@ import type { RepoStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Glyph } from "./glyph";
 
-const STEP_SHADES = ["bg-rust", "bg-sage", "bg-amber", "bg-foreground/45", "bg-foreground/25"];
+const STEP_SHADES = ["bg-bottle", "bg-peel", "bg-bottle/55", "bg-foreground/45", "bg-foreground/25"];
 
 export function GoldenCard({ status }: { status: RepoStatus }) {
   const ops = useOps();
@@ -45,7 +45,7 @@ export function GoldenCard({ status }: { status: RepoStatus }) {
   return (
     <section className="overflow-hidden rounded-xl border bg-card shadow-[0_1px_2px_0_rgb(0_0_0/0.03)]">
       <div className="flex items-center gap-2.5 border-b px-4 py-2.5">
-        <span className="flex size-6 items-center justify-center rounded-md bg-rust-soft text-rust">
+        <span className="flex size-6 items-center justify-center rounded-md bg-bottle-soft text-bottle">
           <Glyph className="size-3.5" mono />
         </span>
         <span className="text-[13px] font-medium">Golden image</span>
@@ -83,7 +83,7 @@ export function GoldenCard({ status }: { status: RepoStatus }) {
         <Stat label="Commit">
           <button
             type="button"
-            className="font-mono text-[13px] hover:text-rust"
+            className="font-mono text-[13px] hover:text-bottle"
             onClick={() => void copyText(g.commit, "Commit copied")}
             title="Copy full commit"
           >
@@ -95,7 +95,7 @@ export function GoldenCard({ status }: { status: RepoStatus }) {
         </Stat>
         <Stat label="Behind base">
           {behind > 0 ? (
-            <span className="flex items-center gap-1 text-[13px] text-rust">
+            <span className="flex items-center gap-1 text-[13px] text-bottle">
               <ArrowDown className="size-3.5" />
               <span className="font-mono tabular-nums">{behind}</span>
               <span className="text-muted-foreground">commit{behind === 1 ? "" : "s"}</span>

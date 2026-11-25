@@ -47,7 +47,7 @@ fn panel<'a>(title_spans: Vec<Span<'a>>, focus: bool) -> Block<'a> {
     t.push(Span::raw(" "));
     Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(if focus { fg(RUST) } else { border() })
+        .border_style(if focus { fg(BOTTLE) } else { border() })
         .title(Line::from(t))
 }
 
@@ -88,7 +88,7 @@ fn scrollbar(f: &mut Frame, track: Rect, offset: usize, view: usize, len: usize)
     let buf = f.buffer_mut();
     for i in 0..h {
         let (sym, style) = if i >= start && i < start + thumb {
-            ("┃", fg(RUST))
+            ("┃", fg(BOTTLE))
         } else {
             ("│", border())
         };
@@ -198,7 +198,7 @@ fn golden_line<'a>(app: &App, data: Option<&RepoData>, w: usize) -> Line<'a> {
         };
         return Line::from(vec![
             label,
-            Span::styled(format!("{} ", spinner(app.now_ms)), fg(RUST)),
+            Span::styled(format!("{} ", spinner(app.now_ms)), fg(BOTTLE)),
             Span::styled(format!("{verb} · {step}"), bold()),
             Span::styled(
                 format!(" · {} · l to watch", fmt::secs(j.elapsed_ms(app.now_ms) as f64)),
@@ -294,7 +294,7 @@ fn draw_tabs(f: &mut Frame, app: &mut App, area: Rect) {
         let w = width(&s) as u16;
         if w <= area.width {
             let r = Rect::new(area.right() - w, area.y, w, 1);
-            put(f, r, Line::from(Span::styled(s, fg(RUST))));
+            put(f, r, Line::from(Span::styled(s, fg(BOTTLE))));
             app.hits.push((r, Hit::Key(KeyCode::Tab, KeyModifiers::NONE)));
         }
     }
@@ -350,7 +350,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         t.push(Span::styled("  /", key()));
         t.push(Span::styled(app.filter.clone(), bold()));
         if app.filtering {
-            t.push(Span::styled("▏", fg(RUST)));
+            t.push(Span::styled("▏", fg(BOTTLE)));
         }
     }
     let block = panel(t, false);
@@ -361,7 +361,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
     if app.repo().is_none() {
         let notice = app.notice.clone().unwrap_or_else(|| "no repository".into());
         let mut lines = vec![
-            Line::from(Span::styled("◆", fg(RUST))),
+            Line::from(Span::styled("◆", fg(BOTTLE))),
             Line::from(Span::styled("nothing to show yet", bold())),
             Line::from(""),
         ];
@@ -393,7 +393,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
     if data.status.golden.is_none() && total == 0 {
         let building = app.golden_job().is_some();
         let mut lines = vec![
-            Line::from(Span::styled("◆", fg(RUST))),
+            Line::from(Span::styled("◆", fg(BOTTLE))),
             Line::from(Span::styled(
                 format!("{} has no golden image yet", data.status.name),
                 bold(),
@@ -402,7 +402,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         ];
         if building {
             lines.push(Line::from(vec![
-                Span::styled(format!("{} ", spinner(app.now_ms)), fg(RUST)),
+                Span::styled(format!("{} ", spinner(app.now_ms)), fg(BOTTLE)),
                 Span::styled("building it now · ", muted()),
                 Span::styled("l", key()),
                 Span::styled(" to watch", muted()),
@@ -428,7 +428,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
             f,
             inner,
             vec![
-                Line::from(Span::styled("◆", fg(RUST))),
+                Line::from(Span::styled("◆", fg(BOTTLE))),
                 Line::from(Span::styled("no clones yet", bold())),
                 Line::from(""),
                 Line::from(vec![
@@ -549,7 +549,7 @@ fn clone_row<'a>(app: &App, c: &CloneInfo, cols: &Cols) -> Line<'a> {
     let gap = || Span::raw("  ");
     let busy = app.busy(&c.name);
     let dot = match (busy, c.mounted) {
-        (Some(_), _) => Span::styled(format!("{} ", spinner(app.now_ms)), fg(RUST)),
+        (Some(_), _) => Span::styled(format!("{} ", spinner(app.now_ms)), fg(BOTTLE)),
         (None, true) if !c.failed_steps.is_empty() => Span::styled("● ", fg(AMBER)),
         (None, true) => Span::styled("● ", fg(SAGE)),
         (None, false) => Span::styled("○ ", muted()),
@@ -596,7 +596,7 @@ fn clone_row<'a>(app: &App, c: &CloneInfo, cols: &Cols) -> Line<'a> {
 fn changes<'a>(app: &App, c: &CloneInfo, w: usize) -> Vec<Span<'a>> {
     let mut parts: Vec<(String, Style)> = vec![];
     if let Some(j) = app.busy(&c.name) {
-        parts.push((format!("{}…", j.verb()), fg(RUST)));
+        parts.push((format!("{}…", j.verb()), fg(BOTTLE)));
     } else if !c.mounted {
         parts.push(("unmounted".into(), muted()));
     } else {
@@ -654,7 +654,7 @@ fn timing_lines(lines: &mut Vec<Line>, timings: &[clove_core::Timing], w: usize)
         let frac = if max > 0.0 { t.ms / max } else { 0.0 };
         let b = fmt::bar(frac, bw);
         let style = if t.ms == max && timings.len() > 1 {
-            fg(RUST)
+            fg(BOTTLE)
         } else {
             fg(SAGE)
         };
@@ -758,7 +758,7 @@ fn draw_detail(f: &mut Frame, app: &mut App, area: Rect) {
     let mut status = if let Some(j) = app.busy(&c.name) {
         vec![Span::styled(
             format!("{} {}", spinner(app.now_ms), j.verb()),
-            fg(RUST),
+            fg(BOTTLE),
         )]
     } else if c.mounted {
         let mut s = vec![Span::styled("● mounted", fg(SAGE))];
@@ -914,7 +914,7 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
         ]),
         [j, rest @ ..] => {
             let mut s = vec![
-                Span::styled(format!("{} ", spinner(app.now_ms)), fg(RUST)),
+                Span::styled(format!("{} ", spinner(app.now_ms)), fg(BOTTLE)),
                 Span::raw(j.title()),
             ];
             if let Some(step) = j.current_step() {
@@ -991,7 +991,7 @@ fn draw_toasts(f: &mut Frame, app: &mut App, body: Rect) {
     for (ri, t) in toasts.into_iter().enumerate() {
         let (icon, color) = match t.kind {
             ToastKind::Ok => ("✓", SAGE),
-            ToastKind::Info => ("◆", RUST),
+            ToastKind::Info => ("◆", BOTTLE),
             ToastKind::Warn => ("!", AMBER),
             ToastKind::Err => ("✗", RED),
         };
@@ -1068,7 +1068,7 @@ fn button<'a>(label: &str, focused: bool, danger: bool) -> Span<'a> {
         Span::styled(
             s,
             Style::new()
-                .bg(if danger { RED } else { RUST })
+                .bg(if danger { RED } else { BOTTLE })
                 .fg(IVORY)
                 .add_modifier(Modifier::BOLD),
         )
@@ -1124,7 +1124,7 @@ fn draw_new(f: &mut Frame, app: &mut App, list: Rect, form: &NewForm) {
     let pl = match err {
         Some(e) => Line::from(Span::styled(format!("✗ {e}"), fg(RED))),
         None => Line::from(vec![
-            Span::styled("→ ", fg(RUST)),
+            Span::styled("→ ", fg(BOTTLE)),
             Span::styled(trunc(&preview, inner.width as usize - 2), muted()),
         ]),
     };
@@ -1398,7 +1398,7 @@ fn draw_gc(f: &mut Frame, app: &mut App, area: Rect, g: &GcView) {
             if g.running {
                 lines.push(Line::from(Span::styled(
                     format!("{} cleaning", spinner(app.now_ms)),
-                    fg(RUST),
+                    fg(BOTTLE),
                 )));
             } else if g.applied {
                 lines.push(Line::from(Span::styled("cleaned", fg(SAGE))));
@@ -1511,7 +1511,7 @@ fn step_line<'a>(s: &StepRow, now_ms: u64, w: usize) -> Line<'a> {
     let (icon, istyle, nstyle, right) = match &s.state {
         StepState::Running { since_ms } => (
             spinner(now_ms).to_string(),
-            fg(RUST),
+            fg(BOTTLE),
             bold(),
             fmt::secs(now_ms.saturating_sub(*since_ms) as f64),
         ),
@@ -1549,7 +1549,7 @@ fn draw_job(f: &mut Frame, app: &mut App, area: Rect, id: u64) {
     let rect = centered(area, w, h);
     open_modal(f, &mut app.hits, area, rect);
     let (icon, istyle) = match &job.result {
-        None => (spinner(app.now_ms).to_string(), fg(RUST)),
+        None => (spinner(app.now_ms).to_string(), fg(BOTTLE)),
         Some(Ok(_)) => ("✓".into(), fg(SAGE)),
         Some(Err(_)) => ("✗".into(), fg(RED)),
     };
@@ -1707,7 +1707,7 @@ fn draw_job(f: &mut Frame, app: &mut App, area: Rect, id: u64) {
                 sw,
                 1,
             );
-            put(f, r, Line::from(Span::styled(s, fg(RUST))));
+            put(f, r, Line::from(Span::styled(s, fg(BOTTLE))));
             app.hits.push((r, Hit::Key(KeyCode::End, KeyModifiers::NONE)));
         }
     }

@@ -3,12 +3,12 @@
 use anstyle::{Color, RgbColor, Style};
 use clove_core::brand::{Cell, Ink};
 
-const RUST: Color = Color::Rgb(RgbColor(0xc8, 0x69, 0x3c));
+const BOTTLE: Color = Color::Rgb(RgbColor(0x3f, 0x8f, 0x63));
 
 fn style(cell: &Cell) -> Style {
     // The c uses the terminal's own foreground, so it reads on light and dark themes.
     let colour = |ink: Ink| match ink {
-        Ink::Accent => Some(RUST),
+        Ink::Accent => Some(BOTTLE),
         Ink::Fg | Ink::None => None,
     };
     Style::new().fg_color(colour(cell.fg)).bg_color(colour(cell.bg))

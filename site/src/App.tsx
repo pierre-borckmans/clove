@@ -40,18 +40,18 @@ function Nav() {
           <path
             d="M50 8 C62 28 74 52 70 76 C68 90 32 90 30 76 C26 52 38 28 50 8Z"
             transform="translate(53 51) rotate(16) scale(0.33) translate(-50 -49)"
-            fill="var(--rust)"
+            fill="var(--bottle)"
           />
         </svg>
         clove
       </a>
       <div className="flex items-center gap-5 font-mono text-[0.75rem] text-ink-2">
         {links.map(([href, label]) => (
-          <a key={href} href={href} className="hidden no-underline hover:text-rust md:inline">
+          <a key={href} href={href} className="hidden no-underline hover:text-bottle md:inline">
             {label}
           </a>
         ))}
-        <a href={REPO} className="no-underline hover:text-rust">
+        <a href={REPO} className="no-underline hover:text-bottle">
           GitHub
         </a>
         <button
@@ -111,7 +111,7 @@ function Problem() {
               className={`flex justify-between gap-4 border-b py-2 ${i === facts.length - 1 ? "border-ink" : "border-rule"}`}
             >
               <dt className="text-ink-2">{k}</dt>
-              <dd className={i === facts.length - 1 ? "font-semibold text-rust" : ""}>{v}</dd>
+              <dd className={i === facts.length - 1 ? "font-semibold text-bottle" : ""}>{v}</dd>
             </div>
           ))}
         </dl>
@@ -123,7 +123,7 @@ function Problem() {
 function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
   return (
     <li className="grid grid-cols-[2rem_minmax(0,1fr)] gap-x-3">
-      <span className="pt-1 font-mono text-[0.8rem] text-rust">{n}</span>
+      <span className="pt-1 font-mono text-[0.8rem] text-bottle">{n}</span>
       <div>
         <h3 className="text-[1.2rem] font-medium text-ink">{title}</h3>
         <div className="prose-body mt-1 text-ink-2">{children}</div>
@@ -247,7 +247,7 @@ function Bar({
           ))}
         </div>
         <span
-          className={`w-14 shrink-0 text-right font-mono tabular-nums ${emphasis ? "text-[1.25rem] font-semibold text-rust" : "text-[1rem]"}`}
+          className={`w-14 shrink-0 text-right font-mono tabular-nums ${emphasis ? "text-[1.25rem] font-semibold text-bottle" : "text-[1rem]"}`}
         >
           {total}
         </span>
@@ -325,7 +325,7 @@ function Numbers() {
           }
           total="1.0s"
           emphasis
-          segments={[{ s: 1.0, cls: "bg-rust" }]}
+          segments={[{ s: 1.0, cls: "bg-bottle" }]}
         />
         <div className="grid grid-cols-[minmax(0,1fr)] sm:grid-cols-[15rem_minmax(0,1fr)] sm:gap-6">
           <div />
@@ -362,7 +362,7 @@ function Numbers() {
               ))}
               <tr className="border-b border-rule">
                 <td className="py-2 font-semibold">total</td>
-                <td className="py-2 text-right font-semibold whitespace-nowrap text-rust">
+                <td className="py-2 text-right font-semibold whitespace-nowrap text-bottle">
                   0.93-1.04s
                 </td>
                 <td className="hidden py-2 pl-6 text-ink-2 sm:table-cell">as clove reports it</td>
@@ -619,7 +619,7 @@ function Config() {
                 key={k}
                 className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-4 border-b border-rule py-2.5"
               >
-                <dt className="font-mono text-[0.8rem] text-rust">{k}</dt>
+                <dt className="font-mono text-[0.8rem] text-bottle">{k}</dt>
                 <dd className="text-[0.98rem] leading-snug text-ink-2">{d}</dd>
               </div>
             ))}
@@ -740,7 +740,7 @@ function Footer() {
         </div>
         <div className="mt-14 flex flex-wrap justify-between gap-4 border-t border-rule pt-6 font-mono text-[0.75rem] text-muted">
           <span>clove · MIT or Apache-2.0</span>
-          <a href={REPO} className="hover:text-rust">
+          <a href={REPO} className="hover:text-bottle">
             github.com/pierre-borckmans/clove
           </a>
         </div>

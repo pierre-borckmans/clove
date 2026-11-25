@@ -138,7 +138,7 @@ function RepoBlock({
         {repo.generation !== null && <span className="font-mono text-[11px] text-faint">gen {repo.generation}</span>}
         {!!repo.behind && (
           <span
-            className="flex items-center font-mono text-[11px] text-rust"
+            className="flex items-center font-mono text-[11px] text-bottle"
             title={`${repo.behind} commits behind base`}
           >
             <ArrowDown className="size-3" />
@@ -273,7 +273,7 @@ function MiniOp({ op }: { op: Op }) {
         <div
           className={cn(
             "h-full rounded-full transition-[width] duration-500",
-            op.status === "error" ? "bg-destructive" : op.status === "ok" ? "bg-sage" : "bg-rust",
+            op.status === "error" ? "bg-destructive" : op.status === "ok" ? "bg-sage" : "bg-bottle",
           )}
           style={{ width: `${pct}%` }}
         />

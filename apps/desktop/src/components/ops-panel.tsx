@@ -130,7 +130,7 @@ export function OpCard({ op, embedded }: { op: Op; embedded?: boolean }) {
 export function StatusIcon({ status }: { status: Op["status"] }) {
   if (status === "running")
     return (
-      <span className="flex size-[18px] items-center justify-center rounded-full bg-rust-soft text-rust">
+      <span className="flex size-[18px] items-center justify-center rounded-full bg-bottle-soft text-bottle">
         <Loader className="size-3 animate-spin [animation-duration:1.4s]" />
       </span>
     );

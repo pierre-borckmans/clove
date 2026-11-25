@@ -77,12 +77,12 @@ function Replay() {
 export function Hero() {
   return (
     <header className="mx-auto max-w-[74rem] px-4 pt-10 pb-16 sm:px-8 sm:pt-16 sm:pb-24">
-      <p className="font-mono text-[0.75rem] tracking-wide text-rust">
+      <p className="font-mono text-[0.75rem] tracking-wide text-bottle">
         copy-on-write git worktrees · macOS
       </p>
       <h1 className="mt-5 max-w-[20ch] text-[3.1rem] leading-[0.98] font-medium tracking-[-0.025em] sm:text-[4.6rem] lg:text-[5.6rem]">
         A ready git worktree <br className="hidden sm:inline" />
-        in <em className="font-normal text-rust">about a second.</em>
+        in <em className="font-normal text-bottle">about a second.</em>
       </h1>
       <div className="mt-12 grid grid-cols-[minmax(0,1fr)] items-start gap-10 lg:mt-16 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] lg:gap-14">
         <div className="prose-body text-[1.2rem] text-ink-2 sm:text-[1.3rem]">

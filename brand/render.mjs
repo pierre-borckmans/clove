@@ -51,7 +51,7 @@ const rows = await page.evaluate(
       for (let x = 0; x < W; x++) {
         const [r, g, b, a] = d.slice((y * W + x) * 4, (y * W + x) * 4 + 4);
         if (a < 110) l += ".";
-        else if (r > 120 && r > g + 40) l += "R";
+        else if (g > r + 30) l += "R";
         else l += "#";
       }
       lines.push(l);
@@ -64,8 +64,8 @@ writeFileSync(join(out, `bitmap-${W}.txt`), `${rows.join("\n")}\n`);
 console.log(rows.join("\n"));
 
 // Preview sheet
-const sheet = `<style>body{margin:0;display:flex;gap:28px;padding:28px;background:#efe9dd;font:12px monospace;align-items:end;flex-wrap:wrap}
-.d{background:#1a1714;padding:20px;border-radius:12px}.l{background:#f6f1e7;padding:20px;border-radius:12px}</style>
+const sheet = `<style>body{margin:0;display:flex;gap:28px;padding:28px;background:#e7eae1;font:12px monospace;align-items:end;flex-wrap:wrap}
+.d{background:#16201b;padding:20px;border-radius:12px}.l{background:#f1f2ec;padding:20px;border-radius:12px}</style>
 <div class="l"><div style="width:180px">${svg("mark.svg")}</div></div>
 <div class="d"><div style="width:180px">${svg("mark-on-dark.svg")}</div></div>
 <div><img src="data:image/png;base64,${readFileSync(join(out, "icon-1024.png")).toString("base64")}" width="256"></div>

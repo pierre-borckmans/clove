@@ -42,7 +42,7 @@ function Edge({ op, time }: { op: string; time: string }) {
   return (
     <div className="flex items-center gap-3 py-1 pl-6 lg:flex-col lg:justify-center lg:gap-1 lg:py-0 lg:pl-0">
       <svg
-        className="h-10 w-4 shrink-0 text-rust lg:hidden"
+        className="h-10 w-4 shrink-0 text-bottle lg:hidden"
         viewBox="0 0 16 40"
         preserveAspectRatio="none"
         aria-hidden="true"
@@ -59,7 +59,7 @@ function Edge({ op, time }: { op: string; time: string }) {
         <path d="M3 32 L8 40 L13 32 Z" fill="currentColor" />
       </svg>
       <svg
-        className="hidden h-3 w-full text-rust lg:block"
+        className="hidden h-3 w-full text-bottle lg:block"
         viewBox="0 0 100 12"
         preserveAspectRatio="none"
         aria-hidden="true"
@@ -77,7 +77,7 @@ function Edge({ op, time }: { op: string; time: string }) {
       </svg>
       <div className="font-mono text-[0.72rem] leading-tight lg:text-center">
         <div className="text-ink">{op}</div>
-        <div className="text-rust">{time}</div>
+        <div className="text-bottle">{time}</div>
       </div>
     </div>
   );
@@ -131,10 +131,10 @@ function Strip({ label, written }: { label: string; written: number[] }) {
         {Array.from({ length: CELLS }, (_, i) => {
           const own = written.includes(i);
           const cls = golden
-            ? "bg-sage"
+            ? "bg-bottle"
             : own
-              ? "bg-rust"
-              : "border border-dashed border-sage/70 bg-transparent";
+              ? "bg-peel"
+              : "border border-dashed border-bottle/60 bg-transparent";
           // biome-ignore lint/suspicious/noArrayIndexKey: fixed-size figure
           return <span key={i} className={`aspect-square rounded-[3px] ${cls}`} />;
         })}
@@ -155,14 +155,14 @@ export function Blocks() {
       </div>
       <figcaption className="mt-5 flex flex-wrap gap-x-6 gap-y-2 font-mono text-[0.7rem] text-muted">
         <span className="flex items-center gap-2">
-          <span className="inline-block size-3 rounded-[2px] bg-sage" /> block on disk
+          <span className="inline-block size-3 rounded-[2px] bg-bottle" /> block on disk
         </span>
         <span className="flex items-center gap-2">
-          <span className="inline-block size-3 rounded-[2px] border border-dashed border-sage" />{" "}
+          <span className="inline-block size-3 rounded-[2px] border border-dashed border-bottle" />{" "}
           shared with golden, no extra disk
         </span>
         <span className="flex items-center gap-2">
-          <span className="inline-block size-3 rounded-[2px] bg-rust" /> written in this clone
+          <span className="inline-block size-3 rounded-[2px] bg-peel" /> written in this clone
         </span>
       </figcaption>
     </figure>

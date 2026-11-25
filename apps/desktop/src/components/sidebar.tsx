@@ -80,7 +80,7 @@ export function Sidebar() {
                 <RepoMark name={r.name} active={active} />
                 <span className="min-w-0 flex-1 truncate">{r.name}</span>
                 {busy ? (
-                  <Loader className="size-3 animate-spin text-rust [animation-duration:1.4s]" />
+                  <Loader className="size-3 animate-spin text-bottle [animation-duration:1.4s]" />
                 ) : (
                   <span className="font-mono text-[11px] tabular-nums text-faint group-hover:hidden">
                     {r.clones || ""}
@@ -120,7 +120,7 @@ export function Sidebar() {
           <Activity />
           <span className="flex-1 text-left">Activity</span>
           {running.length > 0 && (
-            <span className="rounded-full bg-rust-soft px-1.5 font-mono text-[10.5px] leading-[18px] text-rust">
+            <span className="rounded-full bg-bottle-soft px-1.5 font-mono text-[10.5px] leading-[18px] text-bottle">
               {running.length}
             </span>
           )}

@@ -109,8 +109,8 @@ function NewCloneForm({ initialRoot, initialBranch }: { initialRoot: string | nu
         {q && !exists && (
           <CommandGroup heading="Create">
             <CommandItem value={`create:${q}`} onSelect={() => create({ branch: q, fresh: true })} className="h-10">
-              <span className="flex size-6 items-center justify-center rounded-md bg-rust-soft text-rust">
-                <Plus className="!size-3.5 !text-rust" />
+              <span className="flex size-6 items-center justify-center rounded-md bg-bottle-soft text-bottle">
+                <Plus className="!size-3.5 !text-bottle" />
               </span>
               <span className="min-w-0 truncate">
                 New branch <span className="font-mono font-medium">{q}</span>

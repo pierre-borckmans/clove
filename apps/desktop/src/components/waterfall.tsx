@@ -78,7 +78,7 @@ export function Waterfall({
                     b.state === "done" && "bg-sage",
                     b.state === "failed" && "bg-destructive",
                     b.state === "running" &&
-                      "animate-shimmer bg-rust bg-[length:24px_100%] bg-[linear-gradient(90deg,transparent_0,rgb(255_255_255/0.35)_50%,transparent_100%)]",
+                      "animate-shimmer bg-bottle bg-[length:24px_100%] bg-[linear-gradient(90deg,transparent_0,rgb(255_255_255/0.35)_50%,transparent_100%)]",
                   )}
                   style={{ left: `${left}%`, width: `${Math.min(width, 100 - left)}%` }}
                 />

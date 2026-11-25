@@ -2,7 +2,7 @@
 //! pixel art, plus a pixel wordmark. Same drawing as brand/mark.svg.
 //!
 //! Pixels are `#` (drawn in the terminal's own foreground, so it works on light
-//! and dark themes), `R` (the clove, rust) or `.` (empty).
+//! and dark themes), `R` (the clove, bottle green) or `.` (empty).
 
 /// 13×12 pixels, 6 terminal lines.
 pub const MARK: [&str; 12] = [
@@ -60,7 +60,7 @@ pub enum Ink {
     None,
     /// Default foreground.
     Fg,
-    /// The clove rust.
+    /// The clove, bottle green.
     Accent,
 }
 

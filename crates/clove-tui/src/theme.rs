@@ -1,19 +1,19 @@
 //! The palette. Text uses the terminal's own foreground and background (no ink
-//! or ivory page fills), so it reads on dark and light terminals alike. Colour
+//! or cream page fills), so it reads on dark and light terminals alike. Colour
 //! carries meaning (accent, good, warning) in mid-tones that hold contrast on both.
 
 use ratatui::style::{Color, Modifier, Style};
 
-/// Clove rust: the accent. Selection, focus, keys.
-pub const RUST: Color = Color::Rgb(0xb4, 0x53, 0x2a);
-/// Sage: healthy, mounted, done.
-pub const SAGE: Color = Color::Rgb(0x6b, 0x8f, 0x71);
-/// Garlic ivory: text on accent fills.
-pub const IVORY: Color = Color::Rgb(0xf4, 0xee, 0xe0);
-/// Warm grey for secondary text.
-pub const MUTED: Color = Color::Rgb(0x8f, 0x86, 0x7c);
+/// Bottle green: the accent. Selection, focus, keys.
+pub const BOTTLE: Color = Color::Rgb(0x3f, 0x8f, 0x63);
+/// Healthy, mounted, done: a lighter shoot green.
+pub const SAGE: Color = Color::Rgb(0x5f, 0xa8, 0x7c);
+/// Cream: text on accent fills.
+pub const IVORY: Color = Color::Rgb(0xf3, 0xef, 0xd6);
+/// Green-grey for secondary text.
+pub const MUTED: Color = Color::Rgb(0x85, 0x90, 0x89);
 /// Borders.
-pub const LINE: Color = Color::Rgb(0x74, 0x6a, 0x61);
+pub const LINE: Color = Color::Rgb(0x66, 0x71, 0x6b);
 /// Dirty trees, stale images, warnings.
 pub const AMBER: Color = Color::Rgb(0xc9, 0x93, 0x2b);
 /// Failures.
@@ -31,16 +31,16 @@ pub fn bold() -> Style {
     Style::new().add_modifier(Modifier::BOLD)
 }
 pub fn key() -> Style {
-    fg(RUST).add_modifier(Modifier::BOLD)
+    fg(BOTTLE).add_modifier(Modifier::BOLD)
 }
 pub fn selected() -> Style {
-    Style::new().bg(RUST).fg(IVORY).add_modifier(Modifier::BOLD)
+    Style::new().bg(BOTTLE).fg(IVORY).add_modifier(Modifier::BOLD)
 }
 pub fn border() -> Style {
     fg(LINE)
 }
 pub fn title() -> Style {
-    fg(RUST).add_modifier(Modifier::BOLD)
+    fg(BOTTLE).add_modifier(Modifier::BOLD)
 }
 
 pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -50,11 +50,11 @@ pub fn spinner(now_ms: u64) -> &'static str {
 }
 
 /// The clove mark as half-block lines (6 rows). The c uses the terminal's own
-/// foreground; the clove is rust.
+/// foreground; the clove is bottle green.
 pub fn mark_lines() -> Vec<ratatui::text::Line<'static>> {
     use clove_core::brand::{Ink, MARK, half_blocks};
     let colour = |ink: Ink| match ink {
-        Ink::Accent => Some(RUST),
+        Ink::Accent => Some(BOTTLE),
         Ink::Fg | Ink::None => None,
     };
     half_blocks(&MARK)
@@ -78,7 +78,7 @@ pub fn mark_lines() -> Vec<ratatui::text::Line<'static>> {
         .collect()
 }
 
-/// "clove" with the c in rust, for titles.
+/// "clove" with the c in bottle green, for titles.
 pub fn wordmark() -> Vec<ratatui::text::Span<'static>> {
     vec![
         ratatui::text::Span::styled("c", title()),

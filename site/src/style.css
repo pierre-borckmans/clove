@@ -3,58 +3,61 @@
 /* Colors live in variables so dark mode is one override, either from the OS or
    from the toggle (data-theme on <html>). */
 :root {
-  --paper: #f6f1e7;
-  --paper-2: #efe7d8;
-  --ink: #1a1714;
-  --ink-2: #4a433b;
-  --muted: #776d61;
-  --rule: #dcd1bf;
-  --rust: #b4532a;
-  --rust-soft: #e9cdb9;
-  --sage: #6b8f71;
-  --sage-ink: #4b6b51;
-  --term: #1a1714;
-  --term-ink: #ece4d6;
-  --term-dim: #8f857a;
-  --term-rule: #3a332c;
+  --paper: #f1f2ec;
+  --paper-2: #e7eae1;
+  --ink: #16201b;
+  --ink-2: #3d4842;
+  --muted: #68736c;
+  --rule: #d2d8ce;
+  --bottle: #2f6b4c;
+  --bottle-soft: #cfe1d5;
+  --sage: #2f6b4c;
+  --peel: #d9b945;
+  --sage-ink: #2f6b4c;
+  --term: #111814;
+  --term-ink: #e4eae3;
+  --term-dim: #859089;
+  --term-rule: #2a332d;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper: #151310;
-    --paper-2: #1d1a16;
-    --ink: #ece4d6;
-    --ink-2: #c9bfb0;
-    --muted: #978c7e;
-    --rule: #332d26;
-    --rust: #e07a4b;
-    --rust-soft: #4a2a1b;
-    --sage: #8db493;
-    --sage-ink: #9cc2a2;
-    --term: #0d0c0a;
-    --term-ink: #ece4d6;
-    --term-dim: #857b70;
-    --term-rule: #2c2722;
+    --paper: #101412;
+    --paper-2: #161c18;
+    --ink: #e4eae3;
+    --ink-2: #bcc6bf;
+    --muted: #89948d;
+    --rule: #27302a;
+    --bottle: #7cc49b;
+    --bottle-soft: #1d3628;
+    --sage: #7cc49b;
+    --peel: #e3c95e;
+    --sage-ink: #93d0ac;
+    --term: #0a0e0c;
+    --term-ink: #e4eae3;
+    --term-dim: #7b867f;
+    --term-rule: #222a25;
     color-scheme: dark;
   }
 }
 
 :root[data-theme="dark"] {
-  --paper: #151310;
-  --paper-2: #1d1a16;
-  --ink: #ece4d6;
-  --ink-2: #c9bfb0;
-  --muted: #978c7e;
-  --rule: #332d26;
-  --rust: #e07a4b;
-  --rust-soft: #4a2a1b;
-  --sage: #8db493;
-  --sage-ink: #9cc2a2;
-  --term: #0d0c0a;
-  --term-ink: #ece4d6;
-  --term-dim: #857b70;
-  --term-rule: #2c2722;
+  --paper: #101412;
+  --paper-2: #161c18;
+  --ink: #e4eae3;
+  --ink-2: #bcc6bf;
+  --muted: #89948d;
+  --rule: #27302a;
+  --bottle: #7cc49b;
+  --bottle-soft: #1d3628;
+  --sage: #7cc49b;
+  --peel: #e3c95e;
+  --sage-ink: #93d0ac;
+  --term: #0a0e0c;
+  --term-ink: #e4eae3;
+  --term-dim: #7b867f;
+  --term-rule: #222a25;
   color-scheme: dark;
 }
 
@@ -67,10 +70,11 @@
   --color-ink-2: var(--ink-2);
   --color-muted: var(--muted);
   --color-rule: var(--rule);
-  --color-rust: var(--rust);
-  --color-rust-soft: var(--rust-soft);
+  --color-bottle: var(--bottle);
+  --color-bottle-soft: var(--bottle-soft);
   --color-sage: var(--sage);
   --color-sage-ink: var(--sage-ink);
+  --color-peel: var(--peel);
   --color-term: var(--term);
   --color-term-ink: var(--term-ink);
   --color-term-dim: var(--term-dim);
@@ -93,7 +97,7 @@
     text-rendering: optimizeLegibility;
   }
   ::selection {
-    background: var(--rust);
+    background: var(--bottle);
     color: var(--paper);
   }
   a {
@@ -101,7 +105,7 @@
     text-underline-offset: 0.18em;
   }
   :focus-visible {
-    outline: 2px solid var(--rust);
+    outline: 2px solid var(--bottle);
     outline-offset: 2px;
   }
 }
@@ -121,7 +125,7 @@
     margin-top: 1em;
   }
   .prose-body a {
-    color: var(--rust);
+    color: var(--bottle);
     text-decoration: underline;
   }
 
