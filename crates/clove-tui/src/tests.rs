@@ -7,6 +7,7 @@ use crate::theme;
 use crate::ui;
 use clove_core::config::RefreshPolicy;
 use clove_core::doctor::{Check, Level};
+use clove_core::settings::Layer;
 use clove_core::{
     CloneInfo, Config, Event, Exec, GoldenMeta, GoldenStatus, RepoStatus, RepoSummary, Step, Timing,
 };
@@ -173,6 +174,7 @@ fn data(root: impl Into<PathBuf>, status: RepoStatus, clones: Vec<CloneInfo>) ->
         root: root.into(),
         status,
         clones,
+        fields: clove_core::settings::resolve(&[None, None, None], &config()),
         config: config(),
         prs: Default::default(),
         summary,
@@ -611,6 +613,118 @@ fn removing_the_clone_you_are_in_leaves_it_first() {
     assert!(matches!(&fx[..], [Effect::Spawn { .. }]));
 }
 
+fn on_field(app: &mut App, key_name: &str) {
+    let i = clove_core::settings::FIELDS
+        .iter()
+        .position(|f| f.key == key_name)
+        .unwrap();
+    let at = app
+        .settings_actions()
+        .iter()
+        .position(|a| *a == SettingsAction::Field(i))
+        .unwrap();
+    if let Some(Modal::Settings(v)) = &mut app.modal {
+        v.cursor = at;
+    }
+}
+
+fn writes(fx: &[Effect]) -> Vec<(String, Layer, Option<String>)> {
+    fx.iter()
+        .filter_map(|e| match e {
+            Effect::SetConfig(w) => Some((w.key.to_string(), w.layer, w.value.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn settings_toggle_edit_and_reset() {
+    let mut app = app();
+    key(&mut app, KeyCode::Char('s'));
+    // A toggle writes the flipped value to your file, then reloads.
+    on_field(&mut app, "fetch");
+    let fx = key(&mut app, KeyCode::Enter);
+    assert_eq!(writes(&fx), [("fetch".into(), Layer::You, Some("false".into()))]);
+    assert!(fx.contains(&Effect::Load));
+    match &fx[0] {
+        Effect::SetConfig(w) => assert!(w.path.ends_with("repos/app.toml"), "{:?}", w.path),
+        e => panic!("{e:?}"),
+    }
+
+    // ← moves the target to team; typing edits a value, Enter saves it there.
+    key(&mut app, KeyCode::Left);
+    on_field(&mut app, "refresh.max_age");
+    key(&mut app, KeyCode::Enter);
+    let (s, _) = render(&mut app, 120, 60);
+    assert!(s.contains("→ team"), "editor shows where it saves:\n{s}");
+    assert!(s.contains("⏎ save"), "{s}");
+    for _ in 0..3 {
+        key(&mut app, KeyCode::Backspace);
+    }
+    for c in "2d".chars() {
+        key(&mut app, KeyCode::Char(c));
+    }
+    let fx = key(&mut app, KeyCode::Enter);
+    assert_eq!(
+        writes(&fx),
+        [("refresh.max_age".into(), Layer::Team, Some("2d".into()))]
+    );
+    match &fx[0] {
+        Effect::SetConfig(w) => assert!(w.path.ends_with("app/.clove.toml"), "{:?}", w.path),
+        e => panic!("{e:?}"),
+    }
+
+    // A bad value stays in the editor with an error toast, and Esc drops it.
+    key(&mut app, KeyCode::Enter);
+    key(&mut app, KeyCode::Char('x'));
+    let fx = key(&mut app, KeyCode::Enter);
+    assert!(writes(&fx).is_empty());
+    assert!(
+        app.toasts.iter().any(|t| t.text.contains("bad duration")),
+        "{:?}",
+        app.toasts
+    );
+    key(&mut app, KeyCode::Esc);
+    assert!(matches!(&app.modal, Some(Modal::Settings(v)) if v.editing.is_none()));
+
+    // A choice cycles with arrows.
+    on_field(&mut app, "exec");
+    key(&mut app, KeyCode::Enter);
+    key(&mut app, KeyCode::Right);
+    let fx = key(&mut app, KeyCode::Enter);
+    assert_eq!(writes(&fx), [("exec".into(), Layer::Team, Some("direnv".into()))]);
+
+    // x resets only what the target file sets.
+    let fx = key(&mut app, KeyCode::Char('x'));
+    assert!(writes(&fx).is_empty(), "nothing set in team yet");
+    assert!(app.toasts.iter().any(|t| t.text.contains("isn't set in team")));
+    if let Some(d) = app.data.values_mut().next() {
+        let i = d.fields.iter().position(|f| f.field.key == "exec").unwrap();
+        d.fields[i].layers[1] = Some("mise".into());
+    }
+    let fx = key(&mut app, KeyCode::Char('x'));
+    assert_eq!(writes(&fx), [("exec".into(), Layer::Team, None)]);
+}
+
+#[test]
+fn settings_mouse_picks_the_target_file() {
+    let mut app = app();
+    key(&mut app, KeyCode::Char('s'));
+    let (s, _) = render(&mut app, 120, 60);
+    let line = s.lines().find(|l| l.contains("save edits to")).unwrap();
+    let y = s.lines().position(|l| l.contains("save edits to")).unwrap() as u16;
+    let x = line.find(" team ").unwrap();
+    let x = UnicodeWidthStr::width(&line[..x]) as u16 + 2;
+    click(&mut app, x, y);
+    assert!(matches!(&app.modal, Some(Modal::Settings(v)) if v.target == Layer::Team));
+    // Clicking a setting focuses it; Enter then edits it.
+    let (s, _) = render(&mut app, 120, 60);
+    let (x, y) = find(&s, "image size");
+    click(&mut app, x, y);
+    key(&mut app, KeyCode::Enter);
+    assert!(matches!(&app.modal, Some(Modal::Settings(v)) if v.editing.is_some()));
+}
+
 #[test]
 fn dialogs_use_arrows_and_enter() {
     // Settings: a cursor over the actionable rows; Enter acts on it.
@@ -629,7 +743,9 @@ fn dialogs_use_arrows_and_enter() {
         matches!(&fx[..], [Effect::EditConfig(p)] if p.ends_with("repos/app.toml")),
         "{fx:?}"
     );
-    key(&mut st, KeyCode::Down);
+    for _ in 0..=clove_core::settings::FIELDS.len() {
+        key(&mut st, KeyCode::Down);
+    }
     let fx = key(&mut st, KeyCode::Enter);
     assert!(
         matches!(&fx[..], [Effect::Spawn { .. }]),

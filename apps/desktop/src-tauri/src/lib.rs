@@ -120,6 +120,7 @@ pub fn run() {
             commands::copy_text,
             commands::repo_config,
             commands::edit_config,
+            commands::config_set,
             commands::service_status,
             commands::service_set,
             commands::prs,

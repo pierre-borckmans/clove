@@ -1,6 +1,7 @@
 //! Plain data the UI renders: repos, jobs, forms, toasts. No I/O here.
 
 use clove_core::doctor::Check;
+use clove_core::settings::Layer;
 use clove_core::{
     CloneInfo, Config, GoldenMeta, MergeCheck, NewOptions, RemoveOptions, RepoStatus, RepoSummary,
 };
@@ -27,6 +28,8 @@ pub struct RepoData {
     pub summary: RepoSummary,
     /// What to watch on disk to see this repo change.
     pub watch: Vec<clove_core::watch::Target>,
+    /// Editable settings with their value per config layer.
+    pub fields: Vec<clove_core::settings::FieldState>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -517,6 +520,18 @@ pub struct SettingsView {
     pub cursor: usize,
     /// Keep the cursor in view (arrow keys); off after wheel scrolling.
     pub follow: bool,
+    /// The config file edits are written to (←/→).
+    pub target: Layer,
+    /// A setting being typed in.
+    pub editing: Option<FieldEdit>,
+}
+
+/// An open value editor on a settings row.
+#[derive(Debug, Clone)]
+pub struct FieldEdit {
+    /// Index into [`clove_core::settings::FIELDS`].
+    pub field: usize,
+    pub input: Input,
 }
 
 /// What a focusable settings row does on Enter.
@@ -524,8 +539,19 @@ pub struct SettingsView {
 pub enum SettingsAction {
     /// Edit config layer `n` (0 all repos, 1 team, 2 you).
     Edit(usize),
+    /// Setting `n` of [`clove_core::settings::FIELDS`]: toggle or type a value.
+    Field(usize),
     Service,
     Shell,
+}
+
+/// One setting to write to (or, with no value, remove from) a config file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConfigWrite {
+    pub path: PathBuf,
+    pub layer: Layer,
+    pub key: &'static str,
+    pub value: Option<String>,
 }
 
 /// A clickable or scrollable region recorded while drawing.
@@ -546,6 +572,8 @@ pub enum Hit {
     RemoveRow(RemoveItem),
     /// A settings row: focus it.
     SettingsRow(SettingsAction),
+    /// A "save to" choice in settings.
+    SettingsLayer(Layer),
     /// Swallows clicks (a modal's body over the click-to-close backdrop).
     Inert,
     /// Outside an open modal: a click closes it, hover shows nothing.

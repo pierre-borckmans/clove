@@ -140,7 +140,10 @@ enum Cmd {
         apply: bool,
     },
     /// Show the resolved config and where it comes from, or edit one layer.
+    #[command(args_conflicts_with_subcommands = true)]
     Config {
+        #[command(subcommand)]
+        action: Option<ConfigAction>,
         /// Write .clove.toml with the current steps so the team can share them.
         #[arg(long)]
         write: bool,
@@ -192,6 +195,40 @@ enum HookAction {
     WorktreeCreate,
     /// Claude Code WorktreeRemove hook: JSON on stdin with worktree_path.
     WorktreeRemove,
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Show each setting, its value and the file it comes from (or one value).
+    Get {
+        #[arg(value_parser = setting_keys())]
+        key: Option<String>,
+    },
+    /// Set one setting in one config file, keeping the rest of the file as is.
+    Set {
+        #[arg(value_parser = setting_keys())]
+        key: String,
+        value: String,
+        /// Which file: you (this repo, only you), team (.clove.toml) or all
+        /// (every repo, only you).
+        #[arg(long, value_enum, default_value = "you")]
+        layer: Layer,
+    },
+    /// Remove a setting from one config file so a lower layer or the default applies.
+    Unset {
+        #[arg(value_parser = setting_keys())]
+        key: String,
+        #[arg(long, value_enum, default_value = "you")]
+        layer: Layer,
+    },
+}
+
+fn setting_keys() -> clap::builder::PossibleValuesParser {
+    clap::builder::PossibleValuesParser::new(
+        clove_core::settings::FIELDS
+            .iter()
+            .map(|f| clap::builder::PossibleValue::new(f.key).help(f.help)),
+    )
 }
 
 #[derive(Subcommand)]
@@ -598,7 +635,14 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::RemovePending => {
             repo(&cli)?.wait_and_remove_pending(std::time::Duration::from_secs(12 * 3600), &Silent)?;
         }
-        Cmd::Config { write, edit } => {
+        Cmd::Config {
+            action: Some(action), ..
+        } => cmd_config_action(&cli, action)?,
+        Cmd::Config {
+            action: None,
+            write,
+            edit,
+        } => {
             let c = repo(&cli)?;
             if let Some(layer) = edit {
                 let paths = clove_core::config::layer_paths(&c.root, &c.name);
@@ -1279,6 +1323,91 @@ fn cmd_prune(cli: &Cli, apply: bool, r: &dyn clove_core::Reporter) -> Result<()>
     }
     if cli.json {
         return emit(&serde_json::json!({ "checks": checks, "warning": warning, "removed": removed }));
+    }
+    Ok(())
+}
+
+fn cmd_config_action(cli: &Cli, action: &ConfigAction) -> Result<()> {
+    use clove_core::settings;
+    let c = repo(cli)?;
+    match action {
+        ConfigAction::Get { key } => {
+            let states = settings::fields(&c.root, &c.name, &c.config)?;
+            if let Some(k) = key {
+                let s = states
+                    .into_iter()
+                    .find(|s| s.field.key == k.as_str())
+                    .context("unknown setting")?;
+                if cli.json {
+                    return emit(&s);
+                }
+                println!("{}", s.effective);
+                return Ok(());
+            }
+            if cli.json {
+                return emit(&states);
+            }
+            let kw = states.iter().map(|s| s.field.key.len()).max().unwrap_or(0);
+            let vw = states
+                .iter()
+                .map(|s| s.effective.chars().count())
+                .max()
+                .unwrap_or(0)
+                .min(40);
+            for s in &states {
+                let from = s.source.map(|l| l.label()).unwrap_or("default");
+                let v: String = s.effective.chars().take(40).collect();
+                println!("{:<kw$}  {:<vw$}  {}", s.field.key, v, paint(DIM, from));
+            }
+        }
+        ConfigAction::Set { key, value, layer } => {
+            let l = settings::Layer::ALL[*layer as usize];
+            let path = l.path(&c.root, &c.name);
+            let shown = settings::set(&path, key, value)?;
+            if cli.json {
+                return emit(&serde_json::json!({ "key": key, "value": shown, "path": path }));
+            }
+            eprintln!(
+                "{} {key} = {shown}  {}",
+                paint(GREEN, "✓"),
+                paint(DIM, tilde(&path))
+            );
+            shadowed_note(&c, key, l)?;
+            if layer_is_team(*layer) {
+                eprintln!("{}", paint(DIM, "commit .clove.toml to share it with the team"));
+            }
+        }
+        ConfigAction::Unset { key, layer } => {
+            let l = settings::Layer::ALL[*layer as usize];
+            let path = l.path(&c.root, &c.name);
+            let removed = settings::unset(&path, key)?;
+            if cli.json {
+                return emit(&serde_json::json!({ "key": key, "removed": removed, "path": path }));
+            }
+            if removed {
+                eprintln!("{} unset {key}  {}", paint(GREEN, "✓"), paint(DIM, tilde(&path)));
+            } else {
+                eprintln!("{}", paint(DIM, format!("{key} is not set in {}", tilde(&path))));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Warns when a later layer still overrides what was just written.
+fn shadowed_note(c: &Clove, key: &str, wrote: clove_core::settings::Layer) -> Result<()> {
+    let c = Clove::open(&c.root)?;
+    let states = clove_core::settings::fields(&c.root, &c.name, &c.config)?;
+    if let Some(s) = states.iter().find(|s| s.field.key == key)
+        && let Some(src) = s.source
+        && src.index() > wrote.index()
+    {
+        eprintln!(
+            "{} {} sets {key} = {}, which wins",
+            paint(YELLOW, "!"),
+            src.label(),
+            s.effective
+        );
     }
     Ok(())
 }

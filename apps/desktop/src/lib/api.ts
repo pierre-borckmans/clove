@@ -5,6 +5,7 @@ import type {
   Cleanup,
   CloneInfo,
   Discovered,
+  Layer,
   MergeCheck,
   OpRequest,
   Refs,
@@ -45,6 +46,9 @@ export const api = {
       config: { ...r.config, steps: r.config.steps.map(normStep) },
     })),
   editConfig: (path: string) => invoke<void>("edit_config", { path }),
+  /** Sets a setting in one config file; a null value removes it. */
+  configSet: (root: string, layer: Layer, key: string, value: string | null) =>
+    invoke<string>("config_set", { root, layer, key, value }),
   serviceStatus: () => invoke<boolean>("service_status"),
   serviceSet: (install: boolean) => invoke<boolean>("service_set", { install }),
   prs: (root: string) => invoke<MergeCheck[]>("prs", { root }),

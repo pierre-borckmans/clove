@@ -171,6 +171,10 @@ fn perform(e: Effect, app: &mut App, tx: &mpsc::Sender<Msg>, term: &mut Term) {
             Ok(what) => app.toast(model::ToastKind::Ok, format!("opened in {what}")),
             Err(e) => app.toast(model::ToastKind::Err, format!("{e:#}")),
         },
+        Effect::SetConfig(w) => match worker::write_config(&w) {
+            Ok(msg) => app.toast(model::ToastKind::Ok, msg),
+            Err(e) => app.toast(model::ToastKind::Err, format!("{e:#}")),
+        },
         Effect::EditConfig(path) => {
             let res = clove_core::config::ensure_file(&path).and_then(|_| open_editor(term, &path));
             match res {

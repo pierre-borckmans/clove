@@ -156,6 +156,31 @@ export type RepoConfig = {
   copy: string[];
   freshness: Freshness | null;
   state_home: string;
+  fields: FieldState[];
+};
+
+/** A config file, lowest precedence first: all repos, team, you for this repo. */
+export type Layer = "all" | "team" | "you";
+export const LAYERS: Layer[] = ["all", "team", "you"];
+
+/** clove_core::config::Kind: how a setting is edited. */
+export type FieldKind =
+  | { type: "text" | "bool" | "seconds" | "duration" | "int" | "size" | "list" | "map" }
+  | { type: "choice"; options: string[] };
+
+/** clove_core::settings::FieldState: one setting across the config files. */
+export type FieldState = {
+  key: string;
+  label: string;
+  section: string;
+  kind: FieldKind;
+  help: string;
+  default: { value: string } | "resolved";
+  /** Per layer, in LAYERS order; null where that file doesn't set it. */
+  layers: (string | null)[];
+  effective: string;
+  /** null: the default applies. */
+  source: Layer | null;
 };
 
 export type PrState = "open" | "merged" | "closed";

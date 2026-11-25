@@ -7,6 +7,7 @@ use crate::model::*;
 use crate::theme::*;
 use clove_core::CloneInfo;
 use clove_core::doctor::Level;
+use clove_core::settings::{FIELDS, Kind, Layer};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Margin, Position, Rect};
@@ -1041,13 +1042,29 @@ fn hints(app: &App) -> Vec<Hint> {
         Some(Modal::Doctor(_)) => vec![("↑↓", "scroll", Down), ("esc", "close", Esc)],
         Some(Modal::Settings(sv)) => {
             let actions = app.settings_actions();
-            let what = match actions[sv.cursor.min(actions.len() - 1)] {
-                SettingsAction::Edit(_) => "edit",
+            if let Some(e) = &sv.editing {
+                let mut v = vec![];
+                if matches!(FIELDS[e.field].kind, Kind::Choice { .. }) {
+                    v.push(("←→", "choose", Right));
+                }
+                v.extend([("⏎", "save", Enter), ("esc", "cancel", Esc)]);
+                return v;
+            }
+            let on = actions[sv.cursor.min(actions.len() - 1)];
+            let what = match on {
+                SettingsAction::Edit(_) => "open file",
+                SettingsAction::Field(i) if FIELDS[i].kind == Kind::Bool => "toggle",
+                SettingsAction::Field(_) => "edit",
                 SettingsAction::Service if app.service == Some(true) => "turn off",
                 SettingsAction::Service => "turn on",
                 SettingsAction::Shell => "install",
             };
-            vec![("↑↓", "move", Down), ("⏎", what, Enter), ("esc", "close", Esc)]
+            let mut v = vec![("↑↓", "move", Down), ("⏎", what, Enter)];
+            if matches!(on, SettingsAction::Field(_)) {
+                v.push(("x", "reset", Char('x')));
+            }
+            v.extend([("←→", "save to", Right), ("esc", "close", Esc)]);
+            v
         }
         Some(Modal::Help) => vec![("esc", "close", Esc)],
         None if app.filtering => vec![("⏎", "keep", Enter), ("esc", "clear", Esc), ("↑↓", "move", Down)],
@@ -1713,21 +1730,40 @@ fn draw_gc(f: &mut Frame, app: &mut App, area: Rect, g: &GcView) {
     }
 }
 
+/// What the settings modal draws, and where its clickable parts are.
+struct SettingsLayout {
+    lines: Vec<Line<'static>>,
+    /// Line of each actionable row.
+    rows: Vec<(usize, SettingsAction)>,
+    /// "save edits to" choices: line, column, width.
+    chips: Vec<(usize, u16, u16, Layer)>,
+    /// Text cursor of the open editor: line, column.
+    cursor: Option<(usize, u16)>,
+}
+
 /// Resolved config for the current repo, where each part comes from, and the
-/// machine-wide pieces: service, shell integration, state folder.
-/// The lines, plus which line each actionable row is on.
-fn settings_lines(app: &App, iw: usize) -> (Vec<Line<'static>>, Vec<(usize, SettingsAction)>) {
+/// machine-wide pieces: service, shell integration, state folder. Settings
+/// render from [`clove_core::settings::FIELDS`], one widget per kind.
+fn settings_lines(app: &App, iw: usize) -> SettingsLayout {
+    let mut out = SettingsLayout {
+        lines: vec![],
+        rows: vec![],
+        chips: vec![],
+        cursor: None,
+    };
     let Some(d) = app.current() else {
-        return (vec![Line::from(Span::styled("loading", muted()))], vec![]);
+        out.lines.push(Line::from(Span::styled("loading", muted())));
+        return out;
     };
     let actions = app.settings_actions();
-    let cur = match &app.modal {
-        Some(Modal::Settings(v)) => actions
-            .get(v.cursor.min(actions.len().saturating_sub(1)))
-            .copied(),
-        _ => None,
+    let view = match &app.modal {
+        Some(Modal::Settings(v)) => v.clone(),
+        _ => SettingsView::default(),
     };
-    let mut rows: Vec<(usize, SettingsAction)> = vec![];
+    let cur = actions
+        .get(view.cursor.min(actions.len().saturating_sub(1)))
+        .copied();
+    let kw = 15;
     // An actionable row: `›` and a bold label when it has the cursor.
     let kva = |a: SettingsAction, k: &str, v: Vec<Span<'static>>| {
         let on = cur == Some(a);
@@ -1737,7 +1773,7 @@ fn settings_lines(app: &App, iw: usize) -> (Vec<Line<'static>>, Vec<(usize, Sett
             } else {
                 Span::raw("  ")
             },
-            Span::styled(pad(k, 15), if on { bold() } else { muted() }),
+            Span::styled(pad(k, kw), if on { bold() } else { muted() }),
         ];
         s.extend(v);
         Line::from(s)
@@ -1750,13 +1786,12 @@ fn settings_lines(app: &App, iw: usize) -> (Vec<Line<'static>>, Vec<(usize, Sett
             muted().add_modifier(Modifier::BOLD),
         ))
     };
-    let kw = 15;
     let kv = |k: &str, v: Vec<Span<'static>>| {
         let mut s = vec![Span::styled(format!("  {}", pad(k, kw)), muted())];
         s.extend(v);
         Line::from(s)
     };
-    let mut l = vec![];
+    let l = &mut out.lines;
     l.push(Line::from(vec![
         Span::styled(st.name.clone(), bold()),
         Span::raw("  "),
@@ -1775,7 +1810,7 @@ fn settings_lines(app: &App, iw: usize) -> (Vec<Line<'static>>, Vec<(usize, Sett
     for (i, (label, path)) in layers.into_iter().enumerate() {
         let exists = path.exists();
         let p = pad(&trunc_left(&fmt::tilde(&path), pw), pw);
-        rows.push((l.len(), SettingsAction::Edit(i)));
+        out.rows.push((l.len(), SettingsAction::Edit(i)));
         l.push(kva(
             SettingsAction::Edit(i),
             label,
@@ -1785,120 +1820,159 @@ fn settings_lines(app: &App, iw: usize) -> (Vec<Line<'static>>, Vec<(usize, Sett
             ],
         ));
     }
-    l.push(Line::from(""));
-
-    l.push(section("clones"));
-    l.push(kv("base", vec![Span::raw(c.base.clone())]));
-    l.push(kv("live in", vec![Span::raw(fmt::tilde(&c.clone_root))]));
-    l.push(kv(
-        "image size",
-        vec![Span::raw(format!("{} (sparse)", c.image_size))],
-    ));
-    l.push(kv(
-        "fetch",
-        vec![Span::raw(if c.fetch {
-            format!(
-                "before each new clone, at most every {}",
-                fmt::age(c.fetch_interval)
-            )
+    // Where edits go: ←/→ or a click.
+    let mut chip_line = vec![Span::styled(format!("  {}", pad("save edits to", kw)), muted())];
+    let mut x = (2 + kw) as u16;
+    for layer in Layer::ALL {
+        let text = format!(" {} ", layer.label());
+        let w = width(&text) as u16;
+        out.chips.push((l.len(), x, w, layer));
+        chip_line.push(if layer == view.target {
+            Span::styled(text, selected())
         } else {
-            "off".into()
-        })],
-    ));
-    l.push(kv(
-        "environment",
-        vec![Span::raw(format!("{:?}", c.exec).to_lowercase())],
-    ));
-    for (k, v) in &c.env {
-        l.push(kv(
-            "env",
-            vec![Span::raw(trunc(&format!("{k}={v}"), iw.saturating_sub(kw + 2)))],
-        ));
+            Span::styled(text, muted())
+        });
+        chip_line.push(Span::raw(" "));
+        x += w + 1;
     }
-    let copy_src = if c.copy.is_some() {
-        "configured"
-    } else {
-        "detected"
-    };
-    if st.copy.is_empty() {
-        l.push(kv(
-            "local files",
-            vec![Span::styled(format!("none ({copy_src})"), muted())],
-        ));
-    }
-    for (i, p) in st.copy.iter().enumerate() {
-        let mut v = vec![Span::raw(trunc(p, iw.saturating_sub(kw + 16)))];
-        if i == 0 {
-            v.push(Span::styled(
-                format!("  {copy_src}, copied into each clone"),
-                muted(),
-            ));
-        }
-        l.push(kv(if i == 0 { "local files" } else { "" }, v));
-    }
-    l.push(Line::from(""));
+    chip_line.push(Span::styled(" ←→", key()));
+    l.push(Line::from(chip_line));
 
-    l.push(section(if c.steps_detected {
-        "steps · detected from the repo"
-    } else {
-        "steps · from config"
-    }));
-    let cmd_w = iw.saturating_sub(kw + 8);
-    for step in &c.steps {
-        l.push(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(step.name.clone(), bold()),
-        ]));
-        if let Some(w) = &step.warm {
-            l.push(kv("  warm", vec![Span::raw(trunc(w, cmd_w))]));
+    let mut sections: Vec<&str> = vec![];
+    for f in FIELDS {
+        if !sections.contains(&f.section) {
+            sections.push(f.section);
         }
-        if let Some(s) = &step.setup {
-            l.push(kv("  setup", vec![Span::raw(trunc(s, cmd_w))]));
-        }
-        l.push(kv(
-            "  reruns when",
-            vec![Span::styled(
-                if step.watch.is_empty() {
-                    "always".to_string()
+    }
+    let vw = iw.saturating_sub(kw + 2 + 20).max(10);
+    // Values pad to a column so the source lines up after short ones.
+    let col = vw.min(26);
+    for sec in sections {
+        l.push(Line::from(""));
+        l.push(match sec {
+            "steps" if c.steps_detected => section("steps · detected from the repo"),
+            "steps" => section("steps · from config"),
+            _ => section(sec),
+        });
+        for (i, f) in FIELDS.iter().enumerate().filter(|(_, f)| f.section == sec) {
+            let Some(fs) = d.fields.iter().find(|s| s.field.key == f.key) else {
+                continue;
+            };
+            let a = SettingsAction::Field(i);
+            let editing = view.editing.as_ref().filter(|e| e.field == i);
+            let mut v = vec![];
+            match (editing, f.kind) {
+                (Some(e), Kind::Choice { .. }) => {
+                    v.push(Span::styled("‹ ", key()));
+                    v.push(Span::styled(e.input.text.clone(), bold()));
+                    v.push(Span::styled(" ›", key()));
+                }
+                (Some(e), _) => {
+                    let shown = trunc_left(&e.input.text, vw);
+                    let before: String = e.input.text.chars().take(e.input.cursor).collect();
+                    let cx = width(&before).min(vw) as u16;
+                    out.cursor = Some((l.len(), (2 + kw) as u16 + cx));
+                    v.push(Span::styled(
+                        pad(&shown, vw),
+                        bold().add_modifier(Modifier::UNDERLINED),
+                    ));
+                }
+                (None, Kind::Bool) => v.push(if fs.effective == "true" {
+                    Span::styled(pad("● on", col), fg(SAGE))
                 } else {
-                    trunc(&step.watch.join(", "), cmd_w)
-                },
-                muted(),
-            )],
-        ));
-    }
-    l.push(Line::from(""));
-
-    l.push(section("freshness"));
-    l.push(kv(
-        "stale when",
-        vec![Span::raw(format!(
-            "a step's watched files change, or after {} / {} commits",
-            fmt::age(c.refresh.max_age_secs),
-            c.refresh.max_behind
-        ))],
-    ));
-    l.push(kv(
-        "auto refresh",
-        vec![Span::raw(if c.refresh.auto {
-            "on, when a new clone finds it stale"
-        } else {
-            "off"
-        })],
-    ));
-    if let Some(fr) = &st.freshness {
-        l.push(kv(
-            "now",
-            vec![match &fr.reason {
-                Some(r) => Span::styled(format!("stale: {r}"), fg(AMBER)),
-                None => Span::styled("fresh", fg(SAGE)),
-            }],
-        ));
+                    Span::styled(pad("○ off", col), muted())
+                }),
+                (None, _) if fs.effective.is_empty() => v.push(Span::styled(pad("none", col), muted())),
+                (None, _) => v.push(Span::raw(pad(&trunc(&fs.effective, vw), col))),
+            }
+            if editing.is_some() {
+                v.push(Span::styled(format!("  → {}", view.target.label()), fg(BOTTLE)));
+            } else {
+                let from = fs.source.map(|s| s.label()).unwrap_or("default");
+                v.push(Span::styled(format!(" {from}"), muted()));
+                if let Some(mine) = fs.get(view.target)
+                    && fs.source != Some(view.target)
+                {
+                    v.push(Span::styled(
+                        format!("  ({}: {}, overridden)", view.target.label(), trunc(mine, 16)),
+                        fg(AMBER),
+                    ));
+                }
+            }
+            out.rows.push((l.len(), a));
+            l.push(kva(a, f.label, v));
+            if cur == Some(a) {
+                l.push(Line::from(Span::styled(
+                    format!("  {}{}", " ".repeat(kw), trunc(f.help, iw.saturating_sub(kw + 2))),
+                    muted().add_modifier(Modifier::ITALIC),
+                )));
+            }
+        }
+        // Read-only context that is not a setting.
+        match sec {
+            "clones" if c.copy.is_none() && !st.copy.is_empty() => {
+                l.push(kv(
+                    "",
+                    vec![Span::styled(
+                        trunc(
+                            &format!("detected: {}", st.copy.join(", ")),
+                            iw.saturating_sub(kw + 2),
+                        ),
+                        muted(),
+                    )],
+                ));
+            }
+            "steps" => {
+                l.push(kv(
+                    "",
+                    vec![Span::styled(
+                        "edit [[step]] and [[add_step]] in a config file",
+                        muted(),
+                    )],
+                ));
+                let cmd_w = iw.saturating_sub(kw + 8);
+                for step in &c.steps {
+                    l.push(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(step.name.clone(), bold()),
+                    ]));
+                    if let Some(w) = &step.warm {
+                        l.push(kv("  warm", vec![Span::raw(trunc(w, cmd_w))]));
+                    }
+                    if let Some(s) = &step.setup {
+                        l.push(kv("  setup", vec![Span::raw(trunc(s, cmd_w))]));
+                    }
+                    l.push(kv(
+                        "  reruns when",
+                        vec![Span::styled(
+                            if step.watch.is_empty() {
+                                "always".to_string()
+                            } else {
+                                trunc(&step.watch.join(", "), cmd_w)
+                            },
+                            muted(),
+                        )],
+                    ));
+                }
+            }
+            "freshness" => {
+                if let Some(fr) = &st.freshness {
+                    l.push(kv(
+                        "now",
+                        vec![match &fr.reason {
+                            Some(r) => Span::styled(format!("stale: {r}"), fg(AMBER)),
+                            None => Span::styled("fresh", fg(SAGE)),
+                        }],
+                    ));
+                }
+            }
+            _ => {}
+        }
     }
     l.push(Line::from(""));
 
     l.push(section("this machine"));
-    rows.push((l.len(), SettingsAction::Service));
+    out.rows.push((l.len(), SettingsAction::Service));
     l.push(kva(
         SettingsAction::Service,
         "service",
@@ -1934,20 +2008,25 @@ fn settings_lines(app: &App, iw: usize) -> (Vec<Line<'static>>, Vec<(usize, Sett
     if active {
         l.push(kv("shell", shell_spans));
     } else {
-        rows.push((l.len(), SettingsAction::Shell));
+        out.rows.push((l.len(), SettingsAction::Shell));
         l.push(kva(SettingsAction::Shell, "shell", shell_spans));
     }
     l.push(kv(
         "state",
         vec![Span::raw(fmt::tilde(&clove_core::state_home()))],
     ));
-    (l, rows)
+    out
 }
 
 fn draw_settings(f: &mut Frame, app: &mut App, area: Rect, v: SettingsView) {
     let w = 92.min(area.width.saturating_sub(4));
     let iw = w.saturating_sub(6) as usize;
-    let (lines, rows) = settings_lines(app, iw);
+    let SettingsLayout {
+        lines,
+        rows,
+        chips,
+        cursor,
+    } = settings_lines(app, iw);
     let h = (lines.len() as u16 + 4).min(area.height.saturating_sub(2));
     let rect = centered(area, w, h);
     open_modal(f, &mut app.hits, area, rect);
@@ -1958,9 +2037,15 @@ fn draw_settings(f: &mut Frame, app: &mut App, area: Rect, v: SettingsView) {
     app.settings_height = view;
     let len = lines.len();
     let mut scroll = v.scroll;
+    let cur_row = rows.iter().find(|(_, a)| {
+        let actions = app.settings_actions();
+        actions.get(v.cursor.min(actions.len().saturating_sub(1))) == Some(a)
+    });
     if v.follow
-        && let Some((line, _)) = rows.get(v.cursor.min(rows.len().saturating_sub(1)))
+        && let Some((line, _)) = cur_row
     {
+        // Keep the help line under the row in view too.
+        scroll.follow((*line + 1).min(len.saturating_sub(1)), view, len);
         scroll.follow(*line, view, len);
     }
     scroll.clamp(view, len);
@@ -1971,11 +2056,24 @@ fn draw_settings(f: &mut Frame, app: &mut App, area: Rect, v: SettingsView) {
     let visible: Vec<Line> = lines.into_iter().skip(off).take(view).collect();
     f.render_widget(Paragraph::new(visible), inner);
     app.hits.push((rect, Hit::ScrollSettings));
+    let shown = |line: usize| line >= off && line < off + view;
     for (line, a) in rows {
-        if line >= off && line < off + view {
+        if shown(line) {
             app.hits
                 .push((row(inner, (line - off) as u16), Hit::SettingsRow(a)));
         }
+    }
+    for (line, x, w, layer) in chips {
+        if shown(line) {
+            let y = inner.y + (line - off) as u16;
+            app.hits
+                .push((Rect::new(inner.x + x, y, w, 1), Hit::SettingsLayer(layer)));
+        }
+    }
+    if let Some((line, x)) = cursor
+        && shown(line)
+    {
+        f.set_cursor_position(Position::new(inner.x + x, inner.y + (line - off) as u16));
     }
     scrollbar(
         f,

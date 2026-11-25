@@ -19,6 +19,7 @@ pub mod ops;
 pub mod prune;
 pub mod repo;
 pub mod service;
+pub mod settings;
 pub mod shellrc;
 pub mod steps;
 pub mod util;

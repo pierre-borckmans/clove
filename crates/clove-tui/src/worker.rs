@@ -70,6 +70,7 @@ pub fn load(tx: Sender<Msg>, root: PathBuf) {
                 summary: c.summary(),
                 status,
                 clones,
+                fields: clove_core::settings::fields(&c.root, &c.name, &c.config).unwrap_or_default(),
                 config: c.config.clone(),
                 prs,
                 watch: {
@@ -263,6 +264,17 @@ fn guarded<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
             Err(format!("internal error: {msg}"))
         }
     }
+}
+
+/// Writes one setting (see [`ConfigWrite`]). Returns what to tell the user.
+pub fn write_config(w: &ConfigWrite) -> anyhow::Result<String> {
+    use clove_core::settings;
+    let label = w.layer.label();
+    Ok(match &w.value {
+        Some(v) => format!("{} = {} · {label}", w.key, settings::set(&w.path, w.key, v)?),
+        None if settings::unset(&w.path, w.key)? => format!("{} reset · {label}", w.key),
+        None => format!("{} isn't set in {label}", w.key),
+    })
 }
 
 #[cfg(test)]
