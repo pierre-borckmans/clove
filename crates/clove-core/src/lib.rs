@@ -4,7 +4,8 @@
 //! dependencies installed and dev environments warmed. A *clone* is a
 //! `clonefile(2)` copy of that image file (O(1), no extra disk until written),
 //! mounted and registered as a regular git worktree. Only the setup steps whose
-//! inputs changed since the golden commit run in the clone.
+//! inputs changed since the golden commit run in the clone. On Linux the golden
+//! image and clones are btrfs subvolumes in one image per repo (see `backend`).
 
 pub mod backend;
 pub mod brand;

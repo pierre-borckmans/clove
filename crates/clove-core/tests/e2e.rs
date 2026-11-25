@@ -1,5 +1,6 @@
-//! End-to-end on real disk images (macOS only). One scenario, because the env
-//! vars that point clove at a temp state dir are process-wide.
+//! End-to-end on real disk images. One scenario, because the env vars that
+//! point clove at a temp state dir are process-wide. macOS only for now: it
+//! drives diskutil, and the btrfs backend gets its own once its design settles.
 
 #![cfg(target_os = "macos")]
 
@@ -361,6 +362,8 @@ fn full_lifecycle() {
     );
     assert!(!git(&root, &["worktree", "list"]).contains("clones"));
 
+    let clone_root = c.config.clone_root.clone();
     c.deinit(&Silent).unwrap();
     assert!(!t.join("state/repos").join(&c.id).exists());
+    assert!(!clone_root.exists(), "empty clones folder removed");
 }

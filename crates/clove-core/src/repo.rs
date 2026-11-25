@@ -172,8 +172,23 @@ impl Clove {
     pub fn clone_dir(&self, name: &str) -> PathBuf {
         self.state.join("clones").join(name)
     }
+    /// Where clones appear: `clone_root`, unless the repo's Linux volume was
+    /// mounted elsewhere (udisks picks /run/media/...), recorded in `state/mount`.
+    pub fn clone_root(&self) -> PathBuf {
+        #[cfg(target_os = "linux")]
+        if let Some(p) = self.recorded_mount() {
+            return p;
+        }
+        self.config.clone_root.clone()
+    }
+    #[cfg(target_os = "linux")]
+    pub(crate) fn recorded_mount(&self) -> Option<PathBuf> {
+        let s = std::fs::read_to_string(self.state.join("mount")).ok()?;
+        let s = s.trim();
+        (!s.is_empty()).then(|| PathBuf::from(s))
+    }
     pub fn clone_mount(&self, name: &str) -> PathBuf {
-        self.config.clone_root.join(name)
+        self.clone_root().join(name)
     }
     /// The worktree sits one level inside the volume so the volume's own files
     /// (`.fseventsd`, `.Trashes`) stay out of `git status`, and the folder keeps

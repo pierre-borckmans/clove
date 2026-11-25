@@ -38,11 +38,21 @@ clove keeps one **golden** disk image per repo: an APFS volume holding a worktre
 
 Measured on that monorepo over five runs: 1.04 to 1.16s per clone, 6.1 MB of disk each. `clove init` took 1m18s once.
 
+On Linux the golden image is a btrfs image file instead, mounted once per repo. The golden worktree is a subvolume in it, and a clone is a snapshot of that subvolume, so there is no mount per clone. A snapshot of a 185k-file golden took about 8 ms, and the first `git status` in the clone 45 to 61 ms, with no rehash.
+
 Clones are isolated. Adding a dependency or editing the nix flake in one clone doesn't affect the others. File watchers, Docker bind mounts, Go and Rust builds all work inside a clone.
 
 ## Install
 
 macOS with APFS. Built and tested on macOS 26, which has the faster ASIF images. Older versions fall back to `hdiutil` sparse images, which is written but untested.
+
+Linux needs btrfs-progs (`sudo apt install btrfs-progs`) and loop devices. The host disk can be any filesystem. Kernel 6.7 or later gives exact clone sizes (simple quotas). On older kernels the image uses full qgroups, or reports no sizes. `clove init` offers to add one line to `/etc/fstab`, with sudo, once per repo:
+
+```
+~/.clove/repos/<repo>-<hash>/pool.btrfs ~/src/<repo>.clove btrfs loop,user,noauto,exec,user_subvol_rm_allowed 0 0
+```
+
+With it, clove mounts the image as you, at `<repo>.clove`, from a desktop or over SSH. Without it, clove mounts through udisks2 if it's installed, which works only from a desktop session and puts clones under `/run/media/$USER/` (or `/media/$USER/`). `sudo -n` is the last resort. `clove doctor` says which one a repo uses.
 
 ```
 cargo install --git https://github.com/pierre-borckmans/clove clove-cli
@@ -94,7 +104,7 @@ The golden image is a recipe, not a snapshot of your checkout: the base branch, 
 - **Refresh is incremental.** `clove refresh` clones the current golden image, checks out the latest base and reruns only the warm steps whose `watch` paths changed since the previous golden commit, or whose definition changed. On the monorepo, a refresh where nothing relevant changed takes 4.3s. `--full` reruns everything.
 - **Stale means a clone would redo work.** The golden image is stale as soon as a step's `watch` paths changed on the base, or the step's definition changed, because a new clone would rerun that step. `clove status` names the step, e.g. `build-deps inputs changed in 3 commits`. Dozens of commits behind with no step inputs touched is still fresh. `max_age` and `max_behind` are a safety net on top.
 - **Stale images refresh themselves.** When `clove new` finds the image stale, it starts a refresh in the background and doesn't wait, so the next clone starts fresh.
-- **The service follows your pulls.** `clove init` offers it in an interactive terminal, or run `clove service install`. It adds two launchd agents: one remounts clones at login, the other runs `clove refresh --all-repos --if-stale` whenever git rewrites a repo's `FETCH_HEAD` (any `git fetch` or `git pull` in the main checkout), and every 4h for repos nobody fetches in. A fresh repo costs at most one `git fetch`.
+- **The service follows your pulls.** `clove init` offers it in an interactive terminal, or run `clove service install`. It adds two launchd agents (systemd user units on Linux: `clove-mount.service`, and `clove-refresh` as a service, a timer and a path unit): one remounts clones at login, the other runs `clove refresh --all-repos --if-stale` whenever git rewrites a repo's `FETCH_HEAD` (any `git fetch` or `git pull` in the main checkout), and every 4h for repos nobody fetches in. A fresh repo costs at most one `git fetch`.
 - **Refreshing never touches existing clones.** It builds the next generation next to the current one and swaps it in atomically, and `clove new` keeps working while it runs.
 - **Clones catch up with `clove setup`.** After a `git pull` or a rebase in a clone, it copies your local files again and reruns only the setup steps whose inputs changed since they last ran.
 
@@ -148,8 +158,9 @@ watch = ["common/javascript", "packages/inkwell", "pnpm-lock.yaml"]
 
 ## Limits
 
-- **macOS only.** It needs APFS `clonefile` and disk images. Linux could do the same with a reflinked image file on btrfs or XFS, but that isn't written yet.
-- **Each clone is a mounted volume.** Mounts don't survive a reboot. Run `clove mount --all-repos`, or install the service.
+- **macOS and Linux.** macOS needs APFS (`clonefile` and disk images). Linux needs btrfs-progs and loop devices, and an `/etc/fstab` line to mount without a desktop session (see Install). Linux has no end-to-end test in CI yet.
+- **On Linux, clones share one volume per repo.** `clove unmount` without names unmounts it, if nothing uses it. Unmounting a single clone isn't possible. `clone_root` must be a folder of its own for each repo, which is the default. Space a removed clone held comes back a few seconds later, when btrfs cleans up.
+- **Each clone is a mounted volume** (on Linux, the repo's one volume). Mounts don't survive a reboot. Run `clove mount --all-repos`, or install the service.
 - **Absolute paths don't move.** Python virtualenvs and cargo's `target/` fingerprints record the path they were built at, so they rebuild in a clone. Bazel keeps one output base per path.
 - **Daemons started by warm steps** (a Bazel server, git's fsmonitor) get stopped when the golden image unmounts. clove says which ones.
 
@@ -163,6 +174,8 @@ watch = ["common/javascript", "packages/inkwell", "pnpm-lock.yaml"]
 ```
 
 The worktree sits one level inside the volume, so the volume's own files stay out of `git status` and the folder keeps the repo's name.
+
+On Linux, `~/.clove/repos/<repo>-<hash>/pool.btrfs` is the repo's one image, mounted at `<repo>.clove` (or where udisks put it, recorded in `mount` next to it). Inside it, `.clove-golden/` is the golden worktree, `.clove-gens/gen-N` its read-only snapshots, and `<name>/<repo>` each clone.
 
 ## Develop
 

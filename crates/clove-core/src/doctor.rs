@@ -2,7 +2,7 @@
 
 use crate::backend::{self, Backend};
 use crate::detect::required_tool;
-use crate::repo::{Clove, state_home};
+use crate::repo::Clove;
 use crate::util::{run, which};
 use serde::Serialize;
 use std::process::Command;
@@ -33,7 +33,9 @@ fn check(name: &str, level: Level, detail: impl Into<String>, fix: Option<String
     }
 }
 
-pub fn machine() -> Vec<Check> {
+/// Disk images and the volume they live on.
+#[cfg(target_os = "macos")]
+fn storage() -> Vec<Check> {
     let mut out = vec![];
     match Backend::detect() {
         Ok(Backend::Asif) => out.push(check(
@@ -48,9 +50,15 @@ pub fn machine() -> Vec<Check> {
             "falling back to hdiutil sparse images; macOS 26+ is faster",
             None,
         )),
+        Ok(other) => out.push(check(
+            "disk images",
+            Level::Fail,
+            format!("{other:?} on macOS"),
+            None,
+        )),
         Err(e) => out.push(check("disk images", Level::Fail, format!("{e:#}"), None)),
     }
-    let home = state_home();
+    let home = crate::repo::state_home();
     let _ = std::fs::create_dir_all(&home);
     match backend::fs_type(&home).as_deref() {
         Some("apfs") => out.push(check(
@@ -67,6 +75,76 @@ pub fn machine() -> Vec<Check> {
         )),
         None => {}
     }
+    out
+}
+
+/// btrfs-progs, kernel support, loop devices and udisks.
+#[cfg(target_os = "linux")]
+fn storage() -> Vec<Check> {
+    let mut out = vec![];
+    match Backend::detect() {
+        Ok(_) => out.push(check(
+            "btrfs-progs",
+            Level::Ok,
+            run(Command::new("btrfs").arg("--version"))
+                .ok()
+                .and_then(|v| v.lines().next().map(str::to_string))
+                .unwrap_or_else(|| "installed".into()),
+            None,
+        )),
+        Err(_) => out.push(check(
+            "btrfs-progs",
+            Level::Fail,
+            "mkfs.btrfs and btrfs not found; clove keeps each repo in a btrfs image",
+            Some("sudo apt install btrfs-progs".into()),
+        )),
+    }
+    let fs = std::fs::read_to_string("/proc/filesystems").unwrap_or_default();
+    if fs.lines().any(|l| l.split_whitespace().last() == Some("btrfs")) {
+        out.push(check("kernel btrfs", Level::Ok, "btrfs is available", None));
+    } else {
+        out.push(check(
+            "kernel btrfs",
+            Level::Warn,
+            "btrfs isn't loaded; mounting will try to load it",
+            Some("sudo modprobe btrfs".into()),
+        ));
+    }
+    if std::path::Path::new("/dev/loop-control").exists() {
+        out.push(check(
+            "loop devices",
+            Level::Ok,
+            "/dev/loop-control present",
+            None,
+        ));
+    } else {
+        out.push(check(
+            "loop devices",
+            Level::Fail,
+            "no /dev/loop-control; images can't be attached",
+            Some("sudo modprobe loop".into()),
+        ));
+    }
+    if which("udisksctl").is_some() {
+        out.push(check(
+            "udisks2",
+            Level::Ok,
+            "udisksctl attaches images without sudo",
+            None,
+        ));
+    } else {
+        out.push(check(
+            "udisks2",
+            Level::Warn,
+            "udisksctl not found; attaching images falls back to `sudo -n`",
+            Some("sudo apt install udisks2".into()),
+        ));
+    }
+    out
+}
+
+pub fn machine() -> Vec<Check> {
+    let mut out = storage();
     match run(Command::new("git").arg("--version")) {
         Ok(v) => {
             let ver = v.trim_start_matches("git version ").to_string();
@@ -129,8 +207,19 @@ pub fn repo(c: &Clove) -> Vec<Check> {
             Some(store) => {
                 let global = run(Command::new("pnpm").args(["config", "get", "store-dir", "--global"]))
                     .unwrap_or_default();
+                // pnpm 11+ reads pnpm_config_store_dir; older pnpm, npm_config_store_dir.
+                let env_pin = ["pnpm_config_store_dir", "npm_config_store_dir"]
+                    .into_iter()
+                    .find(|k| std::env::var(k).is_ok_and(|v| v.trim() == store));
                 if global.trim() == store {
                     out.push(check("pnpm store", Level::Ok, format!("pinned to {store}"), None));
+                } else if let Some(k) = env_pin {
+                    out.push(check(
+                        "pnpm store",
+                        Level::Ok,
+                        format!("pinned to {store} by ${k}"),
+                        None,
+                    ));
                 } else {
                     out.push(check(
                         "pnpm store",
@@ -148,6 +237,10 @@ pub fn repo(c: &Clove) -> Vec<Check> {
             )),
         }
     }
+    #[cfg(target_os = "linux")]
+    out.extend(fstab(c));
+    #[cfg(target_os = "linux")]
+    out.extend(quota(c));
     match c.golden_meta() {
         Ok(Some(m)) => {
             let f = c.freshness().ok().flatten();
@@ -221,4 +314,80 @@ pub fn repo(c: &Clove) -> Vec<Check> {
         ));
     }
     out
+}
+
+/// Mounting without sudo: an /etc/fstab line, else udisks under /run/media.
+#[cfg(target_os = "linux")]
+fn fstab(c: &Clove) -> Option<Check> {
+    if !c.shared_volume() {
+        return None;
+    }
+    let image = backend::btrfs::image_path(c);
+    let fix = Some(format!(
+        "echo '{}' | sudo tee -a /etc/fstab",
+        backend::btrfs::fstab_line(&image, &c.config.clone_root)
+    ));
+    let recorded = c.recorded_mount();
+    Some(match backend::btrfs::fstab_target(&image) {
+        Some(at) if recorded.as_ref().is_none_or(|r| *r == at) => check(
+            "mounting",
+            Level::Ok,
+            format!("/etc/fstab mounts the image at {} without sudo", at.display()),
+            None,
+        ),
+        Some(at) => check(
+            "mounting",
+            Level::Warn,
+            format!(
+                "/etc/fstab mounts the image at {}, but its clones were made at {}; recreate them (clove rm --all, deinit, init)",
+                at.display(),
+                recorded.unwrap_or_default().display()
+            ),
+            None,
+        ),
+        None => match recorded {
+            Some(r) if r != c.config.clone_root => check(
+                "mounting",
+                Level::Warn,
+                format!(
+                    "clones live under {} (udisks), which needs a desktop session to mount; an /etc/fstab line works over SSH too, after recreating the clones",
+                    r.display()
+                ),
+                fix,
+            ),
+            _ => check(
+                "mounting",
+                Level::Warn,
+                "no /etc/fstab line; mounting goes through udisks (desktop sessions) or sudo",
+                fix,
+            ),
+        },
+    })
+}
+
+/// Clone sizes come from squota/qgroups, set up when the image is made.
+#[cfg(target_os = "linux")]
+fn quota(c: &Clove) -> Option<Check> {
+    let rec = c.record().ok().flatten()?;
+    if rec.backend != Backend::Btrfs {
+        return None;
+    }
+    let pool = c.clone_root();
+    if !backend::is_mounted(&pool) {
+        return Some(check(
+            "quota",
+            Level::Warn,
+            format!("{} isn't mounted", pool.display()),
+            Some("clove mount".into()),
+        ));
+    }
+    Some(match backend::btrfs::quota_enabled(&pool) {
+        Some(true) => check("quota", Level::Ok, "btrfs quotas on; clone sizes are exact", None),
+        _ => check(
+            "quota",
+            Level::Warn,
+            "the image has no quotas (made on a kernel older than 6.7?), so clone sizes are unknown",
+            None,
+        ),
+    })
 }

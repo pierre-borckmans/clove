@@ -57,7 +57,13 @@ clove rm feat-one >/dev/null 2>&1 || fail "rm from inside the clone"
 command clove ls --json | python3 -c 'import json,sys; assert [c["name"] for c in json.load(sys.stdin)] == ["two"]' || fail "rm removed it"
 pass "rm from inside"
 
-clove unmount two >/dev/null 2>&1 && clove mount >/dev/null 2>&1 || fail "unmount/mount"
+if [[ $(uname) == Linux ]]; then
+  # Clones share the repo's volume: `clove unmount` without names unmounts it.
+  clove unmount two >/dev/null 2>&1 && fail "unmount of one clone should refuse on Linux"
+  clove unmount >/dev/null 2>&1 && clove mount >/dev/null 2>&1 || fail "unmount/mount"
+else
+  clove unmount two >/dev/null 2>&1 && clove mount >/dev/null 2>&1 || fail "unmount/mount"
+fi
 pass "unmount + mount"
 
 hp=$(print '{"name":"agent-x","cwd":"'$T/app'"}' | command clove hook worktree-create 2>/dev/null)

@@ -188,14 +188,16 @@ enum HookAction {
 
 #[derive(Subcommand)]
 enum ServiceAction {
-    /// Install the launchd agents.
+    #[cfg_attr(target_os = "macos", doc = "Install the launchd agents.")]
+    #[cfg_attr(target_os = "linux", doc = "Install the systemd user units.")]
     Install {
         /// Fallback check for repos nobody fetches in, e.g. 1h, 4h. Fetches and
         /// pulls trigger a check right away.
         #[arg(long, default_value = "4h")]
         every: String,
     },
-    /// Remove the launchd agents.
+    #[cfg_attr(target_os = "macos", doc = "Remove the launchd agents.")]
+    #[cfg_attr(target_os = "linux", doc = "Remove the systemd user units.")]
     Uninstall,
     /// Show whether the agents are installed.
     Status,
@@ -287,6 +289,7 @@ fn run(cli: Cli) -> Result<()> {
             if !cli.json {
                 print_plan(&c);
             }
+            fstab_prompt(&c, cli.json)?;
             let meta = c.init(r)?;
             if cli.json {
                 return emit(&meta);
@@ -502,6 +505,15 @@ fn run(cli: Cli) -> Result<()> {
         }
         Cmd::Unmount { clones, force } => {
             let c = repo(&cli)?;
+            if clones.is_empty() && c.shared_volume() {
+                c.unmount_volume(*force)?;
+                let root = c.clone_root();
+                if cli.json {
+                    return emit(&serde_json::json!({ "unmounted": [root] }));
+                }
+                eprintln!("  {} {}", paint(DIM, "○"), tilde(&root));
+                return Ok(());
+            }
             let names = if clones.is_empty() {
                 c.clone_names()?
             } else {
@@ -727,9 +739,10 @@ fn after_init() -> Result<()> {
         return Ok(());
     }
     eprint!(
-        "\nKeep golden images fresh in the background? Installs two launchd agents: \
+        "\nKeep golden images fresh in the background? Installs {}: \
          one refreshes a stale image when you fetch or pull (and every 4h), one remounts \
-         clones at login. [Y/n] "
+         clones at login. [Y/n] ",
+        clove_core::service::AGENTS
     );
     if ask_yes()? {
         for p in clove_core::service::install(clove_core::service::DEFAULT_EVERY)? {
@@ -740,6 +753,38 @@ fn after_init() -> Result<()> {
             "{} skipped; {} later if you change your mind",
             paint(DIM, "·"),
             paint(BOLD, "clove service install")
+        );
+    }
+    Ok(())
+}
+
+/// Linux: offers the /etc/fstab line that lets clove mount the repo's image
+/// without sudo. Asks only in an interactive terminal; otherwise prints it.
+fn fstab_prompt(c: &Clove, json: bool) -> Result<()> {
+    let Some(line) = c.missing_fstab_line() else {
+        return Ok(());
+    };
+    let cmd = format!("printf '\\n%s\\n' '{line}' | sudo tee -a /etc/fstab");
+    let interactive = !json && std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    if !interactive {
+        eprintln!(
+            "{} to mount without sudo, add this line to /etc/fstab:\n  {line}\n  {}",
+            paint(DIM, "·"),
+            paint(BOLD, &cmd)
+        );
+        return Ok(());
+    }
+    eprint!("\nclove needs one line in /etc/fstab so it can mount its image without sudo. Add it? [Y/n] ");
+    if ask_yes()? {
+        match c.add_fstab_line(&line) {
+            Ok(()) => eprintln!("{} added to /etc/fstab: {line}", paint(GREEN, "✓")),
+            Err(e) => eprintln!("{} {e:#}; later: {}", paint(YELLOW, "!"), paint(BOLD, &cmd)),
+        }
+    } else {
+        eprintln!(
+            "{} skipped; clove will mount through udisks (needs a desktop session). Later: {}",
+            paint(DIM, "·"),
+            paint(BOLD, &cmd)
         );
     }
     Ok(())

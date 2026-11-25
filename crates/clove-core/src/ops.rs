@@ -7,8 +7,9 @@
 //!   clones/<name>/            image (clonefile of a golden image) + meta.json
 //!   mnt/golden                golden mount point (only while warming)
 //! Clones mount at `<clone_root>/<name>` and the worktree is `<mount>/<repo>`.
+//! On Linux the images live in one btrfs pool per repo instead (see backend).
 
-use crate::backend::{self, Backend};
+use crate::backend::{self, Backend, Store};
 use crate::config::Step;
 use crate::events::{Event, Reporter, Timing, timed};
 use crate::git;
@@ -16,7 +17,7 @@ use crate::repo::{
     CloneInfo, CloneMeta, Clove, GoldenMeta, RepoRecord, read_json, sanitize_name, write_json,
 };
 use crate::steps::{StepRun, run_step};
-use crate::util::{FileLock, allocated_bytes, clonefile, now_unix, run, write_atomic};
+use crate::util::{FileLock, now_unix, run, write_atomic};
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -117,14 +118,15 @@ pub struct RepoStatus {
 
 /// Unmounts the golden image when an operation bails halfway.
 struct GoldenGuard<'a> {
-    mount: &'a Path,
+    clove: &'a Clove,
+    store: &'static dyn Store,
     armed: bool,
 }
 
 impl Drop for GoldenGuard<'_> {
     fn drop(&mut self) {
         if self.armed {
-            let _ = backend::detach(self.mount, true);
+            self.store.golden_abort(self.clove);
         }
     }
 }
@@ -155,9 +157,10 @@ impl Clove {
 
     pub fn summary(&self) -> RepoSummary {
         let names = self.clone_names().unwrap_or_default();
+        let store = self.record().ok().flatten().and_then(|r| r.backend.store().ok());
         let mounted = names
             .iter()
-            .filter(|n| backend::is_mounted(&self.clone_mount(n)))
+            .filter(|n| store.is_some_and(|s| s.clone_attached(self, n, &self.clone_mount(n))))
             .count();
         let fresh = self.freshness().ok().flatten();
         RepoSummary {
@@ -270,10 +273,12 @@ impl Clove {
             );
         }
         let backend = Backend::detect()?;
+        let store = backend.store()?;
         let mut timings = vec![];
         std::fs::create_dir_all(&self.state)?;
         // Time Machine would back up every image; they are caches. tmutil can
         // take 10s+, so don't hold init (and its progress UI) on it.
+        #[cfg(target_os = "macos")]
         if let Ok(mut child) = Command::new("tmutil")
             .arg("addexclusion")
             .arg(&self.state)
@@ -288,23 +293,25 @@ impl Clove {
         let gen_dir = self.golden_gen_dir(generation);
         let _ = std::fs::remove_dir_all(self.golden_dir());
         std::fs::create_dir_all(&gen_dir)?;
-        let image = gen_dir.join(backend.file_name());
-        let mount = self.golden_mount();
-        backend::detach(&mount, true)?;
+        store.golden_reset(self)?;
 
         timed(r, &mut timings, "create image", || {
-            backend.create(&image, &self.config.image_size, &format!("{}-clove", self.name))
+            store.golden_create(self, generation)
         })?;
-        timed(r, &mut timings, "mount", || backend.attach(&image, &mount))?;
+        timed(r, &mut timings, "mount", || store.golden_attach(self, generation))?;
+        // After attach: on Linux, udisks decides where the volume mounts.
+        let mount = store.golden_mount(self);
         let mut guard = GoldenGuard {
-            mount: &mount,
+            clove: self,
+            store,
             armed: true,
         };
         // Keep Spotlight off the volume; clones inherit the marker.
+        #[cfg(target_os = "macos")]
         let _ = std::fs::write(mount.join(".metadata_never_index"), "");
 
         self.fetch_base(r, &mut timings, &self.config.base, Some(self.config.fetch))?;
-        let wt = self.golden_worktree();
+        let wt = mount.join(&self.name);
         self.drop_registration(&wt)?;
         timed(r, &mut timings, "checkout", || {
             git::run_ok(
@@ -339,8 +346,10 @@ impl Clove {
         };
         self.save_record(&record)?;
 
-        let meta = self.warm_and_snapshot(r, &mut timings, generation, &gen_dir, None)?;
-        timed(r, &mut timings, "unmount", || self.unmount_golden(r, &mount))?;
+        let meta = self.warm_and_snapshot(r, &mut timings, generation, &gen_dir, &wt, None)?;
+        timed(r, &mut timings, "unmount", || {
+            self.unmount_golden(r, store, generation)
+        })?;
         guard.armed = false;
         self.set_current_generation(generation)?;
         Ok(GoldenMeta { timings, ..meta })
@@ -368,22 +377,21 @@ impl Clove {
         let _ = std::fs::remove_dir_all(&next_dir);
         std::fs::create_dir_all(&next_dir)?;
         let mut timings = vec![];
-        let file = record.backend.file_name();
-        let mount = self.golden_mount();
-        backend::detach(&mount, true)?;
+        let store = record.backend.store()?;
+        let mount = store.golden_mount(self);
+        let wt = mount.join(&self.name);
+        store.golden_reset(self)?;
 
         let result = (|| -> Result<GoldenMeta> {
             timed(r, &mut timings, "clone golden", || {
-                clonefile(&cur_dir.join(file), &next_dir.join(file))
+                store.golden_derive(self, cur, next)
             })?;
-            timed(r, &mut timings, "mount", || {
-                record.backend.attach(&next_dir.join(file), &mount)
-            })?;
+            timed(r, &mut timings, "mount", || store.golden_attach(self, next))?;
             let mut guard = GoldenGuard {
-                mount: &mount,
+                clove: self,
+                store,
                 armed: true,
             };
-            let wt = self.golden_worktree();
             self.write_admin(
                 &record.golden_admin,
                 &wt,
@@ -398,8 +406,8 @@ impl Clove {
                 )
             })?;
             let prev = if opts.full { None } else { prev.as_ref() };
-            let meta = self.warm_and_snapshot(r, &mut timings, next, &next_dir, prev)?;
-            timed(r, &mut timings, "unmount", || self.unmount_golden(r, &mount))?;
+            let meta = self.warm_and_snapshot(r, &mut timings, next, &next_dir, &wt, prev)?;
+            timed(r, &mut timings, "unmount", || self.unmount_golden(r, store, next))?;
             guard.armed = false;
             Ok(meta)
         })();
@@ -409,14 +417,15 @@ impl Clove {
                 let _lock = self.lock()?;
                 self.set_current_generation(next)?;
                 // Clones are independent files; old generations can go right away.
-                self.prune_generations(next);
+                self.prune_generations(store, next);
                 Ok(GoldenMeta { timings, ..meta })
             }
             Err(e) => {
+                let _ = store.golden_drop(self, next);
                 let _ = std::fs::remove_dir_all(&next_dir);
                 let _ = self.write_admin(
                     &record.golden_admin,
-                    &self.golden_worktree(),
+                    &wt,
                     &cur_dir,
                     "clove golden image (detached between refreshes)",
                 );
@@ -425,23 +434,26 @@ impl Clove {
         }
     }
 
-    /// Unmounts the golden volume, stopping daemons the warm steps left behind.
-    fn unmount_golden(&self, r: &dyn Reporter, mount: &Path) -> Result<()> {
-        let stopped = backend::stop_users(mount, std::time::Duration::from_secs(10));
+    /// Unmounts (or seals) the golden volume, stopping daemons the warm steps left behind.
+    fn unmount_golden(&self, r: &dyn Reporter, store: &dyn Store, generation: u32) -> Result<()> {
+        let stopped = backend::stop_users(&store.golden_mount(self), std::time::Duration::from_secs(10));
         if !stopped.is_empty() {
             let names: Vec<_> = stopped.iter().map(|u| u.command.as_str()).collect();
             r.event(Event::Warn {
                 message: format!("stopped processes a warm step left running: {}", names.join(", ")),
             });
         }
-        backend::detach(mount, false)
+        store.golden_seal(self, generation)
     }
 
-    fn prune_generations(&self, keep: u32) {
+    fn prune_generations(&self, store: &dyn Store, keep: u32) {
         if let Ok(rd) = std::fs::read_dir(self.golden_dir()) {
             for e in rd.flatten() {
                 let n = e.file_name().to_string_lossy().to_string();
                 if n.starts_with("gen-") && n != format!("gen-{keep}") {
+                    if let Ok(g) = n[4..].parse::<u32>() {
+                        let _ = store.golden_drop(self, g);
+                    }
                     let _ = std::fs::remove_dir_all(e.path());
                 }
             }
@@ -454,14 +466,14 @@ impl Clove {
         timings: &mut Vec<Timing>,
         generation: u32,
         gen_dir: &Path,
+        wt: &Path,
         prev: Option<&GoldenMeta>,
     ) -> Result<GoldenMeta> {
-        let wt = self.golden_worktree();
-        let env = self.step_env(&wt, "golden");
+        let env = self.step_env(wt, "golden");
         let copied = self.resolve_copy();
         if !copied.is_empty() {
             timed(r, timings, "copy files", || {
-                self.copy_into(&wt, &copied).map(|_| ())
+                self.copy_into(wt, &copied).map(|_| ())
             })?;
         }
         let mut hashes = BTreeMap::new();
@@ -478,7 +490,7 @@ impl Clove {
             {
                 let mut args = vec!["diff", "--quiet", p.commit.as_str(), "HEAD", "--"];
                 args.extend(step.watch.iter().map(String::as_str));
-                if git::ok(&wt, &args) {
+                if git::ok(wt, &args) {
                     r.event(Event::Skip {
                         step: label,
                         reason: format!("unchanged since gen {}", p.generation),
@@ -492,7 +504,7 @@ impl Clove {
                     StepRun {
                         label: &label,
                         command: cmd,
-                        cwd: &wt,
+                        cwd: wt,
                         exec: self.config.exec,
                         step,
                         env: &env,
@@ -503,10 +515,10 @@ impl Clove {
         }
         // Stat data in the index must match the image so clones skip the rehash.
         timed(r, timings, "index", || {
-            let _ = git::out(&wt, &["update-index", "-q", "--refresh"]);
+            let _ = git::out(wt, &["update-index", "-q", "--refresh"]);
             Ok(())
         })?;
-        let dirty = git::is_dirty(&wt)?;
+        let dirty = git::is_dirty(wt)?;
         if dirty {
             r.event(Event::Warn {
                 message: "warm steps modified tracked files in the golden image; clones will start with those changes".into(),
@@ -519,7 +531,7 @@ impl Clove {
         }
         let meta = GoldenMeta {
             generation,
-            commit: git::head_commit(&wt)?,
+            commit: git::head_commit(wt)?,
             base: self.config.base.clone(),
             created_at: now_unix(),
             timings: timings.clone(),
@@ -639,7 +651,7 @@ impl Clove {
         let dir = self.clone_dir(&name);
         let admin = format!("clove-{name}");
         let mut timings = vec![];
-        let file = record.backend.file_name();
+        let store = record.backend.store()?;
 
         // Copy the image and the matching index snapshot under the short lock so a
         // concurrent refresh cannot swap generations in between.
@@ -652,7 +664,7 @@ impl Clove {
             let meta: GoldenMeta = read_json(&gen_dir.join("meta.json"))?.context("golden meta missing")?;
             std::fs::create_dir_all(&dir)?;
             timed(r, &mut timings, "clone image", || {
-                clonefile(&gen_dir.join(file), &dir.join(file))
+                store.clone_create(self, generation, &name, &mount)
             })?;
             for f in ["HEAD", "index"] {
                 std::fs::copy(gen_dir.join(f), dir.join(f))?;
@@ -661,7 +673,8 @@ impl Clove {
         };
 
         let cleanup = |e: anyhow::Error| -> anyhow::Error {
-            let _ = backend::detach(&mount, true);
+            let _ = store.clone_detach(self, &name, &mount, true);
+            let _ = store.clone_delete(self, &name, &mount);
             let _ = std::fs::remove_dir_all(&dir);
             let _ = std::fs::remove_dir_all(self.admin_dir(&admin));
             let _ = std::fs::remove_dir(&mount);
@@ -677,9 +690,7 @@ impl Clove {
                 t
             });
             let mut t = vec![];
-            let a = timed(r, &mut t, "mount", || {
-                record.backend.attach(&dir.join(file), &mount)
-            });
+            let a = timed(r, &mut t, "mount", || store.clone_attach(self, &name, &mount));
             (fetch.join().unwrap_or_default(), a.map(|_| t))
         });
         timings.extend(attach.map_err(cleanup)?);
@@ -814,10 +825,16 @@ impl Clove {
         env.insert("CLOVE_NAME".into(), name.into());
         env.insert("CLOVE_PATH".into(), wt.to_string_lossy().into());
         env.insert("CLOVE_ROOT".into(), self.root.to_string_lossy().into());
-        if self.uses_pnpm() && !env.contains_key("npm_config_store_dir") {
-            // The image is its own volume; without this pnpm starts an empty store there.
-            if let Some(store) = self.pnpm_store() {
-                env.insert("npm_config_store_dir".into(), store);
+        if self.uses_pnpm() {
+            // The image is its own volume; without this pnpm starts an empty store
+            // there. pnpm 11+ reads only pnpm_config_store_dir, older only the npm one.
+            let set = ["npm_config_store_dir", "pnpm_config_store_dir"]
+                .iter()
+                .find_map(|k| env.get(*k).cloned());
+            if let Some(store) = set.or_else(|| self.pnpm_store()) {
+                for k in ["npm_config_store_dir", "pnpm_config_store_dir"] {
+                    env.entry(k.into()).or_insert_with(|| store.clone());
+                }
             }
         }
         env
@@ -887,16 +904,21 @@ impl Clove {
             .clone_meta(name)?
             .with_context(|| format!("no clone named `{name}`"))?;
         let mut timings = vec![];
-        if backend::is_mounted(&meta.mount) && !opts.force && git::is_dirty(&meta.path).unwrap_or(false) {
+        let store = self.store()?;
+        if store.clone_attached(self, name, &meta.mount)
+            && !opts.force
+            && git::is_dirty(&meta.path).unwrap_or(false)
+        {
             bail!("`{name}` has uncommitted changes; commit them, or `clove rm --force {name}` to discard");
         }
         let branch = git::current_branch(&meta.path).or(meta.branch.clone());
         timed(r, &mut timings, "unmount", || {
-            backend::detach(&meta.mount, opts.force)
+            store.clone_detach(self, name, &meta.mount, opts.force)
         })?;
         let _lock = self.lock()?;
         timed(r, &mut timings, "delete image", || {
             let _ = std::fs::remove_dir_all(self.clone_admin(name));
+            store.clone_delete(self, name, &meta.mount)?;
             std::fs::remove_dir_all(self.clone_dir(name))?;
             let _ = std::fs::remove_dir(&meta.mount);
             Ok(())
@@ -927,10 +949,7 @@ impl Clove {
         let meta = self
             .clone_meta(name)?
             .with_context(|| format!("no clone named `{name}`"))?;
-        record.backend.attach(
-            &self.clone_dir(name).join(record.backend.file_name()),
-            &meta.mount,
-        )?;
+        record.backend.store()?.clone_attach(self, name, &meta.mount)?;
         Ok(meta.path)
     }
 
@@ -938,14 +957,20 @@ impl Clove {
         let meta = self
             .clone_meta(name)?
             .with_context(|| format!("no clone named `{name}`"))?;
-        backend::detach(&meta.mount, force)
+        if self.shared_volume() {
+            bail!(
+                "clones share the repo's volume; `clove unmount` without arguments unmounts it when nothing uses it"
+            );
+        }
+        self.store()?.clone_detach(self, name, &meta.mount, force)
     }
 
     pub fn info(&self, name: &str, status: bool) -> Result<CloneInfo> {
         let meta = self
             .clone_meta(name)?
             .with_context(|| format!("no clone named `{name}`"))?;
-        let mounted = backend::is_mounted(&meta.mount);
+        let store = self.require_record()?.backend.store()?;
+        let mounted = store.clone_attached(self, name, &meta.mount);
         let head_file = std::fs::read_to_string(self.clone_admin(name).join("HEAD")).unwrap_or_default();
         let head_file = head_file.trim();
         let (branch, head) = match head_file.strip_prefix("ref: refs/heads/") {
@@ -977,9 +1002,7 @@ impl Clove {
                 ahead = it.next();
             }
         }
-        let image = self
-            .clone_dir(name)
-            .join(self.require_record()?.backend.file_name());
+        let (image_bytes, own_bytes) = store.clone_bytes(self, name, &meta.mount);
         Ok(CloneInfo {
             name: meta.name,
             path: meta.path,
@@ -989,8 +1012,8 @@ impl Clove {
             dirty,
             ahead,
             behind,
-            image_bytes: allocated_bytes(&image),
-            own_bytes: crate::util::private_bytes(&image),
+            image_bytes,
+            own_bytes,
             created_at: meta.created_at,
             golden_generation: meta.golden_generation,
             timings: meta.timings,
@@ -1045,13 +1068,14 @@ impl Clove {
         let golden = match self.golden_meta()? {
             Some(meta) => {
                 let behind = git::count_commits(&self.root, &format!("{}..{}", meta.commit, meta.base));
-                let image = record
+                let image_bytes = record
                     .as_ref()
-                    .map(|r| self.golden_gen_dir(meta.generation).join(r.backend.file_name()));
+                    .and_then(|r| r.backend.store().ok())
+                    .map_or(0, |s| s.golden_bytes(self, meta.generation));
                 Some(GoldenStatus {
                     age_secs: now_unix().saturating_sub(meta.created_at),
                     behind,
-                    image_bytes: image.map(|p| allocated_bytes(&p)).unwrap_or(0),
+                    image_bytes,
                     meta,
                 })
             }
@@ -1063,7 +1087,7 @@ impl Clove {
             root: self.root.clone(),
             id: self.id.clone(),
             state: self.state.clone(),
-            clone_root: self.config.clone_root.clone(),
+            clone_root: self.clone_root(),
             base: self.config.base.clone(),
             backend: record.map(|r| r.backend),
             golden,
@@ -1081,6 +1105,7 @@ impl Clove {
         let _lock = self.lock()?;
         let mut actions = vec![];
         let names = self.clone_names()?;
+        let store = self.store()?;
 
         if let Ok(rd) = std::fs::read_dir(self.state.join("clones")) {
             for e in rd.flatten() {
@@ -1088,7 +1113,8 @@ impl Clove {
                 if !names.contains(&n) {
                     actions.push(format!("remove half-created clone {n}"));
                     if apply {
-                        let _ = backend::detach(&self.clone_mount(&n), true);
+                        let _ = store.clone_detach(self, &n, &self.clone_mount(&n), true);
+                        let _ = store.clone_delete(self, &n, &self.clone_mount(&n));
                         std::fs::remove_dir_all(e.path())?;
                     }
                 }
@@ -1107,7 +1133,7 @@ impl Clove {
                 }
             }
         }
-        if let Ok(rd) = std::fs::read_dir(&self.config.clone_root) {
+        if let Ok(rd) = std::fs::read_dir(self.clone_root()) {
             for e in rd.flatten() {
                 let n = e.file_name().to_string_lossy().to_string();
                 let empty = std::fs::read_dir(e.path())
@@ -1121,12 +1147,12 @@ impl Clove {
                 }
             }
         }
-        if backend::is_mounted(&self.golden_mount())
+        if store.golden_stuck(self)
             && let Ok(lock) = FileLock::try_acquire(&self.state.join("refresh.lock"))
         {
             actions.push("unmount golden image left mounted by an interrupted refresh".into());
             if apply {
-                backend::detach(&self.golden_mount(), true)?;
+                store.golden_reset(self)?;
             }
             drop(lock);
         }
@@ -1138,6 +1164,9 @@ impl Clove {
                 if n.starts_with("gen-") && n != format!("gen-{cur}") {
                     actions.push(format!("remove old golden {n}"));
                     if apply {
+                        if let Ok(g) = n[4..].parse::<u32>() {
+                            store.golden_drop(self, g)?;
+                        }
                         std::fs::remove_dir_all(e.path())?;
                     }
                 }
@@ -1153,12 +1182,16 @@ impl Clove {
             bail!("remove the clones first (`clove ls`), or `clove rm --all`");
         }
         let mut t = vec![];
+        let store = self.store()?;
         timed(r, &mut t, "delete golden", || {
-            backend::detach(&self.golden_mount(), true)?;
+            store.golden_reset(self)?;
             if let Some(rec) = self.record()? {
                 let _ = std::fs::remove_dir_all(self.admin_dir(&rec.golden_admin));
             }
+            store.deinit(self)?;
             std::fs::remove_dir_all(&self.state)?;
+            // The clones folder clove made; only removed when empty.
+            let _ = std::fs::remove_dir(&self.config.clone_root);
             Ok(())
         })
     }

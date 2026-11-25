@@ -1,5 +1,7 @@
 use anyhow::{Context, Result, bail};
+#[cfg(target_os = "macos")]
 use std::ffi::CString;
+#[cfg(target_os = "macos")]
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -23,9 +25,26 @@ pub fn clonefile(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Reflink copy of one file with the FICLONE ioctl (btrfs, XFS); a plain
+/// copy where the filesystem can't share blocks. Directories aren't supported.
+#[cfg(target_os = "linux")]
 pub fn clonefile(src: &Path, dst: &Path) -> Result<()> {
-    // FICLONE on btrfs/XFS would go here; plain copy keeps tests portable.
+    use std::os::fd::AsRawFd;
+    // _IOW(0x94, 9, int)
+    const FICLONE: u64 = 0x4004_9409;
+    let from = std::fs::File::open(src).with_context(|| format!("open {}", src.display()))?;
+    let to = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dst)
+        .with_context(|| format!("create {}", dst.display()))?;
+    // SAFETY: both fds are open for the call; FICLONE takes the source fd by value.
+    let rc = unsafe { libc::ioctl(to.as_raw_fd(), FICLONE as _, from.as_raw_fd()) };
+    if rc == 0 {
+        return Ok(());
+    }
+    drop(to);
+    std::fs::remove_file(dst)?;
     std::fs::copy(src, dst).with_context(|| format!("copy {}", src.display()))?;
     Ok(())
 }
@@ -126,7 +145,9 @@ pub fn private_bytes(path: &Path) -> u64 {
     private.max(0) as u64
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Linux has no per-file equivalent; the btrfs backend reads clone sizes from
+/// qgroups instead. Falls back to the allocated size.
+#[cfg(target_os = "linux")]
 pub fn private_bytes(path: &Path) -> u64 {
     allocated_bytes(path)
 }
@@ -235,6 +256,20 @@ mod tests {
         assert_eq!(human_bytes(512), "512B");
         assert_eq!(human_bytes(3 * 1024 * 1024 * 1024 / 2), "1.5G");
         assert_eq!(human_age(7200), "2h");
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod clone_tests {
+    #[test]
+    fn clonefile_copies_contents_and_refuses_to_overwrite() {
+        let d = tempfile::tempdir().unwrap();
+        let a = d.path().join("a");
+        std::fs::write(&a, b"hello").unwrap();
+        let b = d.path().join("b");
+        super::clonefile(&a, &b).unwrap();
+        assert_eq!(std::fs::read(&b).unwrap(), b"hello");
+        assert!(super::clonefile(&a, &b).is_err());
     }
 }
 

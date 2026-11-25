@@ -1,6 +1,6 @@
-//! launchd agents: remount clones at login; refresh stale golden images when a
-//! repo's base is fetched (FETCH_HEAD changes) and on a slow timer otherwise.
+//! macOS: two launchd agents.
 
+use super::{DEFAULT_EVERY, watch_paths};
 use crate::util::home;
 use anyhow::{Context, Result};
 use std::path::PathBuf;
@@ -66,18 +66,6 @@ fn launchctl(args: &[&str]) {
 fn uid() -> String {
     // SAFETY: getuid has no preconditions.
     unsafe { libc::getuid() }.to_string()
-}
-
-/// Default fallback poll, for repos nobody fetches in.
-pub const DEFAULT_EVERY: u64 = 4 * 3600;
-
-/// FETCH_HEAD of every repo clove knows: git rewrites it on each fetch and pull.
-fn watch_paths() -> Vec<PathBuf> {
-    crate::known_repos()
-        .into_iter()
-        .filter_map(|r| crate::Clove::open(&r.root).ok())
-        .map(|c| c.common_dir.join("FETCH_HEAD"))
-        .collect()
 }
 
 /// Installs both agents. The refresh agent runs `refresh --all-repos --if-stale`
