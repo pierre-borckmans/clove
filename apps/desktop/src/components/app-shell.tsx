@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { useHotkey } from "@/hooks/use-hotkey";
 import { listen } from "@/lib/bridge";
-import { useRepos } from "@/lib/queries";
+import { useRepoChanges, useRepos } from "@/lib/queries";
 import { getUi, setUi } from "@/lib/ui";
 import { AddRepoDialog } from "./add-repo-dialog";
 import { CommandPalette } from "./command-palette";
@@ -14,6 +14,7 @@ import { Sidebar } from "./sidebar";
 
 export function AppShell() {
   const navigate = useNavigate();
+  useRepoChanges();
   const { data: repos } = useRepos();
   const params = useParams({ strict: false }) as { repoId?: string };
   const current = repos?.find((r) => r.id === params.repoId);

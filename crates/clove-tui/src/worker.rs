@@ -72,6 +72,11 @@ pub fn load(tx: Sender<Msg>, root: PathBuf) {
                 clones,
                 config: c.config.clone(),
                 prs,
+                watch: {
+                    let mut t = c.watch_targets();
+                    t.push(clove_core::watch::repos_target());
+                    t
+                },
             }))
         });
         let _ = tx.send(Msg::Loaded {

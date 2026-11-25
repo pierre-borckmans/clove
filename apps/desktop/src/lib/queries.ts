@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { toast } from "sonner";
 import { api } from "./api";
+import { listen } from "./bridge";
 import { APP_LABELS } from "./prefs";
 import type { AppId } from "./types";
 
@@ -20,8 +22,28 @@ export const keys = {
   apps: ["apps"] as const,
 };
 
+/**
+ * Background poll. The backend's filesystem watcher sends `repos-changed` for
+ * clones, golden images, fetches and PR checks (see `useRepoChanges`); this
+ * catches the rest, like a clone's working tree getting dirty.
+ */
+export const POLL_MS = 15_000;
+
+/** Refetches repo data as soon as the backend sees it change on disk. */
+export function useRepoChanges() {
+  const qc = useQueryClient();
+  useEffect(() => {
+    const un = listen("repos-changed", () => {
+      void qc.invalidateQueries({
+        predicate: (q) => !["prs-check", "doctor", "apps", "shell"].includes(String(q.queryKey[0])),
+      });
+    });
+    return () => void un.then((f) => f());
+  }, [qc]);
+}
+
 export function useRepos() {
-  return useQuery({ queryKey: keys.repos, queryFn: api.repos, refetchInterval: 5000 });
+  return useQuery({ queryKey: keys.repos, queryFn: api.repos, refetchInterval: POLL_MS });
 }
 
 /** The repo for a route id, from the repos list. */
@@ -35,7 +57,7 @@ export function useStatus(root: string | undefined) {
     queryKey: keys.status(root ?? ""),
     queryFn: () => api.status(root as string),
     enabled: !!root,
-    refetchInterval: 5000,
+    refetchInterval: POLL_MS,
   });
 }
 
@@ -44,7 +66,7 @@ export function useClones(root: string | undefined) {
     queryKey: keys.clones(root ?? ""),
     queryFn: () => api.clones(root as string, true),
     enabled: !!root,
-    refetchInterval: 4000,
+    refetchInterval: POLL_MS,
   });
 }
 
@@ -72,7 +94,7 @@ export function useRepoConfig(root: string | undefined) {
     queryKey: keys.config(root ?? ""),
     queryFn: () => api.repoConfig(root as string),
     enabled: !!root,
-    refetchInterval: 5000,
+    refetchInterval: POLL_MS,
   });
 }
 

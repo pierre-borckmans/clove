@@ -49,6 +49,15 @@ pub fn run(start_dir: &Path) -> Result<()> {
     let start = Instant::now();
     let mut effects = vec![];
     let mut pointer_shown = false;
+    // Without it (no inotify watches left, say) the TUI polls faster instead.
+    let watcher = {
+        let tx = tx.clone();
+        clove_core::watch::Watcher::new(move || {
+            let _ = tx.send(Msg::FsChanged);
+        })
+        .ok()
+    };
+    app.watching = watcher.is_some();
 
     while app.exit.is_none() {
         app.now_ms = start.elapsed().as_millis() as u64;
@@ -84,6 +93,9 @@ pub fn run(start_dir: &Path) -> Result<()> {
         }
         while let Ok(msg) = rx.try_recv() {
             effects.extend(app.on_msg(msg));
+        }
+        if let (Some(w), Some(t)) = (&watcher, app.watch.take()) {
+            w.sync(t);
         }
     }
     drop(term);

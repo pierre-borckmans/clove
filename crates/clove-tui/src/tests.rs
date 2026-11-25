@@ -176,6 +176,7 @@ fn data(root: impl Into<PathBuf>, status: RepoStatus, clones: Vec<CloneInfo>) ->
         config: config(),
         prs: Default::default(),
         summary,
+        watch: vec![],
     }
 }
 
@@ -1072,10 +1073,37 @@ fn toasts_expire() {
 fn reload_cadence() {
     let mut app = app();
     assert!(!app.needs_reload());
-    app.now_ms += crate::app::RELOAD_MS;
-    assert!(app.needs_reload());
+    app.now_ms += crate::app::RELOAD_UNWATCHED_MS;
+    assert!(app.needs_reload(), "polls fast without a watcher");
     app.loading = true;
     assert!(!app.needs_reload());
+}
+
+#[test]
+fn a_watcher_slows_polling_and_changes_reload_at_once() {
+    let mut app = app();
+    app.watching = true;
+    app.now_ms += crate::app::RELOAD_UNWATCHED_MS;
+    assert!(!app.needs_reload(), "the watcher covers the fast path");
+    app.on_msg(Msg::FsChanged);
+    assert!(app.needs_reload(), "a change on disk reloads right away");
+    app.now_ms = 10_000;
+    app.loaded_ms = Some(10_000);
+    app.now_ms += crate::app::RELOAD_MS;
+    assert!(app.needs_reload(), "still polls now and then");
+    // A change during a load: that load may predate it, so another follows.
+    app.loading = true;
+    app.on_msg(Msg::FsChanged);
+    assert!(app.reload_queued);
+}
+
+#[test]
+fn a_load_hands_its_watch_targets_to_the_runtime() {
+    let mut app = app();
+    let mut d = data("/work/app", status(true, 0), vec![]);
+    d.watch = vec![clove_core::watch::repos_target()];
+    app.apply_data(d);
+    assert_eq!(app.watch.as_ref().map(Vec::len), Some(1));
 }
 
 #[test]

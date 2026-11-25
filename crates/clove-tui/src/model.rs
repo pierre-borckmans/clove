@@ -25,6 +25,8 @@ pub struct RepoData {
     /// The last PR check per clone (`clove prune`, the service, or cleanup here).
     pub prs: BTreeMap<String, MergeCheck>,
     pub summary: RepoSummary,
+    /// What to watch on disk to see this repo change.
+    pub watch: Vec<clove_core::watch::Target>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,6 +105,8 @@ pub struct Cleanup {
 }
 
 pub enum Msg {
+    /// Something the current repo is made of changed on disk.
+    FsChanged,
     Loaded {
         root: PathBuf,
         data: Result<Box<RepoData>, String>,

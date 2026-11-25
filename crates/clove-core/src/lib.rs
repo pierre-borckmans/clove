@@ -22,6 +22,7 @@ pub mod service;
 pub mod shellrc;
 pub mod steps;
 pub mod util;
+pub mod watch;
 
 pub use config::{Config, Exec, Step};
 pub use events::{Event, Reporter, Silent, Timing};

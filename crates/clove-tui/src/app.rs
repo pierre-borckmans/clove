@@ -41,7 +41,11 @@ pub enum Exit {
     CdThen(PathBuf, Vec<String>),
 }
 
-pub const RELOAD_MS: u64 = 3000;
+/// Reload interval while the filesystem watcher runs: it covers clones, the
+/// golden image and fetches; this catches the rest (dirty trees, mounts).
+pub const RELOAD_MS: u64 = 15_000;
+/// Reload interval without a watcher.
+pub const RELOAD_UNWATCHED_MS: u64 = 3000;
 /// How often an open TUI asks GitHub about PRs: merges by other tools and
 /// agents show up without the background service.
 pub const PR_CHECK_MS: u64 = 5 * 60 * 1000;
@@ -58,6 +62,10 @@ pub struct App {
     /// A reload was asked for while one was in flight (it may predate a change).
     pub reload_queued: bool,
     pub loaded_ms: Option<u64>,
+    /// A filesystem watcher tells us about changes (`Msg::FsChanged`).
+    pub watching: bool,
+    /// Watch targets from the last load of the current repo, for the runtime to apply.
+    pub watch: Option<Vec<clove_core::watch::Target>>,
     pub selected: usize,
     pub list_scroll: Smooth,
     /// Rows the clone list showed last frame (for page up/down).
@@ -109,6 +117,8 @@ impl App {
             loading: false,
             reload_queued: false,
             loaded_ms: None,
+            watching: false,
+            watch: None,
             selected: 0,
             list_scroll: Smooth::default(),
             list_height: 10,
@@ -219,11 +229,16 @@ impl App {
     }
 
     pub fn needs_reload(&self) -> bool {
+        let every = if self.watching {
+            RELOAD_MS
+        } else {
+            RELOAD_UNWATCHED_MS
+        };
         !self.loading
             && self.repo().is_some()
             && self
                 .loaded_ms
-                .is_none_or(|t| self.now_ms.saturating_sub(t) >= RELOAD_MS)
+                .is_none_or(|t| self.now_ms.saturating_sub(t) >= every)
     }
 
     // ---- branch completion ------------------------------------------------
@@ -666,6 +681,14 @@ impl App {
                 }
                 vec![]
             }
+            Msg::FsChanged => {
+                if self.loading {
+                    self.reload_queued = true;
+                } else {
+                    self.loaded_ms = None;
+                }
+                vec![]
+            }
             Msg::PrsChecked => {
                 self.loaded_ms = None;
                 vec![]
@@ -697,6 +720,9 @@ impl App {
     /// Stores freshly loaded data, keeping the selection on the same clone.
     pub fn apply_data(&mut self, d: RepoData) {
         let is_current = self.repo().is_some_and(|r| r.root == d.root);
+        if is_current {
+            self.watch = Some(d.watch.clone());
+        }
         let keep = self.selected_clone().map(|c| c.name.clone());
         if let Some(t) = self.repos.iter_mut().find(|t| t.root == d.root) {
             t.summary = Some(d.summary.clone());

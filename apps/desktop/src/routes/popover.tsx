@@ -24,12 +24,13 @@ import { listen } from "@/lib/bridge";
 import { ms } from "@/lib/format";
 import { type Op, startOp, useOps } from "@/lib/ops";
 import { APP_LABELS, usePrefs } from "@/lib/prefs";
-import { copyPath, keys, openIn, useRepos } from "@/lib/queries";
+import { copyPath, keys, openIn, POLL_MS, useRepoChanges, useRepos } from "@/lib/queries";
 import type { CloneInfo, RepoSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /** The menu-bar popover: every repo and clone, one click from a terminal or editor. */
 export function PopoverPage() {
+  useRepoChanges();
   const { data: repos = [], isLoading } = useRepos();
   const ops = useOps();
   const running = ops.filter((o) => o.status === "running" || (o.finishedAt && Date.now() - o.finishedAt < 4000));
@@ -37,7 +38,7 @@ export function PopoverPage() {
     queries: repos.map((r) => ({
       queryKey: keys.clones(r.root),
       queryFn: () => api.clones(r.root, true),
-      refetchInterval: 4000,
+      refetchInterval: POLL_MS,
     })),
   });
   const [adding, setAdding] = useState<string | null>(null);

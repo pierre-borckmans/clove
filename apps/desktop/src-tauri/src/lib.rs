@@ -75,6 +75,30 @@ fn quit(app: AppHandle) {
     app.exit(0);
 }
 
+/// Emits `repos-changed` when a known repo changes on disk (clones added or
+/// removed by any tool, golden refreshes, fetches, PR checks), so windows
+/// refetch at once and otherwise poll slowly. Targets are resynced after each
+/// change and every 15s, to pick up new repos and clones.
+fn watch_repos(app: AppHandle) {
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let emitter = app.clone();
+    let Ok(watcher) = clove_core::watch::Watcher::new(move || {
+        let _ = emitter.emit("repos-changed", ());
+        let _ = tx.send(());
+    }) else {
+        return;
+    };
+    std::thread::spawn(move || {
+        loop {
+            watcher.sync(clove_core::watch::all_targets());
+            match rx.recv_timeout(Duration::from_secs(15)) {
+                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+        }
+    });
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -110,6 +134,7 @@ pub fn run() {
             quit,
         ])
         .setup(|app| {
+            watch_repos(app.handle().clone());
             let open = MenuItem::with_id(app, "open", "Open clove", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit clove", true, Some("CmdOrCtrl+Q"))?;
             let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
