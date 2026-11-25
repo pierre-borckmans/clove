@@ -53,6 +53,9 @@ pub struct Freshness {
     /// Commits on the base not in the golden image (as of the last fetch).
     pub behind: Option<u32>,
     pub stale: bool,
+    /// Steps a new clone would rerun: their watched paths changed on the base
+    /// since the golden commit, or their definition changed since it was built.
+    pub changed_steps: Vec<String>,
     /// Why it is stale, for display.
     pub reason: Option<String>,
     /// Pid of a refresh in progress.
@@ -135,26 +138,37 @@ impl Clove {
     }
 
     /// Golden image age and distance from its base, judged against `[refresh]`.
+    /// The main signal is steps: the image is stale as soon as a new clone would
+    /// have to rerun one. Commit count and age are a safety net.
     pub fn freshness(&self) -> Result<Option<Freshness>> {
         let Some(meta) = self.golden_meta()? else {
             return Ok(None);
         };
         let age_secs = now_unix().saturating_sub(meta.created_at);
-        let behind = git::count_commits(&self.root, &format!("{}..{}", meta.commit, self.config.base));
+        let base = &self.config.base;
+        let behind = git::count_commits(&self.root, &format!("{}..{base}", meta.commit));
+        let changed = if behind.unwrap_or(0) > 0 || !meta.step_hashes.is_empty() {
+            self.changed_steps(&meta)
+        } else {
+            vec![]
+        };
         let policy = &self.config.refresh;
-        let reason = if behind.is_some_and(|b| b > policy.max_behind) {
-            Some(format!(
-                "{} commits behind {}",
-                behind.unwrap_or(0),
-                self.config.base
-            ))
+        let reason = if let Some((name, n)) = changed.first() {
+            let names: Vec<&str> = changed.iter().map(|(s, _)| s.as_str()).collect();
+            Some(match (changed.len(), n) {
+                (1, 0) => format!("step {name} changed"),
+                (1, n) => format!(
+                    "{name} inputs changed in {n} commit{}",
+                    if *n == 1 { "" } else { "s" }
+                ),
+                _ => format!("{} would rerun", names.join(", ")),
+            })
+        } else if behind.is_some_and(|b| b > policy.max_behind) {
+            Some(format!("{} commits behind {base}", behind.unwrap_or(0)))
         } else if age_secs > policy.max_age_secs {
             Some(format!("{} old", crate::util::human_age(age_secs)))
-        } else if meta.base != self.config.base {
-            Some(format!(
-                "built from {}, config says {}",
-                meta.base, self.config.base
-            ))
+        } else if meta.base != *base {
+            Some(format!("built from {}, config says {base}", meta.base))
         } else {
             None
         };
@@ -162,9 +176,43 @@ impl Clove {
             age_secs,
             behind,
             stale: reason.is_some(),
+            changed_steps: changed.into_iter().map(|(s, _)| s).collect(),
             reason,
             refreshing: self.refreshing(),
         }))
+    }
+
+    /// Steps with watched paths whose inputs moved between the golden commit and
+    /// the base, with the number of commits that touched them (0: the step's
+    /// definition changed). Steps without `watch` always run, so they never count.
+    fn changed_steps(&self, meta: &GoldenMeta) -> Vec<(String, u32)> {
+        let base = &self.config.base;
+        let mut out = vec![];
+        for step in &self.config.steps {
+            if step.watch.is_empty() || (step.warm.is_none() && step.setup.is_none()) {
+                continue;
+            }
+            // Images from before step hashes were recorded have an empty map.
+            if !meta.step_hashes.is_empty() && meta.step_hashes.get(&step.name) != Some(&step_hash(step)) {
+                out.push((step.name.clone(), 0));
+                continue;
+            }
+            let mut args = vec!["diff", "--quiet", meta.commit.as_str(), base.as_str(), "--"];
+            args.extend(step.watch.iter().map(String::as_str));
+            if git::ok(&self.root, &args) {
+                continue;
+            }
+            let range = format!("{}..{base}", meta.commit);
+            let mut args = vec!["rev-list", "--count", range.as_str(), "--"];
+            args.extend(step.watch.iter().map(String::as_str));
+            let n = git::out(&self.root, &args)
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(1)
+                .max(1);
+            out.push((step.name.clone(), n));
+        }
+        out
     }
 
     fn lock(&self) -> Result<FileLock> {
@@ -450,6 +498,14 @@ impl Clove {
     pub fn fetch(&self) -> Result<()> {
         let mut t = vec![];
         self.fetch_base(&crate::events::Silent, &mut t, &self.config.base, Some(true))
+    }
+
+    /// Fetches the base unless it was fetched within `fetch_interval`. The
+    /// background service runs when FETCH_HEAD changes, so a forced fetch there
+    /// would retrigger it forever.
+    pub fn fetch_if_due(&self) -> Result<()> {
+        let mut t = vec![];
+        self.fetch_base(&crate::events::Silent, &mut t, &self.config.base, None)
     }
 
     fn fetch_base(

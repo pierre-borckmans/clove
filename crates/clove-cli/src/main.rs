@@ -85,7 +85,7 @@ enum Cmd {
         /// Every repo clove knows about (used by the service).
         #[arg(long)]
         all_repos: bool,
-        /// Only if stale per [refresh] max_age / max_behind (fetches first).
+        /// Only if stale: a step's inputs changed on the base, or past [refresh] max_age / max_behind.
         #[arg(long)]
         if_stale: bool,
         /// Rerun every warm step, not only those whose inputs changed.
@@ -166,8 +166,9 @@ enum HookAction {
 enum ServiceAction {
     /// Install the launchd agents.
     Install {
-        /// How often to check for stale golden images, e.g. 30m, 1h.
-        #[arg(long, default_value = "1h")]
+        /// Fallback check for repos nobody fetches in, e.g. 1h, 4h. Fetches and
+        /// pulls trigger a check right away.
+        #[arg(long, default_value = "4h")]
         every: String,
     },
     /// Remove the launchd agents.
@@ -291,7 +292,7 @@ fn run(cli: Cli) -> Result<()> {
             let mut failed = false;
             for c in &targets {
                 if *if_stale {
-                    let _ = c.fetch();
+                    let _ = c.fetch_if_due();
                     let fresh = c.freshness().ok().flatten();
                     let skip = match &fresh {
                         None => Some("no golden image".to_string()),
@@ -550,6 +551,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Deinit => {
             let c = repo(&cli)?;
             c.deinit(r)?;
+            service::sync()?;
             if cli.json {
                 return emit(&serde_json::json!({ "deinit": c.name }));
             }
@@ -561,7 +563,7 @@ fn run(cli: Cli) -> Result<()> {
                     eprintln!("{} {}", paint(GREEN, "✓"), tilde(&p));
                 }
                 eprintln!(
-                    "clones remount at login; every {} stale golden images refresh (per [refresh] in each repo)",
+                    "clones remount at login; stale golden images refresh when you fetch or pull, and every {} otherwise",
                     clove_core::util::human_age(secs)
                 );
             }
@@ -616,12 +618,14 @@ fn after_init() -> Result<()> {
         );
     }
     if service::installed().iter().all(|(_, on)| *on) {
+        // Add this repo's FETCH_HEAD to the watch list.
+        service::sync()?;
         return Ok(());
     }
     let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
     if !interactive {
         eprintln!(
-            "{} run {} to refresh stale golden images hourly and remount clones at login",
+            "{} run {} to refresh stale golden images when you pull and remount clones at login",
             paint(DIM, "·"),
             paint(BOLD, "clove service install")
         );
@@ -629,13 +633,14 @@ fn after_init() -> Result<()> {
     }
     eprint!(
         "\nKeep golden images fresh in the background? Installs two launchd agents: \
-         an hourly refresh of stale images and a remount of clones at login. [Y/n] "
+         one refreshes a stale image when you fetch or pull (and every 4h), one remounts \
+         clones at login. [Y/n] "
     );
     let mut answer = String::new();
     // End of input (Ctrl-D, a closed pipe) counts as no; only Enter takes the default.
     let read = std::io::stdin().read_line(&mut answer)?;
     if read > 0 && matches!(answer.trim().to_ascii_lowercase().as_str(), "" | "y" | "yes") {
-        for p in service::install(3600)? {
+        for p in service::install(service::DEFAULT_EVERY)? {
             eprintln!("{} {}", paint(GREEN, "✓"), tilde(&p));
         }
     } else {
@@ -900,7 +905,7 @@ fn cmd_status(cli: &Cli) -> Result<()> {
         let policy = paint(
             DIM,
             format!(
-                "(stale after {} or {} commits; auto refresh {})",
+                "(stale when a step's inputs change, or after {} or {} commits; auto refresh {})",
                 clove_core::util::human_age(p.max_age_secs),
                 p.max_behind,
                 if p.auto { "on" } else { "off" }

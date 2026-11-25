@@ -1,4 +1,5 @@
-//! launchd agents: remount clones at login, refresh golden images nightly.
+//! launchd agents: remount clones at login; refresh stale golden images when a
+//! repo's base is fetched (FETCH_HEAD changes) and on a slow timer otherwise.
 
 use anyhow::{Context, Result};
 use clove_core::util::home;
@@ -40,7 +41,7 @@ fn plist(label: &str, args: &[&str], trigger: &str) -> Result<String> {
   <dict>
     <key>PATH</key><string>{path}</string>
     <key>HOME</key><string>{home}</string>
-  </dict>
+{clove_home}  </dict>
   <key>StandardOutPath</key><string>{log}</string>
   <key>StandardErrorPath</key><string>{log}</string>
   <key>ProcessType</key><string>Background</string>
@@ -50,6 +51,10 @@ fn plist(label: &str, args: &[&str], trigger: &str) -> Result<String> {
 "#,
         path = xml_escape(&path),
         home = xml_escape(&home().to_string_lossy()),
+        // A custom state folder has to reach the agent, or it would read ~/.clove.
+        clove_home = std::env::var("CLOVE_HOME")
+            .map(|h| format!("    <key>CLOVE_HOME</key><string>{}</string>\n", xml_escape(&h)))
+            .unwrap_or_default(),
         log = xml_escape(&log.to_string_lossy()),
     ))
 }
@@ -63,14 +68,35 @@ fn uid() -> String {
     unsafe { libc::getuid() }.to_string()
 }
 
-/// Checks every `every` seconds and refreshes the repos whose golden image is
-/// stale per their `[refresh]` policy. Fresh repos cost one fetch.
+/// Default fallback poll, for repos nobody fetches in.
+pub const DEFAULT_EVERY: u64 = 4 * 3600;
+
+/// FETCH_HEAD of every repo clove knows: git rewrites it on each fetch and pull.
+fn watch_paths() -> Vec<PathBuf> {
+    clove_core::known_repos()
+        .into_iter()
+        .filter_map(|r| clove_core::Clove::open(&r.root).ok())
+        .map(|c| c.common_dir.join("FETCH_HEAD"))
+        .collect()
+}
+
+/// Installs both agents. The refresh agent runs `refresh --all-repos --if-stale`
+/// when any repo's FETCH_HEAD changes and every `every` seconds; fresh repos
+/// cost one fetch at most (none within `fetch_interval` of the last one).
 pub fn install(every: u64) -> Result<Vec<PathBuf>> {
     let mount = plist(MOUNT, &["mount", "--all-repos"], "  <key>RunAtLoad</key><true/>")?;
+    let watch: String = watch_paths()
+        .iter()
+        .map(|p| format!("    <string>{}</string>\n", xml_escape(&p.to_string_lossy())))
+        .collect();
     let refresh = plist(
         REFRESH,
         &["refresh", "--all-repos", "--if-stale"],
-        &format!("  <key>StartInterval</key><integer>{every}</integer>"),
+        &format!(
+            "  <key>StartInterval</key><integer>{every}</integer>\n  \
+             <key>ThrottleInterval</key><integer>30</integer>\n  \
+             <key>WatchPaths</key>\n  <array>\n{watch}  </array>"
+        ),
     )?;
     let mut written = vec![];
     for (label, body) in [(MOUNT, mount), (REFRESH, refresh)] {
@@ -82,6 +108,23 @@ pub fn install(every: u64) -> Result<Vec<PathBuf>> {
         written.push(p);
     }
     Ok(written)
+}
+
+/// Rewrites an installed service so its watch list matches the known repos
+/// (after `init` or `deinit`). Keeps the installed interval. No-op when the
+/// service is not installed.
+pub fn sync() -> Result<bool> {
+    let Ok(body) = std::fs::read_to_string(plist_path(REFRESH)) else {
+        return Ok(false);
+    };
+    let every = body
+        .split("<key>StartInterval</key><integer>")
+        .nth(1)
+        .and_then(|s| s.split('<').next())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_EVERY);
+    install(every)?;
+    Ok(true)
 }
 
 pub fn uninstall() -> Result<Vec<PathBuf>> {

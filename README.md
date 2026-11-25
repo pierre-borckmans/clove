@@ -81,8 +81,9 @@ To make Claude Code put its worktrees (`claude --worktree`, subagents) in clones
 The golden image is a recipe, not a snapshot of your checkout: the base branch, plus the files listed in `copy`, plus the `warm` steps. clove rebuilds it from that recipe and keeps it current.
 
 - **Refresh is incremental.** `clove refresh` clones the current golden image, checks out the latest base and reruns only the warm steps whose `watch` paths changed since the previous golden commit, or whose definition changed. On the monorepo, a refresh where nothing relevant changed takes 4.3s. `--full` reruns everything.
-- **Stale images refresh themselves.** The golden image is stale when it's older than `max_age` or more than `max_behind` commits behind the base. When `clove new` finds it stale, it starts a refresh in the background and doesn't wait, so the next clone starts fresh. `clove status` shows how fresh it is and whether a refresh is running.
-- **The service checks hourly.** `clove init` offers it in an interactive terminal, or run `clove service install`. It adds two launchd agents: one remounts clones at login, the other runs `clove refresh --all-repos --if-stale` every hour. A repo that is still fresh costs one `git fetch`.
+- **Stale means a clone would redo work.** The golden image is stale as soon as a step's `watch` paths changed on the base, or the step's definition changed, because a new clone would rerun that step. `clove status` names the step, e.g. `build-deps inputs changed in 3 commits`. Dozens of commits behind with no step inputs touched is still fresh. `max_age` and `max_behind` are a safety net on top.
+- **Stale images refresh themselves.** When `clove new` finds the image stale, it starts a refresh in the background and doesn't wait, so the next clone starts fresh.
+- **The service follows your pulls.** `clove init` offers it in an interactive terminal, or run `clove service install`. It adds two launchd agents: one remounts clones at login, the other runs `clove refresh --all-repos --if-stale` whenever git rewrites a repo's `FETCH_HEAD` (any `git fetch` or `git pull` in the main checkout), and every 4h for repos nobody fetches in. A fresh repo costs at most one `git fetch`.
 - **Refreshing never touches existing clones.** It builds the next generation next to the current one and swaps it in atomically, and `clove new` keeps working while it runs.
 - **Clones catch up with `clove setup`.** After a `git pull` or a rebase in a clone, it copies your local files again and reruns only the setup steps whose inputs changed since they last ran.
 
@@ -113,7 +114,7 @@ copy = [".env", "apps/*/.env.local", "config/dev.secrets.json"]
 
 [refresh]
 auto = true        # refresh in the background when `clove new` finds the image stale
-max_age = "24h"
+max_age = "24h"     # safety net; steps' watch paths are the main signal
 max_behind = 100   # commits
 ```
 

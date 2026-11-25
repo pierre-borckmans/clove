@@ -268,6 +268,15 @@ fn full_lifecycle() {
         f.stale && f.behind.unwrap_or(0) >= 1,
         "behind with max_behind = 0: {f:?}"
     );
+    // lock.txt changed on the base, so the deps step makes it stale on its own
+    assert_eq!(f.changed_steps, ["deps"], "{f:?}");
+    assert!(
+        f.reason
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("deps inputs changed"),
+        "{f:?}"
+    );
     // lock.txt changed on main (the bump commit), so the deps warm step runs
     let g2 = c.refresh(&Silent).expect("refresh");
     assert!(g2.timings.iter().any(|t| t.step == "warm deps"));
@@ -280,6 +289,10 @@ fn full_lifecycle() {
         &seed,
         "echo again >> app.txt && git commit -qam again && git push -q origin HEAD:main",
     );
+    c.fetch().unwrap();
+    let f = c.freshness().unwrap().unwrap();
+    assert!(f.changed_steps.is_empty(), "lock.txt untouched: {f:?}");
+    assert!(f.stale, "still stale by commit count with max_behind = 0: {f:?}");
     let events = Mutex::new(vec![]);
     let collect = |e: Event| events.lock().unwrap().push(e);
     c.refresh(&collect).expect("incremental refresh");
