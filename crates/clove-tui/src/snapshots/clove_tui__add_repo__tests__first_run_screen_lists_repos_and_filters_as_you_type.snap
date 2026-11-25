@@ -1,0 +1,28 @@
+---
+source: crates/clove-tui/src/add_repo.rs
+expression: s
+---
+╭ clove ───────────────────────────────────────────────────────────────────────────────────────────╮
+│ no reposi╭ welcome to clove · add a repo ─────────────────────────────────────────────╮          │
+│          │                                                                            │          │
+╰──────────│  Pick a git repo for clove to manage. Its golden image builds once.        │──────────╯
+╭ repos ───│                                                                            │──────────╮
+│ + add rep│  path ❯ type to filter, or a path like ~/code/app                          │          │
+│          │                                                                            │          │
+│          │  NOT MANAGED YET  3                                                        │          │
+│          │  › api                     main                 10m  /home/ada/code/api    │          │
+│          │    web                     feat/new-nav          2h  /home/ada/code/web    │          │
+│          │    tools                   main                  3d  /home/ada/code/tools  │          │
+│          │                                                                            │          │
+│          │                                                                            │          │
+│          │                                                                            │          │
+│          │                                                                            │          │
+│          │                                                                            │          │
+│          │                                                                            │          │
+│ ─────────│                                                                            │ it       │
+│ s setting│                                                                            │          │
+│ g cleanup│                                                                            │          │
+│ D doctor │  ⏎ previews api: what init does, before it does it                         │          │
+│ S service│                                                                            │          │
+╰──────────╰────────────────────────────────────────────────────────────────────────────╯──────────╯
+ ⏎ preview  ↑↓ pick  tab complete  esc close

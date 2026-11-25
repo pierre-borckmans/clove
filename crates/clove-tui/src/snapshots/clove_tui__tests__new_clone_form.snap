@@ -10,7 +10,7 @@ expression: s
 │ ▌ app          5 ● ││   NAME                    BRANCH                     CHANGES       AGE    SIZE  PATH           │
 │   mono         2 ● ││ ● feat-login              feat/login                 dirty ↑2       5m     14M  …eat-login/app │
 │   web       set up ││ ● fix-race                fix/race                   ↑1 ↓3          3h    230M  …/fix-race/app │
-│                    ││ ○ spike-cache             spike/cache                unmounted      3h     14M  …ike-cache/app │
+│ + add repo         ││ ○ spike-cache             spike/cache                unmounted      3h     14M  …ike-cache/app │
 │                    ││ ● pierre-onboarding-flow  pierre/onboarding-flow-v2  clean          4d     14M  …ding-flow/app │
 │                    ││ ● detached                detached @9f8e7d6          clean          3h     14M  …/detached/app │
 │                    ││                                                                                                │

@@ -11,7 +11,7 @@ expression: s
 │ ▌ app          5 ● ││             d   remove (asks first)                  │       AGE    SIZE   │
 │   mono         2 ● ││         m / u   mount / unmount                      │2       5m     14M   │
 │   web       set up ││             o   open in $EDITOR                      │        3h    230M   │
-│                    ││             c   make a plain git worktree a clone    │ed      3h     14M   │
+│ + add repo         ││             c   make a plain git worktree a clone    │ed      3h     14M   │
 │                    ││             /   filter by name or branch             │        4d     14M   │
 │                    ││         ↑↓ jk   move · wheel scrolls                 │        3h     14M   │
 │                    ││                                                      │                     │
@@ -22,16 +22,16 @@ expression: s
 │                    ││                                                      │                     │
 │                    ││  ANYWHERE                                            │                     │
 │                    ││   tab [ ] 1-9   switch repository                    │─────────────────────╯
-│                    ││             s   settings, service                    │─────────────────────╮
+│                    ││             A   add a repo clove doesn't manage yet  │─────────────────────╮
+│                    ││             s   settings, service                    │                     │
 │                    ││             g   cleanup: merged clones/worktrees     │                     │
 │                    ││             D   doctor                               │                     │
 │                    ││        ctrl-r   reload now                           │                     │
 │                    ││         q esc   quit                                 │                     │
-│                    ││                                                      │                     │
-│ ────────────────── ││  PANELS                                              │                     │
-│ s settings         ││     < > / { }   move the detail / sidebar border     │                     │
-│ g cleanup          ││             =   reset sizes · or double-click        │               3.2s  │
-│ D doctor           ││                                                      │                6ms  │
-│ S service          ││  rows, tabs and hints are clickable; borders drag    │                     │
+│ ────────────────── ││                                                      │                     │
+│ s settings         ││  PANELS                                              │                     │
+│ g cleanup          ││     < > / { }   move the detail / sidebar border     │               3.2s  │
+│ D doctor           ││             =   reset sizes · or double-click        │                6ms  │
+│ S service          ││                                                      │                     │
 ╰────────────────────╯│                                                      │─────────────────────╯
  esc close            ╰──────────────────────────────────────────────────────╯

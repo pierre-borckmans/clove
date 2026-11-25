@@ -29,13 +29,7 @@ pub fn discover(start: &Path) -> (Vec<RepoTab>, usize, Option<String>) {
             };
             (tabs, idx, None)
         }
-        Err(e) if tabs.is_empty() => (
-            tabs,
-            0,
-            Some(format!(
-                "{e:#}. Run `clove` inside a git repository, or `clove init` in one first."
-            )),
-        ),
+        // With no repo at all the TUI opens on the add-repo screen.
         Err(_) => (tabs, 0, None),
     }
 }
@@ -240,7 +234,7 @@ fn spawn_pending_waiter(root: &Path) {
 }
 
 /// Turns a panic in a worker into an error message instead of a dead thread.
-fn guarded<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+pub(crate) fn guarded<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
     match std::panic::catch_unwind(AssertUnwindSafe(f)) {
         Ok(r) => r,
         Err(p) => {

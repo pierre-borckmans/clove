@@ -11,7 +11,7 @@ expression: s
 │ ▌ app          5 ● ││   NAME                    BRANCH                     CHANGES       AGE    SIZE  PATH           │
 │   mono         2 ● ││ ● feat-login              feat/login                 dirty ↑2       5m     14M  …eat-login/app │
 │   web       set up ││ ● fi╭ make a clone of app-docs ────────────────────────────────────╮3h    230M  …/fix-race/app │
-│                    ││ ○ sp│                                                              │3h     14M  …ike-cache/app │
+│ + add repo         ││ ○ sp│                                                              │3h     14M  …ike-cache/app │
 │                    ││ ● pi│  app-docs  on pierre/docs                                    │4d     14M  …ding-flow/app │
 │                    ││ ● de│  /work/app-docs                                              │3h     14M  …/detached/app │
 │                    ││     │                                                              │                           │

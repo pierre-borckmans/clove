@@ -10,7 +10,7 @@ expression: s
 │ ▌ app          5 ● ││   NAME                    BRANCH                     CHANGES       AGE    SIZE  PATH           │
 │   mono         2 ● ││ ● feat-login              feat/login                 dirty ↑2       5m     14M  …eat-login/app │
 │   web       set up │╭ cleanup ─────────────────────────────────────────────────────────────────╮230M  …/fix-race/app │
-│                    ││                                                                          │ 14M  …ike-cache/app │
+│ + add repo         ││                                                                          │ 14M  …ike-cache/app │
 │                    ││  MERGED CLONES                                                           │ 14M  …ding-flow/app │
 │                    ││  ✓ feat-login  PR #3672 merged                                      14M  │ 14M  …/detached/app │
 │                    ││  ! fix-race    PR #3690 merged, but 2 commits after it              14M  │                     │

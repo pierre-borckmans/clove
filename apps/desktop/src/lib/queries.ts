@@ -21,6 +21,8 @@ export const keys = {
   service: ["service"] as const,
   shell: ["shell"] as const,
   apps: ["apps"] as const,
+  repoCandidates: ["repo-candidates"] as const,
+  initPreview: (dir: string) => ["init-preview", dir] as const,
 };
 
 /**
@@ -36,11 +38,28 @@ export function useRepoChanges() {
   useEffect(() => {
     const un = listen("repos-changed", () => {
       void qc.invalidateQueries({
-        predicate: (q) => !["prs-check", "doctor", "apps", "shell"].includes(String(q.queryKey[0])),
+        predicate: (q) =>
+          !["prs-check", "doctor", "apps", "shell", "repo-candidates", "init-preview"].includes(String(q.queryKey[0])),
       });
     });
     return () => void un.then((f) => f());
   }, [qc]);
+}
+
+/** Git repos clove could manage, scanned from the usual code folders. */
+export function useRepoCandidates(enabled: boolean) {
+  return useQuery({ queryKey: keys.repoCandidates, queryFn: api.repoCandidates, enabled, staleTime: 0 });
+}
+
+/** What `init` would do for `dir`; null skips. */
+export function useInitPreview(dir: string | null) {
+  return useQuery({
+    queryKey: keys.initPreview(dir ?? ""),
+    queryFn: () => api.initPreview(dir as string),
+    enabled: !!dir,
+    staleTime: 0,
+    retry: false,
+  });
 }
 
 export function useRepos() {

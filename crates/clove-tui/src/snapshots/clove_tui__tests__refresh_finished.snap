@@ -10,7 +10,7 @@ expression: s
 │ ▌ │  ✓ clone image                                                                      7ms  │   │
 │   │  ✓ mount                                                                          640ms  │   │
 │   │  ✓ checkout                                                                       233ms  │   │
-│   │  ✓ warm deps                                                                       4.2s  │   │
+│ + │  ✓ warm deps                                                                       4.2s  │   │
 │   │                                                                                          │   │
 │   │  golden gen 4 at 0badc0ffee in 4.2s                                                      │   │
 │   │                                                                                          │   │

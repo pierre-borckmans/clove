@@ -66,7 +66,7 @@ Shell integration lets `clove new`, `clove cd` and the terminal UI change your d
 ## Use
 
 ```
-clove init                    # build the golden image (once; minutes on a big repo)
+clove init                    # show what it will set up, then build the golden image (once; minutes on a big repo)
 clove new feat/login          # branch from origin/main, or check out an existing branch
 clove new feat/login -x claude   # and start an agent in it
 clove ls                      # clones, branch, dirty/ahead/behind, own disk
@@ -79,6 +79,7 @@ clove setup                   # in a clone, after a pull: rerun the setup steps 
 clove refresh                 # bring the golden image to the latest base (incremental)
 clove doctor                  # check the setup, with a fix for each problem
 clove repos                   # every repo clove manages, with golden state and merged clones
+clove repos --candidates      # git repos in your code folders clove could manage, most recent first
 clove config get              # each setting, its value and which file it comes from
 clove config set fetch false  # change one setting (--layer team|all; default: you, this repo)
 clove config unset fetch      # remove it from that file again
@@ -88,7 +89,7 @@ clove config --edit           # open your settings for this repo (--edit team, -
 The same features are in three places, and each one gets new features at the same time:
 
 - **The CLI**, above.
-- **`clove`** on its own opens a terminal UI with mouse support (`clove tui` too). A sidebar lists every repo, with its clones and whether its golden image is fresh. `s` opens settings, where you edit values in place (Enter edits or toggles, ←/→ picks the file it saves to, `x` resets), `g` cleans up merged clones and leftovers, and Enter quits into the selected clone.
+- **`clove`** on its own opens a terminal UI with mouse support (`clove tui` too). A sidebar lists every repo, with its clones and whether its golden image is fresh. `s` opens settings, where you edit values in place (Enter edits or toggles, ←/→ picks the file it saves to, `x` resets), `g` cleans up merged clones and leftovers, `A` adds a repo (pick one found on disk or type a path, see what init will do, then build it), and Enter quits into the selected clone. With no repo yet, it opens on that screen.
 - **The Mac app** (`apps/desktop`), with the same sidebar, settings and cleanup, plus a menu-bar popover.
 
 Every command takes `--json`. `clove new --json` prints the clone's path, branch and timings, so an agent can create its own worktree:

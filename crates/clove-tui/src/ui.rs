@@ -165,17 +165,17 @@ fn panel<'a>(title_spans: Vec<Span<'a>>, focus: bool) -> Block<'a> {
         .title(Line::from(t))
 }
 
-fn put(f: &mut Frame, area: Rect, line: Line) {
+pub(crate) fn put(f: &mut Frame, area: Rect, line: Line) {
     if area.width > 0 && area.height > 0 {
         f.render_widget(Paragraph::new(line), area);
     }
 }
 
-fn row(area: Rect, i: u16) -> Rect {
+pub(crate) fn row(area: Rect, i: u16) -> Rect {
     Rect::new(area.x, area.y + i, area.width, 1).intersection(area)
 }
 
-fn centered(area: Rect, w: u16, h: u16) -> Rect {
+pub(crate) fn centered(area: Rect, w: u16, h: u16) -> Rect {
     let w = w.min(area.width);
     let h = h.min(area.height);
     Rect::new(
@@ -508,7 +508,8 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         ]
     };
     let tools_h = tools.len() as u16 + 1;
-    let list_h = inner.height.saturating_sub(tools_h);
+    // One row under the repos for "+ add repo".
+    let list_h = inner.height.saturating_sub(tools_h + 1);
     let w = inner.width as usize;
     let repos = app.repos.clone();
     for (i, r) in repos.iter().enumerate().take(list_h as usize) {
@@ -583,6 +584,13 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
             )),
         );
     }
+    let add = row(inner, (repos.len() as u16).min(list_h));
+    put(
+        f,
+        add,
+        Line::from(vec![Span::styled("+ ", key()), Span::styled("add repo", muted())]),
+    );
+    app.hits.push((add, key_hit('A')));
     let top = inner.y + inner.height - tools.len() as u16;
     put(
         f,
@@ -749,14 +757,22 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect, inline_wts: bool) {
     app.hits.push((inner, Hit::ScrollList));
 
     if app.repo().is_none() {
-        let notice = app.notice.clone().unwrap_or_else(|| "no repository".into());
         let mut lines = vec![
             Line::from(Span::styled("◆", fg(BOTTLE))),
-            Line::from(Span::styled("nothing to show yet", bold())),
+            Line::from(Span::styled("no repos yet", bold())),
             Line::from(""),
+            Line::from(vec![
+                Span::styled("A", key()),
+                Span::styled(
+                    " adds one: pick a git repo, see what clove will do, build it",
+                    muted(),
+                ),
+            ]),
         ];
-        for l in fmt::wrap(&notice, inner.width.saturating_sub(4) as usize) {
-            lines.push(Line::from(Span::styled(l, muted())));
+        if let Some(n) = &app.notice {
+            for l in fmt::wrap(n, inner.width.saturating_sub(4) as usize) {
+                lines.push(Line::from(Span::styled(l, muted())));
+            }
         }
         empty_state(f, inner, lines);
         return;
@@ -1717,7 +1733,7 @@ fn draw_detail(f: &mut Frame, app: &mut App, area: Rect) {
 
 // ---- footer ------------------------------------------------------------
 
-type Hint = (&'static str, &'static str, KeyCode);
+pub(crate) type Hint = (&'static str, &'static str, KeyCode);
 
 fn hints(app: &App) -> Vec<Hint> {
     use KeyCode::*;
@@ -1807,6 +1823,7 @@ fn hints(app: &App) -> Vec<Hint> {
             v
         }
         Some(Modal::Help) => vec![("esc", "close", Esc)],
+        Some(Modal::AddRepo(v)) => crate::add_repo::hints(v),
         None if app.filtering => vec![("⏎", "keep", Enter), ("esc", "clear", Esc), ("↑↓", "move", Down)],
         None => {
             let mut v: Vec<Hint> = vec![];
@@ -1850,6 +1867,7 @@ fn hints(app: &App) -> Vec<Hint> {
                 ("s", "settings", Char('s')),
                 ("g", "cleanup", Char('g')),
                 ("D", "doctor", Char('D')),
+                ("A", "add repo", Char('A')),
             ]);
             v
         }
@@ -2057,16 +2075,17 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect, list: Rect) {
         Modal::Doctor(d) => draw_doctor(f, app, area, d),
         Modal::Settings(v) => draw_settings(f, app, area, v),
         Modal::Job(id) => draw_job(f, app, area, id),
+        Modal::AddRepo(v) => crate::add_repo::draw(f, app, area, &v),
     }
 }
 
-fn modal_block<'a>(title_spans: Vec<Span<'a>>) -> Block<'a> {
+pub(crate) fn modal_block<'a>(title_spans: Vec<Span<'a>>) -> Block<'a> {
     panel(title_spans, true).padding(ratatui::widgets::Padding::new(2, 2, 1, 1))
 }
 
 /// Dims everything behind a centered modal and makes a click outside it close
 /// it (the footer stays clickable).
-fn open_modal(f: &mut Frame, hits: &mut Vec<(Rect, Hit)>, area: Rect, rect: Rect) {
+pub(crate) fn open_modal(f: &mut Frame, hits: &mut Vec<(Rect, Hit)>, area: Rect, rect: Rect) {
     dim_backdrop(f, area);
     f.render_widget(Clear, rect);
     let above_footer = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
@@ -2074,11 +2093,11 @@ fn open_modal(f: &mut Frame, hits: &mut Vec<(Rect, Hit)>, area: Rect, rect: Rect
     hits.push((rect, Hit::Inert));
 }
 
-fn key_hit(c: char) -> Hit {
+pub(crate) fn key_hit(c: char) -> Hit {
     Hit::Key(KeyCode::Char(c), KeyModifiers::NONE)
 }
 
-fn button<'a>(label: &str, focused: bool, danger: bool) -> Span<'a> {
+pub(crate) fn button<'a>(label: &str, focused: bool, danger: bool) -> Span<'a> {
     let s = format!(" {label} ");
     if focused {
         Span::styled(
@@ -2256,6 +2275,7 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
             "anywhere",
             &[
                 ("tab [ ] 1-9", "switch repository"),
+                ("A", "add a repo clove doesn't manage yet"),
                 ("s", "settings, service"),
                 ("g", "cleanup: merged clones/worktrees"),
                 ("D", "doctor"),

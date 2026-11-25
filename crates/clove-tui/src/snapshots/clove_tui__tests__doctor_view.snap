@@ -10,7 +10,7 @@ expression: s
 │ ▌ app          5 ● ││   NAME                    BRANCH                     CHANGES       AGE    SIZE       │
 │   mono     ╭ doctor ──────────────────────────────────────────────────────────────────────────╮  14M       │
 │   web      │                                                                                  │ 230M       │
-│            │  ✓ disk images    ASIF via diskutil (macOS 26+)                                  │  14M       │
+│ + add repo │  ✓ disk images    ASIF via diskutil (macOS 26+)                                  │  14M       │
 │            │  ✓ state volume   ~/.clove is on APFS                                            │  14M       │
 │            │  ✓ git            2.50.1                                                         │  14M       │
 │            │  ✓ steps          deps (detected)                                                │            │

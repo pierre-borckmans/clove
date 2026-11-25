@@ -10,7 +10,7 @@ expression: s
 │ ▌ │  ✓ clone image                      7ms  │ deps │ Progress: resolved 740 reused 700, downloaded 0         │  │   │
 │   │  ✓ mount                          640ms  │ deps │ Progress: resolved 777 reused 735, downloaded 0         │  │pp │
 │   │  ✓ checkout                       233ms  │ deps │ Progress: resolved 814 reused 770, downloaded 0         │  │pp │
-│   │  ⠧ warm deps                       4.2s  │ deps │ Progress: resolved 851 reused 805, downloaded 0         │  │pp │
+│ + │  ⠧ warm deps                       4.2s  │ deps │ Progress: resolved 851 reused 805, downloaded 0         │  │pp │
 │   │                                          │ deps │ Progress: resolved 888 reused 840, downloaded 0         │  │pp │
 │   │                                          │ deps │ Progress: resolved 925 reused 875, downloaded 0         │  │pp │
 │   │                                          │ deps │ Progress: resolved 962 reused 910, downloaded 0         │  │   │
