@@ -49,33 +49,22 @@ pub fn repo_tabs() -> Vec<RepoTab> {
         .collect()
 }
 
+/// Repos loaded once already by this process: later loads skip the preview.
+static PREVIEWED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> =
+    std::sync::LazyLock::new(Default::default);
+
 pub fn load(tx: Sender<Msg>, root: PathBuf) {
     std::thread::spawn(move || {
-        let data = guarded(|| {
-            let c = Clove::open(&root).map_err(|e| format!("{e:#}"))?;
-            let status = c.status().map_err(|e| format!("{e:#}"))?;
-            let clones = c.list(true).map_err(|e| format!("{e:#}"))?;
-            let worktrees = c.other_worktrees(true).unwrap_or_default();
-            let prs = c
-                .prune_cache()
-                .map(|p| p.checks.into_iter().map(|m| (m.clone.clone(), m)).collect())
-                .unwrap_or_default();
-            Ok(Box::new(RepoData {
-                root: root.clone(),
-                summary: c.summary(),
-                status,
-                clones,
-                worktrees,
-                fields: clove_core::settings::fields(&c.root, &c.name, &c.config).unwrap_or_default(),
-                config: c.config.clone(),
-                prs,
-                watch: {
-                    let mut t = c.watch_targets();
-                    t.push(clove_core::watch::repos_target());
-                    t
-                },
-            }))
-        });
+        // The first load of a repo runs git status in every clone, seconds
+        // with many: show the list without it first.
+        let first = PREVIEWED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(root.clone());
+        if first && let Ok(d) = guarded(|| repo_data(&root, false)) {
+            let _ = tx.send(Msg::Preview(d));
+        }
+        let data = guarded(|| repo_data(&root, true));
         let _ = tx.send(Msg::Loaded {
             root,
             data,
@@ -83,6 +72,33 @@ pub fn load(tx: Sender<Msg>, root: PathBuf) {
             service: clove_core::service::installed().iter().all(|(_, on)| *on),
         });
     });
+}
+
+fn repo_data(root: &Path, git_status: bool) -> Result<Box<RepoData>, String> {
+    let root = root.to_path_buf();
+    let c = Clove::open(&root).map_err(|e| format!("{e:#}"))?;
+    let status = c.status().map_err(|e| format!("{e:#}"))?;
+    let clones = c.list(git_status).map_err(|e| format!("{e:#}"))?;
+    let worktrees = c.other_worktrees(git_status).unwrap_or_default();
+    let prs = c
+        .prune_cache()
+        .map(|p| p.checks.into_iter().map(|m| (m.clone.clone(), m)).collect())
+        .unwrap_or_default();
+    Ok(Box::new(RepoData {
+        root: root.clone(),
+        summary: c.summary(),
+        status,
+        clones,
+        worktrees,
+        fields: clove_core::settings::fields(&c.root, &c.name, &c.config).unwrap_or_default(),
+        config: c.config.clone(),
+        prs,
+        watch: {
+            let mut t = c.watch_targets();
+            t.push(clove_core::watch::repos_target());
+            t
+        },
+    }))
 }
 
 /// Asks GitHub about the clones' PRs; the result lands in the prune cache,

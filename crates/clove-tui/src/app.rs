@@ -773,6 +773,12 @@ impl App {
                 }
                 vec![]
             }
+            Msg::Preview(d) => {
+                if !self.data.contains_key(&d.root) {
+                    self.apply_data(*d);
+                }
+                vec![]
+            }
             Msg::PrsChecked => {
                 self.loaded_ms = None;
                 vec![]

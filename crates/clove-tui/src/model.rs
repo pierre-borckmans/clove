@@ -135,6 +135,8 @@ pub enum Msg {
     },
     /// A background PR check finished; reload to show it.
     PrsChecked,
+    /// A first load's list without git status, while the full one runs.
+    Preview(Box<RepoData>),
     Event(u64, clove_core::Event),
     Done(u64, Result<Outcome, String>),
     /// Git repos clove could start managing (add-repo dialog).

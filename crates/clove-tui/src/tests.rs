@@ -2069,3 +2069,24 @@ fn a_dirty_worktree_becomes_a_clone_with_its_changes() {
     assert!(matches!(&fx[..], [Effect::Spawn { .. }]), "{fx:?}");
     assert!(matches!(app.jobs.last().unwrap().task, Task::Adopt { .. }));
 }
+
+#[test]
+fn a_first_load_shows_the_list_before_git_status_lands() {
+    let mut app = App::new(repos(), 0);
+    let mut quick = clones();
+    for c in &mut quick {
+        c.dirty = None;
+    }
+    let n = quick.len();
+    app.loading = true;
+    app.on_msg(Msg::Preview(Box::new(data("/work/app", status(true, n), quick))));
+    assert_eq!(app.current().map(|d| d.clones.len()), Some(n));
+    assert!(app.loading, "the full load is still running");
+    // The full answer replaces it; a late preview never overwrites full data.
+    let full = clones();
+    app.apply_data(data("/work/app", status(true, n), full.clone()));
+    let mut stale = clones();
+    stale[0].dirty = None;
+    app.on_msg(Msg::Preview(Box::new(data("/work/app", status(true, n), stale))));
+    assert_eq!(app.current().unwrap().clones[0].dirty, full[0].dirty);
+}
