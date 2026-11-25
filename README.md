@@ -82,7 +82,7 @@ The golden image is a recipe, not a snapshot of your checkout: the base branch, 
 
 - **Refresh is incremental.** `clove refresh` clones the current golden image, checks out the latest base and reruns only the warm steps whose `watch` paths changed since the previous golden commit, or whose definition changed. On the monorepo, a refresh where nothing relevant changed takes 4.3s. `--full` reruns everything.
 - **Stale images refresh themselves.** The golden image is stale when it's older than `max_age` or more than `max_behind` commits behind the base. When `clove new` finds it stale, it starts a refresh in the background and doesn't wait, so the next clone starts fresh. `clove status` shows how fresh it is and whether a refresh is running.
-- **The service checks hourly.** `clove service install` adds two launchd agents: one remounts clones at login, the other runs `clove refresh --all-repos --if-stale` every hour. A repo that is still fresh costs one `git fetch`.
+- **The service checks hourly.** `clove init` offers it in an interactive terminal, or run `clove service install`. It adds two launchd agents: one remounts clones at login, the other runs `clove refresh --all-repos --if-stale` every hour. A repo that is still fresh costs one `git fetch`.
 - **Refreshing never touches existing clones.** It builds the next generation next to the current one and swaps it in atomically, and `clove new` keeps working while it runs.
 - **Clones catch up with `clove setup`.** After a `git pull` or a rebase in a clone, it copies your local files again and reruns only the setup steps whose inputs changed since they last ran.
 

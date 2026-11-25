@@ -4,7 +4,7 @@ mod render;
 mod service;
 mod shell;
 
-use anstream::{eprintln, println};
+use anstream::{eprint, eprintln, println};
 use anyhow::{Context, Result, bail};
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::engine::ArgValueCompleter;
@@ -272,6 +272,7 @@ fn run(cli: Cli) -> Result<()> {
                 secs(total_ms(&meta.timings)),
                 paint(BOLD, "clove new <branch>")
             );
+            after_init()?;
         }
         Cmd::Refresh {
             all_repos,
@@ -593,6 +594,56 @@ fn run(cli: Cli) -> Result<()> {
             };
             clove_tui::run(&dir)?;
         }
+    }
+    Ok(())
+}
+
+/// First-run setup the golden image alone doesn't cover: shell integration and
+/// the background service. Asks only in an interactive terminal, so scripts and
+/// agents get a hint instead of a prompt.
+fn after_init() -> Result<()> {
+    if std::env::var_os("CLOVE_CD_FILE").is_none() {
+        let sh = std::env::var("SHELL").unwrap_or_default();
+        let line = match sh.rsplit('/').next() {
+            Some("fish") => "clove shell-init fish | source".to_string(),
+            Some(s @ ("bash" | "zsh")) => format!("eval \"$(clove shell-init {s})\""),
+            _ => "eval \"$(clove shell-init zsh)\"".to_string(),
+        };
+        eprintln!(
+            "{} add {} to your shell rc so `clove new` and `clove cd` can change directory",
+            paint(DIM, "·"),
+            paint(BOLD, &line)
+        );
+    }
+    if service::installed().iter().all(|(_, on)| *on) {
+        return Ok(());
+    }
+    let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    if !interactive {
+        eprintln!(
+            "{} run {} to refresh stale golden images hourly and remount clones at login",
+            paint(DIM, "·"),
+            paint(BOLD, "clove service install")
+        );
+        return Ok(());
+    }
+    eprint!(
+        "\nKeep golden images fresh in the background? Installs two launchd agents: \
+         an hourly refresh of stale images and a remount of clones at login. [Y/n] "
+    );
+    let mut answer = String::new();
+    // End of input (Ctrl-D, a closed pipe) counts as no; only Enter takes the default.
+    let read = std::io::stdin().read_line(&mut answer)?;
+    if read > 0 && matches!(answer.trim().to_ascii_lowercase().as_str(), "" | "y" | "yes") {
+        for p in service::install(3600)? {
+            eprintln!("{} {}", paint(GREEN, "✓"), tilde(&p));
+        }
+    } else {
+        eprintln!(
+            "{} skipped; {} later if you change your mind",
+            paint(DIM, "·"),
+            paint(BOLD, "clove service install")
+        );
     }
     Ok(())
 }
