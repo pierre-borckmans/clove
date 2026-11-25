@@ -80,13 +80,15 @@ pub fn has_remote(dir: &Path, remote: &str) -> bool {
 
 /// `origin/main` style default base: the remote's HEAD, else the main worktree's branch.
 pub fn default_base(dir: &Path) -> String {
+    use crate::memo::Dep;
     let g = dir.join(".git");
-    let files = [
-        g.join("refs/remotes/origin/HEAD"),
-        g.join("packed-refs"),
-        g.join("HEAD"),
+    let deps = [
+        Dep::file(g.join("refs/remotes/origin/HEAD")),
+        Dep::git_ref(&g, "origin/main"),
+        Dep::git_ref(&g, "origin/master"),
+        Dep::git_ref(&g, "HEAD"),
     ];
-    crate::memo::get(&format!("default-base:{}", dir.display()), &files, || {
+    crate::memo::get(&format!("default-base:{}", dir.display()), &deps, || {
         find_default_base(dir)
     })
 }

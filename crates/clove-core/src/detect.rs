@@ -12,8 +12,9 @@ fn s(v: &[&str]) -> Vec<String> {
 /// (which run inside the environment the first ones set up).
 /// Reused while the root listing and the index are unchanged.
 pub fn steps(root: &Path) -> Vec<Step> {
-    let files = [root.to_path_buf(), root.join(".git/index")];
-    crate::memo::get(&format!("detect:{}", root.display()), &files, || find_steps(root))
+    use crate::memo::Dep;
+    let deps = [Dep::file(root), Dep::file(root.join(".git/index"))];
+    crate::memo::get(&format!("detect:{}", root.display()), &deps, || find_steps(root))
 }
 
 fn find_steps(root: &Path) -> Vec<Step> {

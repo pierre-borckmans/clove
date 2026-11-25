@@ -261,17 +261,19 @@ impl Clove {
     /// its index, HEAD or branch moves, or its tree changes (see `memo`).
     pub(crate) fn fill_status(&self, w: &mut OtherWorktree) {
         if !w.missing {
-            let common = &self.common_dir;
-            let mut files = vec![common.join("packed-refs")];
+            use crate::memo::Dep;
+            let mut deps = vec![];
             if let Some(admin) = admin_dir(&w.path) {
-                files.extend([admin.join("HEAD"), admin.join("index")]);
+                deps.extend([Dep::file(admin.join("HEAD")), Dep::file(admin.join("index"))]);
             }
-            if let Some(b) = &w.branch {
-                files.push(common.join("refs/heads").join(b));
+            match &w.branch {
+                Some(b) => deps.push(Dep::git_ref(&self.common_dir, &format!("refs/heads/{b}"))),
+                // Detached: commits not on any branch, tag or remote.
+                None => deps.push(Dep::file(self.common_dir.join("packed-refs"))),
             }
             let key = format!("wt-status:{}", w.path.display());
             let detached = w.branch.is_none();
-            let (st, detached_commits) = crate::memo::get_tree(&key, &w.path, &files, || {
+            let (st, detached_commits) = crate::memo::get_tree(&key, &w.path, &deps, || {
                 let st = git::out(&w.path, &["status", "--short", "--untracked-files=normal"])
                     .map_err(|e| format!("{e:#}"));
                 let n = if detached {

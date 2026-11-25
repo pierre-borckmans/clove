@@ -216,7 +216,7 @@ impl Clove {
             steps_key.join(",")
         );
         let (behind, changed) =
-            crate::memo::get(&key, &crate::memo::ref_files(&self.common_dir, base), || {
+            crate::memo::get(&key, &[crate::memo::Dep::git_ref(&self.common_dir, base)], || {
                 let behind = git::count_commits(&self.root, &format!("{}..{base}", meta.commit));
                 let changed = if behind.unwrap_or(0) > 0 || !meta.step_hashes.is_empty() {
                     self.changed_steps(&meta)
@@ -1052,10 +1052,8 @@ impl Clove {
         let (branch, head) = match head_file.strip_prefix("ref: refs/heads/") {
             Some(b) => {
                 let r = format!("refs/heads/{b}");
-                let files = crate::memo::ref_files(&self.common_dir, &r);
-                let head = crate::memo::get(&format!("rev:{}:{r}", self.root.display()), &files, || {
-                    git::out(&self.root, &["rev-parse", "--verify", "--quiet", &r]).ok()
-                });
+                let head = crate::memo::ref_sha(&self.common_dir, &r)
+                    .or_else(|| git::out(&self.root, &["rev-parse", "--verify", "--quiet", &r]).ok());
                 (Some(b.to_string()), head)
             }
             None if !head_file.is_empty() => (None, Some(head_file.to_string())),
@@ -1065,14 +1063,18 @@ impl Clove {
         if status && mounted {
             // Reused until the clone's index, HEAD, branch or base moves, or
             // its tree changes (see `memo`).
+            use crate::memo::Dep;
             let admin = self.clone_admin(name);
-            let mut files = vec![admin.join("HEAD"), admin.join("index")];
-            files.extend(crate::memo::ref_files(&self.common_dir, &meta.base));
+            let mut deps = vec![
+                Dep::file(admin.join("HEAD")),
+                Dep::file(admin.join("index")),
+                Dep::git_ref(&self.common_dir, &meta.base),
+            ];
             if let Some(b) = &branch {
-                files.push(self.common_dir.join("refs/heads").join(b));
+                deps.push(Dep::git_ref(&self.common_dir, &format!("refs/heads/{b}")));
             }
             let key = format!("clone-status:{}", meta.path.display());
-            (dirty, ahead, behind) = crate::memo::get_tree(&key, &meta.path, &files, || {
+            (dirty, ahead, behind) = crate::memo::get_tree(&key, &meta.path, &deps, || {
                 let dirty = git::is_dirty(&meta.path).ok();
                 let (mut ahead, mut behind) = (None, None);
                 if let Ok(s) = git::out(
@@ -1354,7 +1356,7 @@ impl Clove {
                 let range = format!("{}..{}", meta.commit, meta.base);
                 let behind = crate::memo::get(
                     &format!("behind:{}:{range}", self.root.display()),
-                    &crate::memo::ref_files(&self.common_dir, &meta.base),
+                    &[crate::memo::Dep::git_ref(&self.common_dir, &meta.base)],
                     || git::count_commits(&self.root, &range),
                 );
                 let image_bytes = record

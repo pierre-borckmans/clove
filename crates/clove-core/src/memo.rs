@@ -1,27 +1,59 @@
 //! Process-wide memo of git answers, so a UI that reloads every few seconds
 //! does not respawn git for things that did not change.
 //!
-//! An entry is reused while the files it depends on keep their mtime and size
-//! (a "stamp": index, HEAD, refs). Working-tree edits change none of those, so
-//! entries that read the working tree also expire: quickly, unless a recursive
-//! watcher covers the tree and calls [`invalidate_under`] on changes.
-//! One-shot CLI commands start with an empty memo, so they always ask git.
+//! An entry is reused while what it depends on is unchanged: files by mtime
+//! and size (a worktree's index and HEAD), refs by the commit they point at,
+//! read from the ref files without calling git. Refs go by value because a
+//! fetch rewrites `packed-refs` even when nothing moved.
+//!
+//! Working-tree edits change none of those, so answers that read a working
+//! tree also expire: quickly, unless a recursive watcher covers the tree and
+//! calls [`invalidate_under`] on changes. One-shot CLI commands start with an
+//! empty memo, so they always ask git.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-/// mtime and size of each file, `None` when missing.
-pub type Stamp = Vec<Option<(SystemTime, u64)>>;
+/// What an answer depends on.
+#[derive(Debug, Clone)]
+pub enum Dep {
+    /// A file, by mtime and size.
+    File(PathBuf),
+    /// A ref (`refs/heads/x`, `origin/main`, `HEAD`) of the repo whose git
+    /// dir is the path, by the commit it points at.
+    Ref(PathBuf, String),
+}
 
-pub fn stamp(paths: &[PathBuf]) -> Stamp {
-    paths
-        .iter()
-        .map(|p| {
-            std::fs::metadata(p)
-                .ok()
-                .map(|m| (m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len()))
+impl Dep {
+    pub fn file(p: impl Into<PathBuf>) -> Self {
+        Dep::File(p.into())
+    }
+    pub fn git_ref(common_dir: &Path, name: &str) -> Self {
+        Dep::Ref(common_dir.to_path_buf(), name.to_string())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Part {
+    File(Option<(SystemTime, u64)>),
+    Ref(Option<String>),
+}
+
+type Stamp = Vec<Part>;
+
+fn file_stamp(p: &Path) -> Option<(SystemTime, u64)> {
+    std::fs::metadata(p)
+        .ok()
+        .map(|m| (m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len()))
+}
+
+fn stamp(deps: &[Dep]) -> Stamp {
+    deps.iter()
+        .map(|d| match d {
+            Dep::File(p) => Part::File(file_stamp(p)),
+            Dep::Ref(common, name) => Part::Ref(ref_value(common, name)),
         })
         .collect()
 }
@@ -48,30 +80,30 @@ static MEMO: LazyLock<Mutex<HashMap<String, Entry>>> = LazyLock::new(Default::de
 /// Trees a live recursive watcher reports on.
 static WATCHED: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(Default::default);
 
-/// `compute`'s answer for `key`, reused while `stamp_paths` keep their stamp.
-/// The stamp is taken after computing, so git's own index refresh does not
-/// make the next call miss.
-pub fn get<T: Clone + Send + 'static>(key: &str, stamp_paths: &[PathBuf], compute: impl FnOnce() -> T) -> T {
-    lookup(key, None, stamp_paths, compute)
+/// `compute`'s answer for `key`, reused while `deps` are unchanged. Files are
+/// stamped after computing, so git's own index refresh does not make the
+/// next call miss.
+pub fn get<T: Clone + Send + 'static>(key: &str, deps: &[Dep], compute: impl FnOnce() -> T) -> T {
+    lookup(key, None, deps, compute)
 }
 
 /// Like [`get`] for answers that read the working tree at `tree`.
 pub fn get_tree<T: Clone + Send + 'static>(
     key: &str,
     tree: &Path,
-    stamp_paths: &[PathBuf],
+    deps: &[Dep],
     compute: impl FnOnce() -> T,
 ) -> T {
-    lookup(key, Some(tree), stamp_paths, compute)
+    lookup(key, Some(tree), deps, compute)
 }
 
 fn lookup<T: Clone + Send + 'static>(
     key: &str,
     tree: Option<&Path>,
-    stamp_paths: &[PathBuf],
+    deps: &[Dep],
     compute: impl FnOnce() -> T,
 ) -> T {
-    let now = stamp(stamp_paths);
+    let now = stamp(deps);
     let ttl = tree.map(|t| if is_watched(t) { WATCHED_TTL } else { UNWATCHED_TTL });
     {
         let m = MEMO.lock().unwrap_or_else(|e| e.into_inner());
@@ -87,7 +119,7 @@ fn lookup<T: Clone + Send + 'static>(
     let v = compute();
     let entry = Entry {
         tree: tree.map(Path::to_path_buf),
-        stamp: stamp(stamp_paths),
+        stamp: stamp(deps),
         at: Instant::now(),
         stale: false,
         value: Box::new(v.clone()),
@@ -122,26 +154,66 @@ fn is_watched(tree: &Path) -> bool {
     WATCHED.lock().unwrap_or_else(|e| e.into_inner()).contains(tree)
 }
 
-/// Files whose stamp changes when `refname` (`refs/heads/x`, `origin/main`)
-/// moves: its loose file and packed-refs.
-pub fn ref_files(common_dir: &Path, refname: &str) -> Vec<PathBuf> {
-    if refname == "HEAD" {
-        let mut v = vec![common_dir.join("HEAD"), common_dir.join("packed-refs")];
-        if let Ok(h) = std::fs::read_to_string(common_dir.join("HEAD"))
-            && let Some(r) = h.trim().strip_prefix("ref: ")
-        {
-            v.push(common_dir.join(r));
-        }
-        return v;
-    }
-    let full = if refname.starts_with("refs/") {
-        refname.to_string()
-    } else if refname.contains('/') {
-        format!("refs/remotes/{refname}")
+/// The commit (or symbolic target) `name` points at, from the ref files.
+/// `origin/main` means `refs/remotes/origin/main`, `main` `refs/heads/main`.
+/// Repos on the reftable backend can't be read this way: the table list's
+/// stamp stands in, which changes whenever any ref does.
+pub fn ref_value(common_dir: &Path, name: &str) -> Option<String> {
+    let full = if name == "HEAD" || name.starts_with("refs/") {
+        name.to_string()
+    } else if name.contains('/') {
+        format!("refs/remotes/{name}")
     } else {
-        format!("refs/heads/{refname}")
+        format!("refs/heads/{name}")
     };
-    vec![common_dir.join(full), common_dir.join("packed-refs")]
+    if let Ok(s) = std::fs::read_to_string(common_dir.join(&full)) {
+        let s = s.trim();
+        return match s.strip_prefix("ref: ") {
+            // One level is all git writes (HEAD -> a branch).
+            Some(target) => Some(format!(
+                "{target}={}",
+                ref_value(common_dir, target).unwrap_or_default()
+            )),
+            None => Some(s.to_string()),
+        };
+    }
+    let reftable = common_dir.join("reftable/tables.list");
+    if reftable.exists() {
+        return file_stamp(&reftable).map(|(t, n)| format!("reftable:{t:?}:{n}"));
+    }
+    packed_refs(common_dir).get(&full).cloned()
+}
+
+/// The commit `name` points at, when the ref files say it plainly (not on
+/// reftable, not symbolic).
+pub fn ref_sha(common_dir: &Path, name: &str) -> Option<String> {
+    ref_value(common_dir, name).filter(|v| v.len() >= 40 && v.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// `packed-refs` parsed, reparsed only when the file changes.
+fn packed_refs(common_dir: &Path) -> Arc<HashMap<String, String>> {
+    type Cache = HashMap<PathBuf, (Option<(SystemTime, u64)>, Arc<HashMap<String, String>>)>;
+    static PACKED: LazyLock<Mutex<Cache>> = LazyLock::new(Default::default);
+    let path = common_dir.join("packed-refs");
+    let st = file_stamp(&path);
+    let mut c = PACKED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((s, refs)) = c.get(&path)
+        && *s == st
+    {
+        return refs.clone();
+    }
+    let refs: HashMap<String, String> = std::fs::read_to_string(&path)
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.starts_with('^'))
+        .filter_map(|l| {
+            let (sha, name) = l.split_once(' ')?;
+            Some((name.to_string(), sha.to_string()))
+        })
+        .collect();
+    let refs = Arc::new(refs);
+    c.insert(path, (st, refs.clone()));
+    refs
 }
 
 #[cfg(test)]
@@ -150,14 +222,14 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
-    fn reuses_until_a_stamped_file_changes() {
+    fn reuses_until_a_file_changes() {
         let tmp = tempfile::tempdir().unwrap();
         let f = tmp.path().join("index");
         std::fs::write(&f, "a").unwrap();
         let calls = AtomicUsize::new(0);
         let key = format!("t1:{}", tmp.path().display());
         let ask = || {
-            get(&key, std::slice::from_ref(&f), || {
+            get(&key, &[Dep::file(&f)], || {
                 calls.fetch_add(1, Ordering::SeqCst);
                 1
             })
@@ -168,6 +240,45 @@ mod tests {
         std::fs::write(&f, "bb").unwrap();
         ask();
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn refs_count_by_value_not_by_file_writes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let g = tmp.path();
+        std::fs::create_dir_all(g.join("refs/heads")).unwrap();
+        std::fs::write(
+            g.join("packed-refs"),
+            "# pack-refs\naaa refs/remotes/origin/main\n",
+        )
+        .unwrap();
+        let calls = AtomicUsize::new(0);
+        let key = format!("t3:{}", g.display());
+        let ask = || {
+            get(&key, &[Dep::git_ref(g, "origin/main")], || {
+                calls.fetch_add(1, Ordering::SeqCst);
+            })
+        };
+        ask();
+        // A fetch rewrites packed-refs with the same values: still a hit.
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(
+            g.join("packed-refs"),
+            "# pack-refs \naaa refs/remotes/origin/main\n",
+        )
+        .unwrap();
+        ask();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        // A loose ref takes over from the packed one.
+        std::fs::create_dir_all(g.join("refs/remotes/origin")).unwrap();
+        std::fs::write(g.join("refs/remotes/origin/main"), "bbb\n").unwrap();
+        ask();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(ref_value(g, "origin/main").as_deref(), Some("bbb"));
+        std::fs::write(g.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(g.join("refs/heads/main"), "ccc\n").unwrap();
+        assert_eq!(ref_value(g, "HEAD").as_deref(), Some("refs/heads/main=ccc"));
+        assert_eq!(ref_value(g, "main").as_deref(), Some("ccc"));
     }
 
     fn backdate(key: &str, by: Duration) {
@@ -204,15 +315,5 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         ask();
         assert_eq!(calls.load(Ordering::SeqCst), 2);
-    }
-
-    #[test]
-    fn ref_files_cover_loose_and_packed() {
-        let c = Path::new("/r/.git");
-        assert_eq!(
-            ref_files(c, "origin/main"),
-            vec![c.join("refs/remotes/origin/main"), c.join("packed-refs")]
-        );
-        assert_eq!(ref_files(c, "main")[0], c.join("refs/heads/main"));
     }
 }
