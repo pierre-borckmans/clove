@@ -207,12 +207,24 @@ impl Clove {
         };
         let age_secs = now_unix().saturating_sub(meta.created_at);
         let base = &self.config.base;
-        let behind = git::count_commits(&self.root, &format!("{}..{base}", meta.commit));
-        let changed = if behind.unwrap_or(0) > 0 || !meta.step_hashes.is_empty() {
-            self.changed_steps(&meta)
-        } else {
-            vec![]
-        };
+        // A function of the golden commit, the base's position and the steps.
+        let steps_key: Vec<String> = self.config.steps.iter().map(step_hash).collect();
+        let key = format!(
+            "freshness:{}:{}:{base}:{}",
+            self.root.display(),
+            meta.commit,
+            steps_key.join(",")
+        );
+        let (behind, changed) =
+            crate::memo::get(&key, &crate::memo::ref_files(&self.common_dir, base), || {
+                let behind = git::count_commits(&self.root, &format!("{}..{base}", meta.commit));
+                let changed = if behind.unwrap_or(0) > 0 || !meta.step_hashes.is_empty() {
+                    self.changed_steps(&meta)
+                } else {
+                    vec![]
+                };
+                (behind, changed)
+            });
         let policy = &self.config.refresh;
         let reason = if let Some((name, n)) = changed.first() {
             let names: Vec<&str> = changed.iter().map(|(s, _)| s.as_str()).collect();
@@ -1038,33 +1050,46 @@ impl Clove {
         let head_file = std::fs::read_to_string(self.clone_admin(name).join("HEAD")).unwrap_or_default();
         let head_file = head_file.trim();
         let (branch, head) = match head_file.strip_prefix("ref: refs/heads/") {
-            Some(b) => (
-                Some(b.to_string()),
-                git::out(
-                    &self.root,
-                    &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{b}")],
-                )
-                .ok(),
-            ),
+            Some(b) => {
+                let r = format!("refs/heads/{b}");
+                let files = crate::memo::ref_files(&self.common_dir, &r);
+                let head = crate::memo::get(&format!("rev:{}:{r}", self.root.display()), &files, || {
+                    git::out(&self.root, &["rev-parse", "--verify", "--quiet", &r]).ok()
+                });
+                (Some(b.to_string()), head)
+            }
             None if !head_file.is_empty() => (None, Some(head_file.to_string())),
             None => (meta.branch.clone(), None),
         };
         let (mut dirty, mut ahead, mut behind) = (None, None, None);
         if status && mounted {
-            dirty = git::is_dirty(&meta.path).ok();
-            if let Ok(s) = git::out(
-                &meta.path,
-                &[
-                    "rev-list",
-                    "--left-right",
-                    "--count",
-                    &format!("{}...HEAD", meta.base),
-                ],
-            ) {
-                let mut it = s.split_whitespace().filter_map(|n| n.parse().ok());
-                behind = it.next();
-                ahead = it.next();
+            // Reused until the clone's index, HEAD, branch or base moves, or
+            // its tree changes (see `memo`).
+            let admin = self.clone_admin(name);
+            let mut files = vec![admin.join("HEAD"), admin.join("index")];
+            files.extend(crate::memo::ref_files(&self.common_dir, &meta.base));
+            if let Some(b) = &branch {
+                files.push(self.common_dir.join("refs/heads").join(b));
             }
+            let key = format!("clone-status:{}", meta.path.display());
+            (dirty, ahead, behind) = crate::memo::get_tree(&key, &meta.path, &files, || {
+                let dirty = git::is_dirty(&meta.path).ok();
+                let (mut ahead, mut behind) = (None, None);
+                if let Ok(s) = git::out(
+                    &meta.path,
+                    &[
+                        "rev-list",
+                        "--left-right",
+                        "--count",
+                        &format!("{}...HEAD", meta.base),
+                    ],
+                ) {
+                    let mut it = s.split_whitespace().filter_map(|n| n.parse().ok());
+                    behind = it.next();
+                    ahead = it.next();
+                }
+                (dirty, ahead, behind)
+            });
         }
         let (image_bytes, own_bytes) = store.clone_bytes(self, name, &meta.mount);
         let issue = self.clone_issue(name, &meta.path, mounted);
@@ -1320,7 +1345,12 @@ impl Clove {
         let record = self.record()?;
         let golden = match self.golden_meta()? {
             Some(meta) => {
-                let behind = git::count_commits(&self.root, &format!("{}..{}", meta.commit, meta.base));
+                let range = format!("{}..{}", meta.commit, meta.base);
+                let behind = crate::memo::get(
+                    &format!("behind:{}:{range}", self.root.display()),
+                    &crate::memo::ref_files(&self.common_dir, &meta.base),
+                    || git::count_commits(&self.root, &range),
+                );
                 let image_bytes = record
                     .as_ref()
                     .and_then(|r| r.backend.store().ok())

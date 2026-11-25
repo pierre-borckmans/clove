@@ -165,6 +165,12 @@ pub(crate) fn parse_porcelain(s: &str) -> Vec<Entry> {
     out
 }
 
+/// The admin dir a linked worktree's `.git` file points at.
+fn admin_dir(worktree: &Path) -> Option<PathBuf> {
+    let s = std::fs::read_to_string(worktree.join(".git")).ok()?;
+    Some(PathBuf::from(s.trim().strip_prefix("gitdir:")?.trim()))
+}
+
 /// Clone options for [`Clove::adopt`].
 #[derive(Debug, Clone, Default)]
 pub struct AdoptOptions {
@@ -244,29 +250,50 @@ impl Clove {
         if status {
             std::thread::scope(|s| {
                 for w in list.iter_mut().filter(|w| !w.missing) {
+                    let common = &self.common_dir;
                     s.spawn(move || {
-                        let st = git::out(&w.path, &["status", "--short", "--untracked-files=normal"]);
+                        // Reused until the worktree's index, HEAD or branch
+                        // moves, or its tree changes (see `memo`).
+                        let mut files = vec![common.join("packed-refs")];
+                        if let Some(admin) = admin_dir(&w.path) {
+                            files.extend([admin.join("HEAD"), admin.join("index")]);
+                        }
+                        if let Some(b) = &w.branch {
+                            files.push(common.join("refs/heads").join(b));
+                        }
+                        let key = format!("wt-status:{}", w.path.display());
+                        let detached = w.branch.is_none();
+                        let (st, detached_commits) = crate::memo::get_tree(&key, &w.path, &files, || {
+                            let st = git::out(&w.path, &["status", "--short", "--untracked-files=normal"])
+                                .map_err(|e| format!("{e:#}"));
+                            let n = if detached {
+                                git::out(
+                                    &w.path,
+                                    &[
+                                        "rev-list",
+                                        "--count",
+                                        "HEAD",
+                                        "--not",
+                                        "--branches",
+                                        "--tags",
+                                        "--remotes",
+                                    ],
+                                )
+                                .ok()
+                                .and_then(|n| n.parse::<u32>().ok())
+                            } else {
+                                None
+                            };
+                            (st, n)
+                        });
                         w.dirty = st.as_ref().ok().map(|s| !s.trim().is_empty());
                         if let Ok(s) = st {
                             let lines: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
                             w.changes_total = lines.len();
                             w.changes = lines.iter().take(MAX_CHANGES).map(|l| l.to_string()).collect();
                         }
-                        if w.branch.is_none() {
-                            w.detached_commits = git::out(
-                                &w.path,
-                                &[
-                                    "rev-list",
-                                    "--count",
-                                    "HEAD",
-                                    "--not",
-                                    "--branches",
-                                    "--tags",
-                                    "--remotes",
-                                ],
-                            )
-                            .ok()
-                            .and_then(|n| n.parse().ok());
+                        if detached {
+                            w.detached_commits = detached_commits;
                         }
                         w.blocker = w.removal_blocker(false, false);
                         w.can_force = w.forceable();

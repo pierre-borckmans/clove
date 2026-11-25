@@ -2,8 +2,14 @@
 //! polling often. It watches a few directories, each non-recursively, and only
 //! the entries in them that clove state is made of: `.git/worktrees` (clones
 //! added or removed by clove or plain git), `FETCH_HEAD`, and clove's state dir
-//! (golden generations, clone records, the PR cache). Clone working trees are
-//! never watched: builds there would flood it. FSEvents on macOS, inotify on Linux.
+//! (golden generations, clone records, the PR cache). FSEvents on macOS,
+//! inotify on Linux.
+//!
+//! On macOS it also watches each worktree's tree recursively (FSEvents is
+//! recursive at no extra cost), so cached `git status` answers (see `memo`)
+//! are reused until something in the tree changes. Build output dirs don't
+//! count. inotify needs one watch per directory, so Linux relies on the memo's
+//! short expiry instead.
 
 use crate::repo::{Clove, state_home};
 use anyhow::Result;
@@ -27,19 +33,61 @@ pub struct Target {
     pub dir: PathBuf,
     /// Entry names that count; `None`: all of them.
     pub only: Option<&'static [&'static str]>,
+    /// Watch everything below, not just the entries (macOS only).
+    pub tree: bool,
 }
+
+/// Path components whose changes never show in `git status` in practice.
+const NOISE: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    ".turbo",
+    ".next",
+    ".nuxt",
+    ".cache",
+    ".parcel-cache",
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".gradle",
+    ".DS_Store",
+];
+
+/// Whether recursive tree watching is used here.
+pub const TREES: bool = cfg!(target_os = "macos");
 
 impl Target {
     fn any(dir: PathBuf) -> Self {
-        Self { dir, only: None }
+        Self {
+            dir,
+            only: None,
+            tree: false,
+        }
     }
     fn only(dir: PathBuf, names: &'static [&'static str]) -> Self {
         Self {
             dir,
             only: Some(names),
+            tree: false,
+        }
+    }
+    /// A worktree: any change below it, outside build output.
+    pub fn tree(dir: PathBuf) -> Self {
+        Self {
+            dir,
+            only: None,
+            tree: true,
         }
     }
     fn counts(&self, path: &Path) -> bool {
+        if self.tree {
+            return path.strip_prefix(&self.dir).is_ok_and(|rel| {
+                !rel.components()
+                    .any(|c| NOISE.iter().any(|n| c.as_os_str() == *n))
+            });
+        }
         if path == self.dir {
             return true;
         }
@@ -83,7 +131,24 @@ impl Clove {
                 t.push(Target::only(e.path(), &["meta.json", crate::ops::PENDING_FILE]));
             }
         }
+        t.extend(self.worktree_trees().into_iter().map(Target::tree));
         t
+    }
+
+    /// Working trees of the repo's linked worktrees, clones included, from
+    /// their admin dirs (no git call). Not the golden one: refreshes build there.
+    fn worktree_trees(&self) -> Vec<PathBuf> {
+        let golden = self.record().ok().flatten().map(|r| r.golden_admin);
+        let Ok(rd) = std::fs::read_dir(self.common_dir.join("worktrees")) else {
+            return vec![];
+        };
+        rd.flatten()
+            .filter(|e| golden.as_deref() != Some(&*e.file_name().to_string_lossy()))
+            .filter_map(|e| {
+                let g = std::fs::read_to_string(e.path().join("gitdir")).ok()?;
+                Some(Path::new(g.trim()).parent()?.to_path_buf())
+            })
+            .collect()
     }
 }
 
@@ -130,7 +195,23 @@ impl Watcher {
                 return false;
             }
             let t = seen.lock().unwrap_or_else(|e| e.into_inner());
-            ev.paths.iter().any(|p| t.iter().any(|t| t.counts(p)))
+            let mut hit = None;
+            for p in &ev.paths {
+                for t in t.iter().filter(|t| t.counts(p)) {
+                    if t.tree {
+                        crate::memo::invalidate_under(p);
+                    }
+                    hit = Some(p);
+                }
+            }
+            if let (Some(p), Some(log)) = (hit, std::env::var_os("CLOVE_WATCH_LOG")) {
+                // Debug aid: which change woke the watcher.
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) {
+                    let _ = writeln!(f, "{} {:?} {}", crate::util::now_unix(), ev.kind, p.display());
+                }
+            }
+            hit.is_some()
         };
         std::thread::Builder::new()
             .name("clove-watch".into())
@@ -171,32 +252,43 @@ impl Watcher {
     pub fn sync(&self, targets: Vec<Target>) {
         let targets: Vec<Target> = targets
             .into_iter()
+            .filter(|t| TREES || !t.tree)
             .map(|t| Target {
                 dir: t.dir.canonicalize().unwrap_or(t.dir),
-                only: t.only,
+                ..t
             })
             .collect();
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let Inner { w, watched } = &mut *inner;
-        let want: HashMap<&Path, (u64, u64)> = targets
+        let want: HashMap<&Path, ((u64, u64), bool)> = targets
             .iter()
             .filter_map(|t| {
                 let m = std::fs::metadata(&t.dir).ok().filter(|m| m.is_dir())?;
-                Some((t.dir.as_path(), (m.dev(), m.ino())))
+                Some((t.dir.as_path(), ((m.dev(), m.ino()), t.tree)))
             })
             .collect();
         watched.retain(|dir, id| {
-            if want.get(dir.as_path()) == Some(id) {
+            if want.get(dir.as_path()).map(|(i, _)| i) == Some(id) {
                 return true;
             }
             let _ = w.unwatch(dir);
             false
         });
-        for (dir, id) in want {
-            if !watched.contains_key(dir) && w.watch(dir, RecursiveMode::NonRecursive).is_ok() {
-                watched.insert(dir.to_path_buf(), id);
+        let mut trees = vec![];
+        for (dir, (id, tree)) in want {
+            let mode = if tree {
+                RecursiveMode::Recursive
+            } else {
+                RecursiveMode::NonRecursive
+            };
+            if watched.contains_key(dir) || w.watch(dir, mode).is_ok() {
+                watched.entry(dir.to_path_buf()).or_insert(id);
+                if tree {
+                    trees.push(dir.to_path_buf());
+                }
             }
         }
+        crate::memo::set_watched(trees);
         *self.targets.lock().unwrap_or_else(|e| e.into_inner()) = targets;
     }
 
@@ -391,14 +483,35 @@ mod tests {
         assert!(after(&|| git(&root, &["worktree", "remove", &wt_s])) >= 1);
         assert!(after(&|| git(&root, &["worktree", "add", "-q", "-b", "y", &wt_s])) >= 1);
         assert!(after(&|| git(&root, &["fetch", "-q", "origin"])) >= 1);
-        // Work inside the worktree and plain status in the main checkout: no reloads.
+        w.sync(c.watch_targets());
+        std::thread::sleep(Duration::from_millis(300));
+        // An edit in a worktree is news on macOS, where its tree is watched.
+        let n = after(&|| std::fs::write(wt.join("f"), "x").unwrap());
+        assert_eq!(n >= 1, TREES, "edit in a worktree: {n}");
+        // Status (which rewrites the index) and staging touch no tree: no reloads.
         let n = after(&|| {
-            std::fs::write(wt.join("f"), "x").unwrap();
             git(&wt, &["add", "f"]);
             git(&wt, &["status", "-s"]);
             git(&root, &["status", "-s"]);
         });
-        assert_eq!(n, 0, "edits and status are not repo changes");
+        assert_eq!(n, 0, "status and staging are not repo changes");
+        // Build output inside a worktree is not either.
+        let n = after(&|| {
+            std::fs::create_dir_all(wt.join("node_modules/x")).unwrap();
+            std::fs::write(wt.join("node_modules/x/a.js"), "x").unwrap();
+        });
+        assert_eq!(n, 0, "build output is not a change");
+    }
+
+    #[test]
+    fn tree_targets_skip_build_output() {
+        let t = Target::tree(PathBuf::from("/w"));
+        assert!(t.counts(Path::new("/w/src/a.ts")));
+        assert!(t.counts(Path::new("/w/README.md")));
+        assert!(!t.counts(Path::new("/w/node_modules/x/a.js")));
+        assert!(!t.counts(Path::new("/w/pkg/target/debug/x")));
+        assert!(!t.counts(Path::new("/w/.turbo/cache")));
+        assert!(!t.counts(Path::new("/elsewhere/a")));
     }
 
     #[test]

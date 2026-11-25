@@ -10,7 +10,13 @@ fn s(v: &[&str]) -> Vec<String> {
 
 /// Steps in run order: environment managers first, then package managers
 /// (which run inside the environment the first ones set up).
+/// Reused while the root listing and the index are unchanged.
 pub fn steps(root: &Path) -> Vec<Step> {
+    let files = [root.to_path_buf(), root.join(".git/index")];
+    crate::memo::get(&format!("detect:{}", root.display()), &files, || find_steps(root))
+}
+
+fn find_steps(root: &Path) -> Vec<Step> {
     let has = |f: &str| root.join(f).exists();
     let mut out = vec![];
 

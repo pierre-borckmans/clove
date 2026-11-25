@@ -24,6 +24,9 @@ impl Drop for GoldenGit {
 
 pub fn cmd(dir: &Path) -> Command {
     let mut c = Command::new("git");
+    // Preloading stats the index from up to 20 threads; on APFS they contend
+    // in the kernel and a status costs ~10x the CPU for the same wall time.
+    c.args(["-c", "core.preloadIndex=false"]);
     if GOLDEN.load(std::sync::atomic::Ordering::SeqCst) > 0 {
         c.args(["-c", "core.fsmonitor=false"]);
     }
@@ -77,6 +80,18 @@ pub fn has_remote(dir: &Path, remote: &str) -> bool {
 
 /// `origin/main` style default base: the remote's HEAD, else the main worktree's branch.
 pub fn default_base(dir: &Path) -> String {
+    let g = dir.join(".git");
+    let files = [
+        g.join("refs/remotes/origin/HEAD"),
+        g.join("packed-refs"),
+        g.join("HEAD"),
+    ];
+    crate::memo::get(&format!("default-base:{}", dir.display()), &files, || {
+        find_default_base(dir)
+    })
+}
+
+fn find_default_base(dir: &Path) -> String {
     if let Ok(r) = out(
         dir,
         &["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],

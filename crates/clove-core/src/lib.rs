@@ -15,6 +15,7 @@ pub mod detect;
 pub mod doctor;
 pub mod events;
 pub mod git;
+pub mod memo;
 pub mod names;
 pub mod ops;
 pub mod preview;
