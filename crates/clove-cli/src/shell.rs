@@ -64,6 +64,7 @@ __clove_env() {{
 }}
 {hook}
 __clove_env
+export CLOVE_SHELL={version}
 clove() {{
   local __clove_cd
   __clove_cd="$(mktemp "${{TMPDIR:-/tmp}}/clove-cd.XXXXXX")" || return
@@ -75,7 +76,8 @@ clove() {{
   return $__clove_rc
 }}
 {completion}
-"##
+"##,
+                version = VERSION
             )
         }
         Shell::Fish => format!(
@@ -123,6 +125,7 @@ function __clove_env --on-variable PWD
     end
 end
 __clove_env
+set -gx CLOVE_SHELL {version}
 function clove
     set -l __clove_cd (mktemp (set -q TMPDIR; and echo $TMPDIR; or echo /tmp)/clove-cd.XXXXXX); or return
     CLOVE_CD_FILE=$__clove_cd command clove $argv
@@ -138,7 +141,8 @@ function clove
 end
 COMPLETE=fish command clove | source
 "##,
-            token = clove_core::repo::env_token().unwrap_or_default()
+            token = clove_core::repo::env_token().unwrap_or_default(),
+            version = VERSION
         ),
     }
 }
@@ -195,6 +199,19 @@ pub fn install(shell: Shell) -> anyhow::Result<(std::path::PathBuf, bool)> {
 /// Whether this process runs inside the shell function (so it can cd).
 pub fn active() -> bool {
     std::env::var_os("CLOVE_CD_FILE").is_some()
+}
+
+/// Bumped when the integration gains behaviour, so a shell started before an
+/// upgrade can be told to reload. 2: loads each clone's environment.
+pub const VERSION: u32 = 2;
+
+/// The integration is loaded but older than this clove.
+pub fn outdated() -> bool {
+    active()
+        && std::env::var("CLOVE_SHELL")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            != Some(VERSION)
 }
 
 /// One line telling the user how to turn the integration on.

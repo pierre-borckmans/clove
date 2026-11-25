@@ -465,6 +465,8 @@ fn run(cli: Cli) -> Result<()> {
             if !shell::request_cd(&path) {
                 println!("{}", path.display());
                 hint_shell_init();
+            } else if shell::outdated() {
+                hint_shell_reload();
             }
         }
         Cmd::Path { clone } => {
@@ -893,8 +895,14 @@ fn cmd_new(cli: &Cli, a: &NewArgs, r: &dyn clove_core::Reporter) -> Result<()> {
         return exec_in(&c, &info.name, &info.path, cmd);
     }
     maybe_background_refresh(&c, cli.json);
-    if !a.no_cd && !cli.json && !shell::request_cd(&info.path) && std::io::stdout().is_terminal() {
-        hint_shell_init();
+    if !a.no_cd && !cli.json {
+        if !shell::request_cd(&info.path) {
+            if std::io::stdout().is_terminal() {
+                hint_shell_init();
+            }
+        } else if shell::outdated() {
+            hint_shell_reload();
+        }
     }
     Ok(())
 }
@@ -935,6 +943,19 @@ fn maybe_background_refresh(c: &Clove, quiet: bool) {
             paint(DIM, tilde(&log))
         );
     }
+}
+
+/// This shell loaded clove's integration before an upgrade: cd works, but
+/// newer parts (each clone's environment) need a fresh shell.
+fn hint_shell_reload() {
+    eprintln!(
+        "  {} {}",
+        paint(YELLOW, "!"),
+        paint(
+            YELLOW,
+            "this shell has clove's integration from an older version, so the clone's environment won't load: open a new terminal (or run `exec $SHELL`)"
+        )
+    );
 }
 
 fn hint_shell_init() {
