@@ -1,0 +1,28 @@
+---
+source: crates/clove-tui/src/tests.rs
+expression: s
+---
+╭ clove ───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ app  /work/app                                                                                  5 clones · 4 mounted │
+│ golden  ● gen 3 · a1b2c3d4e5 · 2h old · ↓4 behind origin/main · 1.3G                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ repos ─────────────╮╭ clones 5 ──────────────────────────────────────────────────────────────────────────────────────╮
+│ ▌ app          5 ● ││   NA╭ ✓ new clone  app · 0ms ──────────────────────────────────────╮GE    SIZE  PATH           │
+│   mono         2 ● ││ ● fe│                                                              │5m     14M  …eat-login/app │
+│   web       set up ││ ● fi│  ✓ clone image                                          0ms  │3h    230M  …/fix-race/app │
+│                    ││ ○ sp│  ✓ mount                                              646ms  │3h     14M  …ike-cache/app │
+│                    ││ ● pi│  – fetch                  fetched 3m ago (--fetch to force)  │4d     14M  …ding-flow/app │
+│                    ││ ● de│  – setup pnpm                        unchanged since golden  │3h     14M  …/detached/app │
+│                    ││     │                                                              │                           │
+│                    ││     │  pierre-test ready in 0ms                                    │                           │
+│                    ││     │  ⏎ cd into it                                                │                           │
+│                    ││     │                                                              │                           │
+│                    ││     │                                                              │                           │
+│                    ││     │                                                              │                           │
+│ ────────────────── ││     │                                                              │                           │
+│ s settings         ││     ╰──────────────────────────────────────────────────────────────╯                           │
+│ g cleanup          ││                                                                                                │
+│ D doctor           ││                                                                                                │
+│ S service          ││                                                                                                │
+╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ⏎ cd into it  ↑↓ scroll  end follow  esc hide

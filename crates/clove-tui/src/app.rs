@@ -577,13 +577,6 @@ impl App {
             }
         };
         if let Some(job) = self.job_mut(id) {
-            if summary.is_ok() && job.has_progress() {
-                job.push_log(LogLine {
-                    step: None,
-                    text: format!("finished in {elapsed}"),
-                    kind: LogKind::Info,
-                });
-            }
             job.result = Some(summary);
         }
         // The open progress view already shows how it went.

@@ -1976,9 +1976,16 @@ fn step_line<'a>(s: &StepRow, now_ms: u64, w: usize) -> Line<'a> {
         StepState::Skipped { reason } => ("–".into(), muted(), muted(), reason.clone()),
         StepState::Failed => ("✗".into(), fg(RED), fg(RED), "failed".into()),
     };
-    let nw = w.saturating_sub(width(&right) + 3).max(4);
-    let name = trunc(&s.name, nw);
-    let fill = w.saturating_sub(2 + width(&name) + width(&right));
+    // A skipped step keeps its name; its reason gives way instead.
+    let (name, right) = if matches!(s.state, StepState::Skipped { .. }) {
+        let name = trunc(&s.name, w.saturating_sub(6).max(4));
+        let room = w.saturating_sub(2 + width(&name) + 2);
+        (name, trunc(&right, room))
+    } else {
+        let nw = w.saturating_sub(width(&right) + 3).max(4);
+        (trunc(&s.name, nw), right)
+    };
+    let fill = w.saturating_sub(2 + width(&name) + width(&right)).max(1);
     Line::from(vec![
         Span::styled(format!("{icon} "), istyle),
         Span::styled(name, nstyle),
@@ -1991,10 +1998,17 @@ fn draw_job(f: &mut Frame, app: &mut App, area: Rect, id: u64) {
     let Some(job) = app.job(id).cloned() else {
         return;
     };
-    let w = area.width.saturating_sub(8).min(130);
+    // The output panel appears once a step prints something; a quick clone
+    // with silent steps is just its step list.
+    let has_log = !job.log.is_empty();
+    let w = if has_log {
+        area.width.saturating_sub(8).min(130)
+    } else {
+        area.width.saturating_sub(8).min(64)
+    };
     // Grow with the content (a quick clone stays small, a refresh's log fills it).
     let steps_h = job.steps.len() + 4;
-    let log_h = job.log.len() + 2;
+    let log_h = if has_log { job.log.len() + 2 } else { 0 };
     let want = if area.width.saturating_sub(8) >= 94 {
         steps_h.max(log_h)
     } else {
@@ -2023,7 +2037,9 @@ fn draw_job(f: &mut Frame, app: &mut App, area: Rect, id: u64) {
     f.render_widget(block, rect);
 
     let wide = inner.width >= 90;
-    let (steps_area, log_area) = if wide {
+    let (steps_area, log_area) = if !has_log {
+        (inner, Rect::default())
+    } else if wide {
         let [s, l] = Layout::horizontal([Constraint::Length(38), Constraint::Fill(1)])
             .spacing(2)
             .areas(inner);
@@ -2079,6 +2095,9 @@ fn draw_job(f: &mut Frame, app: &mut App, area: Rect, id: u64) {
         ));
     }
 
+    if !has_log {
+        return;
+    }
     // Output log.
     let block = panel(
         vec![

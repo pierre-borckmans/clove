@@ -203,33 +203,15 @@ pub fn repo(c: &Clove) -> Vec<Check> {
         }
     }
     if c.uses_pnpm() {
-        match c.pnpm_store() {
-            Some(store) => {
-                let global = run(Command::new("pnpm").args(["config", "get", "store-dir", "--global"]))
-                    .unwrap_or_default();
-                // pnpm 11+ reads pnpm_config_store_dir; older pnpm, npm_config_store_dir.
-                let env_pin = ["pnpm_config_store_dir", "npm_config_store_dir"]
-                    .into_iter()
-                    .find(|k| std::env::var(k).is_ok_and(|v| v.trim() == store));
-                if global.trim() == store {
-                    out.push(check("pnpm store", Level::Ok, format!("pinned to {store}"), None));
-                } else if let Some(k) = env_pin {
-                    out.push(check(
-                        "pnpm store",
-                        Level::Ok,
-                        format!("pinned to {store} by ${k}"),
-                        None,
-                    ));
-                } else {
-                    out.push(check(
-                        "pnpm store",
-                        Level::Warn,
-                        "clove steps pin the store, but a plain `pnpm add` in a clone would start an empty store on the clone's volume",
-                        Some(format!("pnpm config set store-dir {store} --global")),
-                    ));
-                }
-            }
-            None => out.push(check(
+        match (c.pnpm_store(), c.pnpm_store_unpinned()) {
+            (Some(_), Some(store)) => out.push(check(
+                "pnpm store",
+                Level::Warn,
+                "a plain `pnpm i` in a clone would start an empty store on the clone's volume and rebuild node_modules",
+                Some(format!("pnpm config set store-dir {store} --global")),
+            )),
+            (Some(store), None) => out.push(check("pnpm store", Level::Ok, format!("pinned to {store}"), None)),
+            (None, _) => out.push(check(
                 "pnpm store",
                 Level::Warn,
                 "could not run `pnpm store path`",

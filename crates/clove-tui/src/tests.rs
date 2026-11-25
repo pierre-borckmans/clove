@@ -488,6 +488,45 @@ fn refresh_finished() {
 }
 
 #[test]
+fn quick_clone_without_output() {
+    // A clone whose steps print nothing: just the step list, no empty
+    // output panel; a skipped step keeps its full name.
+    let mut app = app();
+    app.modal = None;
+    let id = match app.spawn(Task::New(Default::default()), After::Nothing).first() {
+        Some(Effect::Spawn { id, .. }) => *id,
+        fx => panic!("{fx:?}"),
+    };
+    let ev = |e| Msg::Event(id, e);
+    for (s, ms) in [("clone image", 0), ("mount", 646)] {
+        app.on_msg(ev(Event::Start { step: s.into() }));
+        app.on_msg(ev(Event::Done {
+            step: s.into(),
+            took: Duration::from_millis(ms),
+        }));
+    }
+    app.on_msg(ev(Event::Skip {
+        step: "fetch".into(),
+        reason: "fetched 3m ago (--fetch to force)".into(),
+    }));
+    app.on_msg(ev(Event::Skip {
+        step: "setup pnpm".into(),
+        reason: "unchanged since golden".into(),
+    }));
+    app.on_msg(Msg::Done(
+        id,
+        Ok(Outcome::Clone(clone("pierre-test", Some("pierre/test"), true))),
+    ));
+    let (s, _) = render(&mut app, 120, 24);
+    insta::assert_snapshot!(s);
+    assert!(!s.contains("output"), "no empty output panel:\n{s}");
+    assert!(
+        s.contains("– fetch ") && s.contains("fetched 3m ago (--fetch to force)"),
+        "skipped step keeps its name:\n{s}"
+    );
+}
+
+#[test]
 fn help_overlay() {
     let mut app = app();
     key(&mut app, KeyCode::Char('?'));

@@ -879,6 +879,34 @@ impl Clove {
         Some(store)
     }
 
+    /// The store clove's steps give pnpm, when a plain `pnpm` run by you in a
+    /// clone would not use it. Each clone is its own volume, so pnpm's default
+    /// there is a new, empty store on that volume, and the first `pnpm i`
+    /// rebuilds node_modules from scratch.
+    pub fn pnpm_store_unpinned(&self) -> Option<String> {
+        if !self.uses_pnpm() {
+            return None;
+        }
+        let store = self.pnpm_store()?;
+        let pinned_by_env = ["pnpm_config_store_dir", "npm_config_store_dir"]
+            .iter()
+            .any(|k| std::env::var(k).is_ok_and(|v| v.trim() == store));
+        let argv = crate::detect::wrap(self.config.exec, "pnpm config get store-dir --global");
+        let global = run(Command::new(&argv[0]).args(&argv[1..]).current_dir(&self.root)).unwrap_or_default();
+        let pinned = global.lines().last().is_some_and(|g| g.trim() == store);
+        (!pinned && !pinned_by_env).then_some(store)
+    }
+
+    /// Sets pnpm's global store-dir to `store`: the store the main checkout
+    /// already uses, so nothing changes outside clones.
+    pub fn pin_pnpm_store(&self, store: &str) -> Result<()> {
+        let argv = crate::detect::wrap(
+            self.config.exec,
+            &format!("pnpm config set store-dir '{store}' --global"),
+        );
+        run(Command::new(&argv[0]).args(&argv[1..]).current_dir(&self.root)).map(|_| ())
+    }
+
     /// Writes a worktree admin dir from a HEAD/index snapshot and links the
     /// worktree's `.git` file to it. This is what `git worktree add` would do,
     /// minus the checkout we already have.

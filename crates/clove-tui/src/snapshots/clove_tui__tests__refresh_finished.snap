@@ -14,15 +14,15 @@ expression: s
 │   │                                                                                          │   │
 │   │  golden gen 4 at 0badc0ffee in 4.2s                                                      │   │
 │   │                                                                                          │   │
-│   │  ╭ output 41 ─────────────────────────────────────────────────────────────────────────╮  │   │
+│   │  ╭ output 40 ─────────────────────────────────────────────────────────────────────────╮  │   │
+│   │  │ deps │ Progress: resolved 1184 reused 1120, downloaded 0                           │  │   │
 │   │  │ deps │ Progress: resolved 1221 reused 1155, downloaded 0                           │  │   │
 │   │  │ deps │ Progress: resolved 1258 reused 1190, downloaded 0                           │  │   │
 │   │  │ deps │ Progress: resolved 1295 reused 1225, downloaded 0                           │  │   │
 │   │  │ deps │ Progress: resolved 1332 reused 1260, downloaded 0                           │  │   │
 │   │  │ deps │ Progress: resolved 1369 reused 1295, downloaded 0                           │  │   │
-│   │  │ deps │ Progress: resolved 1406 reused 1330, downloaded 0                           │  │   │
-│ ──│  │ deps │ Progress: resolved 1443 reused 1365, downloaded 0                           │  │   │
-│ s │  │      │ finished in 4.2s                                                            ┃  │   │
+│ ──│  │ deps │ Progress: resolved 1406 reused 1330, downloaded 0                           │  │   │
+│ s │  │ deps │ Progress: resolved 1443 reused 1365, downloaded 0                           ┃  │   │
 │ g │  ╰────────────────────────────────────────────────────────────────────────────────────╯  │   │
 │ D │                                                                                          │   │
 │ S ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │

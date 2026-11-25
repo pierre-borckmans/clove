@@ -308,7 +308,7 @@ fn run(cli: Cli) -> Result<()> {
                 paint(BOLD, secs(total_ms(&meta.timings))),
                 paint(BOLD, "clove new <branch>")
             );
-            after_init()?;
+            after_init(&c)?;
         }
         Cmd::Refresh {
             all_repos,
@@ -704,8 +704,32 @@ fn run(cli: Cli) -> Result<()> {
 /// First-run setup the golden image alone doesn't cover: shell integration and
 /// the background service. Asks only in an interactive terminal, so scripts and
 /// agents get a hint instead of a prompt.
-fn after_init() -> Result<()> {
+fn after_init(c: &Clove) -> Result<()> {
     let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    if let Some(store) = c.pnpm_store_unpinned() {
+        let cmd = format!("pnpm config set store-dir {store} --global");
+        let yes = interactive
+            && ask(
+                "Let pnpm in clones use the store you already have?",
+                &[
+                    "Each clone is its own volume, so a plain `pnpm i` there would start a new, empty store and rebuild node_modules.".to_string(),
+                    format!("Sets pnpm's global store-dir to the store your checkout already uses: {store}"),
+                ],
+                true,
+            )?;
+        if yes {
+            match c.pin_pnpm_store(&store) {
+                Ok(()) => eprintln!("{} pnpm store pinned to {store}", paint(GREEN, "✓")),
+                Err(e) => eprintln!("{} {e:#}; run: {}", paint(YELLOW, "!"), paint(BOLD, &cmd)),
+            }
+        } else {
+            eprintln!(
+                "{} so a plain `pnpm i` in a clone reuses your store: {}",
+                paint(DIM, "·"),
+                paint(BOLD, &cmd)
+            );
+        }
+    }
     if !shell::active() {
         match shell::detect() {
             Some(sh) if interactive => {
