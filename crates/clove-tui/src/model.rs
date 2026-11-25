@@ -626,6 +626,29 @@ pub enum Hit {
     Inert,
     /// Outside an open modal: a click closes it, hover shows nothing.
     Dismiss,
+    /// A split's divider; drags resize this pane.
+    Divider(crate::panes::SplitId, usize),
+}
+
+/// The mouse pointer shape (OSC 22).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Pointer {
+    #[default]
+    Default,
+    Hand,
+    ColResize,
+    RowResize,
+}
+
+impl Pointer {
+    pub fn name(self) -> &'static str {
+        match self {
+            Pointer::Default => "default",
+            Pointer::Hand => "pointer",
+            Pointer::ColResize => "col-resize",
+            Pointer::RowResize => "row-resize",
+        }
+    }
 }
 
 impl Hit {

@@ -3,6 +3,7 @@
 
 use crate::fmt;
 use crate::model::*;
+use crate::panes::{self, Panes, SplitId};
 use clove_core::repo::sanitize_name;
 use clove_core::settings::{self, FIELDS, FieldState, Kind, Layer};
 use clove_core::{CloneInfo, Event, NewOptions, OtherWorktree, RemoveOptions};
@@ -33,6 +34,8 @@ pub enum Effect {
     EditConfig(PathBuf),
     /// Write or remove one setting in one config file, then toast the result.
     SetConfig(ConfigWrite),
+    /// Persist panel sizes.
+    SaveLayout,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,14 +100,18 @@ pub struct App {
     pub prs_checked: HashMap<PathBuf, u64>,
     /// Where the mouse is, for hover feedback.
     pub hover: Option<Position>,
-    /// The mouse is over something clickable (the pointer shows a hand).
-    pub pointer: bool,
     /// Tooltip regions, filled during draw like `hits`.
     pub tips: Vec<(Rect, crate::tooltip::Tip)>,
     /// When the mouse came to rest where it is (tooltips wait for it).
     pub hover_ms: u64,
     /// A key or click hid the tooltip until the mouse moves again.
     pub tip_hidden: bool,
+    /// The pointer shape for what is under the mouse.
+    pub pointer: Pointer,
+    /// Resizable splits and their sizes.
+    pub panes: Panes,
+    /// The split whose divider the mouse is dragging.
+    pub dragging: Option<SplitId>,
     /// Where `clove` was started: the shell's directory.
     pub start_dir: PathBuf,
     /// The shell integration is there to cd on exit.
@@ -149,10 +156,12 @@ impl App {
             last_click: None,
             log_height: 10,
             hover: None,
-            pointer: false,
             tips: vec![],
             hover_ms: 0,
             tip_hidden: false,
+            pointer: Pointer::Default,
+            panes: Panes::default(),
+            dragging: None,
             prs_checked: HashMap::new(),
             start_dir: PathBuf::new(),
             integrated: false,
@@ -1003,6 +1012,7 @@ impl App {
                     self.toast(ToastKind::Info, "settings show once the repo has loaded");
                 }
             }
+            KeyCode::Char('<' | '>' | '{' | '}' | '=') => return self.resize_key(k.code),
             KeyCode::Char('l') => {
                 if let Some(j) = self.jobs.iter().rev().find(|j| j.has_progress()) {
                     self.modal = Some(Modal::Job(j.id));
@@ -1013,6 +1023,36 @@ impl App {
             _ => {}
         }
         vec![]
+    }
+
+    /// `<` `>` move the detail panel's border, `{` `}` the sidebar's, `=`
+    /// resets every panel. Applies to the layout last drawn.
+    fn resize_key(&mut self, code: KeyCode) -> Vec<Effect> {
+        let (id, pane, delta) = match code {
+            KeyCode::Char('=') => {
+                self.panes.reset_all();
+                return vec![Effect::SaveLayout];
+            }
+            KeyCode::Char('{') => (SplitId::Body, panes::SIDEBAR, -2),
+            KeyCode::Char('}') => (SplitId::Body, panes::SIDEBAR, 2),
+            KeyCode::Char(c) => {
+                let d = if c == '<' { -1 } else { 1 };
+                if self.panes.body.shown(panes::DETAIL) {
+                    (SplitId::Body, panes::DETAIL, 2 * d)
+                } else {
+                    (SplitId::Stack, panes::STACK_DETAIL, d)
+                }
+            }
+            _ => return vec![],
+        };
+        if id == SplitId::Body && !self.panes.body.shown(pane) {
+            return vec![];
+        }
+        if self.panes.get_mut(id).move_divider(pane, delta) {
+            vec![Effect::SaveLayout]
+        } else {
+            vec![]
+        }
     }
 
     fn open_new(&mut self) -> Vec<Effect> {
@@ -1744,6 +1784,18 @@ impl App {
                 job.scroll.set(0);
             }
             KeyCode::End | KeyCode::Char('G') => job.follow = true,
+            KeyCode::Char(c @ ('<' | '>' | '=')) => {
+                let s = &mut self.panes.job;
+                let changed = match c {
+                    '=' => {
+                        s.reset(panes::JOB_STEPS);
+                        true
+                    }
+                    _ => s.move_divider(panes::JOB_STEPS, if c == '<' { -2 } else { 2 }),
+                };
+                let fx = if changed { vec![Effect::SaveLayout] } else { vec![] };
+                return (Some(Modal::Job(id)), fx);
+            }
             _ => {}
         }
         (Some(Modal::Job(id)), vec![])
@@ -1867,8 +1919,29 @@ impl App {
                     }
                     vec![]
                 }
+                Some(Hit::Divider(id, pane)) => {
+                    match self.panes.get_mut(id).press(pane, pos, self.now_ms) {
+                        crate::split::Press::Reset => return vec![Effect::SaveLayout],
+                        crate::split::Press::Drag => self.dragging = Some(id),
+                    }
+                    vec![]
+                }
                 _ => vec![],
             },
+            MouseEventKind::Drag(MouseButton::Left) if self.dragging.is_some() => {
+                self.hover = Some(pos);
+                if let Some(id) = self.dragging {
+                    self.panes.get_mut(id).drag_to(pos);
+                }
+                vec![]
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.dragging.is_some() => {
+                self.hover = Some(pos);
+                match self.dragging.take() {
+                    Some(id) if self.panes.get_mut(id).release() => vec![Effect::SaveLayout],
+                    _ => vec![],
+                }
+            }
             MouseEventKind::Moved | MouseEventKind::Drag(_) => {
                 // Moving within what a showing or pending tooltip is about keeps it.
                 let same_tip = !self.tip_hidden

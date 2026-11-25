@@ -3,6 +3,7 @@
 
 use crate::app::{App, Effect, Exit};
 use crate::model::*;
+use crate::panes::{self, Panes, SplitId};
 use crate::theme;
 use crate::ui;
 use clove_core::config::RefreshPolicy;
@@ -813,7 +814,7 @@ fn hover_highlights_what_a_click_would_do() {
     let (_, buf) = render(&mut hov, 120, 24);
     assert!(buf[(x, y)].modifier.contains(Modifier::BOLD));
     assert_eq!(buf[(x + 2, y)].fg, crate::theme::SAGE);
-    assert!(hov.pointer, "hand pointer over a hint");
+    assert_eq!(hov.pointer, Pointer::Hand, "hand pointer over a hint");
     // A clone row.
     let (x, y) = find(&s, "fix-race");
     moved(&mut hov, x, y);
@@ -823,13 +824,13 @@ fn hover_highlights_what_a_click_would_do() {
     moved(&mut hov, 60, 20);
     let (_, buf) = render(&mut hov, 120, 24);
     assert!(!buf[(60, 20)].modifier.contains(Modifier::BOLD));
-    assert!(!hov.pointer);
+    assert_eq!(hov.pointer, Pointer::Default);
     // Behind an open modal: a click closes it, but hover highlights nothing.
     key(&mut hov, KeyCode::Char('s'));
     moved(&mut hov, 2, 2);
     let (_, buf) = render(&mut hov, 120, 24);
     assert_ne!(buf[(2, 2)].fg, crate::theme::SAGE);
-    assert!(!hov.pointer, "no hand over the backdrop");
+    assert_eq!(hov.pointer, Pointer::Default, "no hand over the backdrop");
     click(&mut hov, 2, 2);
     assert!(hov.modal.is_none(), "a click outside still closes it");
 }
@@ -1701,4 +1702,208 @@ fn cleanup_lists_merged_worktrees() {
     assert!(s.contains("✓ app-docs"), "{s}");
     assert!(s.contains("! app-agent"), "{s}");
     assert!(s.contains("1 other worktree kept"), "{s}");
+}
+
+// ---- resizable panels ----------------------------------------------------
+
+fn mouse(app: &mut App, kind: MouseEventKind, x: u16, y: u16) -> Vec<Effect> {
+    app.on_input(TermEvent::Mouse(MouseEvent {
+        kind,
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    }))
+}
+
+fn drag(app: &mut App, from: (u16, u16), to: (u16, u16)) -> Vec<Effect> {
+    mouse(app, MouseEventKind::Down(MouseButton::Left), from.0, from.1);
+    mouse(app, MouseEventKind::Drag(MouseButton::Left), to.0, to.1);
+    mouse(app, MouseEventKind::Up(MouseButton::Left), to.0, to.1)
+}
+
+/// x of the first divider of `id` owned by `pane` in the last frame.
+fn divider_x(app: &App, id: SplitId, pane: usize) -> (u16, u16) {
+    let r = app.panes.get(id).divider(pane).expect("divider drawn");
+    (r.x, r.y + 2)
+}
+
+#[test]
+fn drag_resizes_panels_and_clamps() {
+    let mut app = app();
+    render(&mut app, 160, 30);
+    assert_eq!(app.panes.body.laid_size(panes::SIDEBAR), 22);
+    assert_eq!(app.panes.body.laid_size(panes::DETAIL), 48);
+
+    let (x, y) = divider_x(&app, SplitId::Body, panes::SIDEBAR);
+    let fx = drag(&mut app, (x, y), (x + 8, y));
+    assert_eq!(fx, vec![Effect::SaveLayout]);
+    render(&mut app, 160, 30);
+    assert_eq!(app.panes.body.laid_size(panes::SIDEBAR), 30);
+    assert!(app.dragging.is_none());
+
+    // Way past either end: held at the minimum and at 40% of the width.
+    let (x, y) = divider_x(&app, SplitId::Body, panes::SIDEBAR);
+    drag(&mut app, (x, y), (0, y));
+    render(&mut app, 160, 30);
+    assert_eq!(app.panes.body.laid_size(panes::SIDEBAR), 16);
+    let (x, y) = divider_x(&app, SplitId::Body, panes::SIDEBAR);
+    app.now_ms += 1000;
+    drag(&mut app, (x, y), (159, y));
+    render(&mut app, 160, 30);
+    assert_eq!(app.panes.body.laid_size(panes::SIDEBAR), 64);
+
+    // The detail grows leftwards until the list hits its minimum.
+    let (x, y) = divider_x(&app, SplitId::Body, panes::DETAIL);
+    drag(&mut app, (x, y), (0, y));
+    let (s, _) = render(&mut app, 160, 30);
+    let body = &app.panes.body;
+    assert_eq!(body.laid_size(panes::DETAIL), 160 - 64 - 30);
+    assert!(s.contains("clones"), "{s}");
+}
+
+#[test]
+fn double_click_on_a_divider_resets_it() {
+    let mut app = app();
+    render(&mut app, 160, 30);
+    let (x, y) = divider_x(&app, SplitId::Body, panes::DETAIL);
+    drag(&mut app, (x, y), (x - 10, y));
+    render(&mut app, 160, 30);
+    assert_eq!(app.panes.body.laid_size(panes::DETAIL), 58);
+    let (x, y) = divider_x(&app, SplitId::Body, panes::DETAIL);
+    app.now_ms += 1000;
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x, y);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), x, y);
+    app.now_ms += 100;
+    let fx = mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x, y);
+    assert_eq!(fx, vec![Effect::SaveLayout]);
+    render(&mut app, 160, 30);
+    assert_eq!(app.panes.body.laid_size(panes::DETAIL), 48);
+    assert_eq!(app.panes.body.sizes()[panes::DETAIL], None);
+}
+
+#[test]
+fn keys_resize_panels() {
+    let mut app = app();
+    render(&mut app, 160, 30);
+    assert_eq!(key(&mut app, KeyCode::Char('<')), vec![Effect::SaveLayout]);
+    key(&mut app, KeyCode::Char('<'));
+    key(&mut app, KeyCode::Char('}'));
+    render(&mut app, 160, 30);
+    assert_eq!(app.panes.body.laid_size(panes::DETAIL), 52);
+    assert_eq!(app.panes.body.laid_size(panes::SIDEBAR), 24);
+    for _ in 0..100 {
+        key(&mut app, KeyCode::Char('{'));
+    }
+    render(&mut app, 160, 30);
+    assert_eq!(
+        app.panes.body.laid_size(panes::SIDEBAR),
+        16,
+        "clamped at the minimum"
+    );
+    assert_eq!(
+        key(&mut app, KeyCode::Char('{')),
+        vec![],
+        "nothing to save at a bound"
+    );
+    key(&mut app, KeyCode::Char('='));
+    render(&mut app, 160, 30);
+    assert_eq!(app.panes.body.laid_size(panes::SIDEBAR), 22);
+    assert_eq!(app.panes.body.laid_size(panes::DETAIL), 48);
+
+    // Stacked: < and > move the border between the list and the detail.
+    render(&mut app, 96, 32);
+    key(&mut app, KeyCode::Char('<'));
+    render(&mut app, 96, 32);
+    assert_eq!(app.panes.stack.laid_size(panes::STACK_DETAIL), 13);
+
+    // The progress modal's steps column.
+    let id = refresh_job(&mut app);
+    app.modal = Some(Modal::Job(id));
+    render(&mut app, 160, 40);
+    let before = app.panes.job.laid_size(panes::JOB_STEPS);
+    key(&mut app, KeyCode::Char('>'));
+    render(&mut app, 160, 40);
+    assert_eq!(app.panes.job.laid_size(panes::JOB_STEPS), before + 2);
+    assert!(matches!(app.modal, Some(Modal::Job(j)) if j == id));
+}
+
+#[test]
+fn terminal_resize_keeps_panes_in_bounds() {
+    let mut app = app();
+    app.panes.body.set_sizes(&[Some(60), None, Some(90)]);
+    for w in [60, 99, 100, 131, 132, 140, 200, 300] {
+        for h in [14, 24, 26, 40] {
+            let (s, _) = render(&mut app, w, h);
+            let area = ratatui::layout::Rect::new(0, 0, w, h);
+            for (_, r) in app.panes.body.dividers() {
+                assert!(area.contains(r.as_position()), "{w}x{h} {r:?}");
+                assert!(r.right() <= w, "{w}x{h} {r:?}");
+            }
+            let list = app.panes.body.laid_size(1);
+            assert!(list >= 30 || w < 100, "{w}x{h}: list {list}\n{s}");
+        }
+    }
+    // Growing back restores the chosen sizes.
+    render(&mut app, 300, 40);
+    assert_eq!(app.panes.body.laid_size(panes::SIDEBAR), 60);
+    assert_eq!(app.panes.body.laid_size(panes::DETAIL), 90);
+}
+
+#[test]
+fn hovering_or_dragging_a_divider_shows_resize_feedback() {
+    let mut app = app();
+    render(&mut app, 160, 30);
+    let (x, y) = divider_x(&app, SplitId::Body, panes::DETAIL);
+    mouse(&mut app, MouseEventKind::Moved, x, y);
+    let (_, buf) = render(&mut app, 160, 30);
+    assert_eq!(app.pointer, Pointer::ColResize);
+    assert_eq!(buf[(x, y)].fg, theme::BOTTLE);
+    assert_eq!(buf[(x + 1, y)].fg, theme::BOTTLE);
+
+    // Dragging keeps the feedback even when the mouse outruns the border.
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x, y);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), x - 4, y);
+    let (_, buf) = render(&mut app, 160, 30);
+    let r = app.panes.body.divider(panes::DETAIL).unwrap();
+    assert_eq!(r.x, x - 4);
+    assert_eq!(buf[(r.x, y)].fg, theme::BOTTLE);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), x - 4, 0);
+    render(&mut app, 160, 30);
+    assert_eq!(app.pointer, Pointer::ColResize);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), x - 4, 0);
+    render(&mut app, 160, 30);
+    assert_ne!(app.pointer, Pointer::ColResize);
+
+    // The stacked layout's border is a row.
+    render(&mut app, 96, 32);
+    let r = app.panes.stack.divider(panes::STACK_DETAIL).unwrap();
+    mouse(&mut app, MouseEventKind::Moved, r.x + 5, r.y);
+    render(&mut app, 96, 32);
+    assert_eq!(app.pointer, Pointer::RowResize);
+}
+
+#[test]
+fn panel_sizes_persist() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("nested/tui.json");
+    // Missing file: defaults.
+    let p = Panes::load(&path);
+    assert_eq!(p.body.sizes(), [None, None, None]);
+
+    let mut p = Panes::default();
+    p.body.set_sizes(&[Some(30), None, Some(60)]);
+    p.stack.set_sizes(&[None, Some(15)]);
+    p.save(&path).unwrap();
+    let back = Panes::load(&path);
+    assert_eq!(back.body.sizes(), [Some(30), None, Some(60)]);
+    assert_eq!(back.stack.sizes(), [None, Some(15)]);
+    assert_eq!(back.job.sizes(), [None, None]);
+
+    // Corrupt file, or a bad entry: defaults where it doesn't fit.
+    std::fs::write(&path, "{not json").unwrap();
+    assert_eq!(Panes::load(&path).body.sizes(), [None, None, None]);
+    std::fs::write(&path, r#"{"splits":{"body":[1,2],"stack":[null,9],"x":[]}}"#).unwrap();
+    let p = Panes::load(&path);
+    assert_eq!(p.body.sizes(), [None, None, None]);
+    assert_eq!(p.stack.sizes(), [None, Some(9)]);
 }

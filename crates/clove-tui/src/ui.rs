@@ -39,15 +39,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // narrow ones keep the repo tabs in the header.
     let sidebar = area.width >= SIDEBAR_MIN_WIDTH;
     draw_header(f, app, header, !sidebar);
-    let body = if sidebar {
-        let [side, main] =
-            Layout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Fill(1)]).areas(body);
-        draw_sidebar(f, app, side);
-        main
-    } else {
-        body
-    };
-    let list = draw_body(f, app, body);
+    let (body, list) = draw_body(f, app, body, sidebar);
     draw_footer(f, app, footer);
     draw_modal(f, app, area, list);
     draw_toasts(f, app, body);
@@ -86,7 +78,7 @@ fn tip(app: &mut App, r: Rect, t: Option<Tip>) {
 
 /// Highlights whatever a click would act on under the mouse (bold, green text),
 /// so it's clear the UI takes the mouse. The runtime also turns the pointer
-/// into a hand.
+/// into a hand, or a resize arrow over a divider (hovered or dragged).
 fn draw_hover(f: &mut Frame, app: &mut App) {
     let hit = app.hover.and_then(|p| {
         app.hits
@@ -94,10 +86,30 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
             .rev()
             .find(|(r, _)| r.contains(p))
             .filter(|(_, h)| h.clickable())
-            .map(|(r, _)| *r)
+            .map(|(r, h)| (*r, *h))
     });
-    app.pointer = hit.is_some();
-    let Some(r) = hit else { return };
+    let divider = match (app.dragging, hit) {
+        (Some(id), _) => {
+            let s = app.panes.get(id);
+            s.dragging().and_then(|p| s.divider(p)).map(|r| (r, id))
+        }
+        (None, Some((r, Hit::Divider(id, _)))) => Some((r, id)),
+        _ => None,
+    };
+    if let Some((r, id)) = divider {
+        crate::split::paint_divider(f.buffer_mut(), r, BOTTLE);
+        app.pointer = match app.panes.get(id).dir() {
+            ratatui::layout::Direction::Horizontal => Pointer::ColResize,
+            ratatui::layout::Direction::Vertical => Pointer::RowResize,
+        };
+        return;
+    }
+    app.pointer = if hit.is_some() {
+        Pointer::Hand
+    } else {
+        Pointer::Default
+    };
+    let Some((r, _)) = hit else { return };
     let buf = f.buffer_mut();
     for y in r.top()..r.bottom() {
         for x in r.left()..r.right() {
@@ -435,7 +447,6 @@ fn draw_tabs(f: &mut Frame, app: &mut App, area: Rect) {
 // ---- sidebar -----------------------------------------------------------
 
 pub const SIDEBAR_MIN_WIDTH: u16 = 100;
-const SIDEBAR_WIDTH: u16 = 22;
 
 /// Every repo with its clone count and golden state, then the global tools.
 fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
@@ -583,21 +594,54 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
 
 // ---- body --------------------------------------------------------------
 
-fn draw_body(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
-    let (list, detail) = if area.width >= 110 {
-        let [l, d] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(48)]).areas(area);
-        (l, Some(d))
-    } else if area.height >= 26 {
-        let [l, d] = Layout::vertical([Constraint::Fill(1), Constraint::Length(12)]).areas(area);
-        (l, Some(d))
+/// Sidebar | clone list | detail, through the resizable splits in
+/// `app.panes`. Returns the area right of the sidebar and the list's rect.
+fn draw_body(f: &mut Frame, app: &mut App, area: Rect, sidebar: bool) -> (Rect, Rect) {
+    use crate::panes::{DETAIL, SIDEBAR, SIDEBAR_WIDTH, STACK_DETAIL, SplitId};
+    // Where the detail goes depends on default widths, so resizing a panel
+    // never flips it between the side and the bottom.
+    let main_w = area.width.saturating_sub(if sidebar { SIDEBAR_WIDTH } else { 0 });
+    let right = main_w >= 110;
+    let stacked = !right && area.height >= 26;
+    let body = &mut app.panes.body;
+    body.show(SIDEBAR, sidebar);
+    body.show(DETAIL, right);
+    let rects = body.layout(area);
+    let mut dividers: Vec<(Rect, Hit)> = body
+        .dividers()
+        .iter()
+        .map(|&(p, r)| (r, Hit::Divider(SplitId::Body, p)))
+        .collect();
+    let main = rects[1];
+    let (list, detail) = if right {
+        (main, Some(rects[DETAIL]))
+    } else if stacked {
+        let r = app.panes.stack.layout(main);
+        dividers.extend(
+            app.panes
+                .stack
+                .dividers()
+                .iter()
+                .map(|&(p, r)| (r, Hit::Divider(SplitId::Stack, p))),
+        );
+        (r[0], Some(r[STACK_DETAIL]))
     } else {
-        (area, None)
+        (main, None)
     };
+    if sidebar {
+        draw_sidebar(f, app, rects[SIDEBAR]);
+    }
     draw_list(f, app, list);
     if let Some(d) = detail {
         draw_detail(f, app, d);
     }
-    list
+    app.hits.extend(dividers);
+    let main = if sidebar {
+        Rect::new(main.x, area.y, area.right() - main.x, area.height)
+    } else {
+        area
+    };
+    (main, list)
 }
 
 fn empty_state(f: &mut Frame, area: Rect, mut lines: Vec<Line>) {
@@ -2019,7 +2063,7 @@ fn ref_tag(app: &App, name: &str, focus: usize) -> &'static str {
 }
 
 fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
-    let sections: [(&str, &[(&str, &str)]); 3] = [
+    let sections: [(&str, &[(&str, &str)]); 4] = [
         (
             "clones",
             &[
@@ -2052,6 +2096,13 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
                 ("q esc", "quit"),
             ],
         ),
+        (
+            "panels",
+            &[
+                ("< > / { }", "move the detail / sidebar border"),
+                ("=", "reset sizes · or double-click"),
+            ],
+        ),
     ];
     let mut lines = vec![];
     for (i, (name, keys)) in sections.iter().enumerate() {
@@ -2072,7 +2123,7 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "rows, tabs, buttons and hints are clickable",
+        "rows, tabs and hints are clickable; borders drag",
         muted(),
     )));
     let h = lines.len() as u16 + 4;
@@ -3035,10 +3086,8 @@ fn draw_job(f: &mut Frame, app: &mut App, area: Rect, id: u64) {
     let (steps_area, log_area) = if !has_log {
         (inner, Rect::default())
     } else if wide {
-        let [s, l] = Layout::horizontal([Constraint::Length(38), Constraint::Fill(1)])
-            .spacing(2)
-            .areas(inner);
-        (s, l)
+        let r = app.panes.job.layout(inner);
+        (r[0], r[1])
     } else {
         let sh = (job.steps.len() as u16 + 3).max(4).min(inner.height / 2);
         let [s, l] = Layout::vertical([Constraint::Length(sh), Constraint::Fill(1)]).areas(inner);
@@ -3125,6 +3174,11 @@ fn draw_job(f: &mut Frame, app: &mut App, area: Rect, id: u64) {
     let li = block.inner(log_area).inner(Margin::new(1, 0));
     f.render_widget(block, log_area);
     app.hits.push((log_area, Hit::ScrollLog));
+    if wide {
+        for &(p, r) in app.panes.job.dividers() {
+            app.hits.push((r, Hit::Divider(crate::panes::SplitId::Job, p)));
+        }
+    }
     let view = li.height as usize;
     app.log_height = view;
     let len = job.log.len();
