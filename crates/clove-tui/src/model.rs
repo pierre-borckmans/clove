@@ -540,6 +540,16 @@ pub enum Hit {
     Inert,
 }
 
+impl Hit {
+    /// Something a click does: hover shows it.
+    pub fn clickable(&self) -> bool {
+        !matches!(
+            self,
+            Hit::ScrollList | Hit::ScrollLog | Hit::ScrollDoctor | Hit::ScrollSettings | Hit::Inert
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

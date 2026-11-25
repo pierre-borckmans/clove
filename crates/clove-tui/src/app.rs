@@ -75,6 +75,10 @@ pub struct App {
     pending_select: Option<String>,
     last_click: Option<(u64, usize)>,
     pub log_height: usize,
+    /// Where the mouse is, for hover feedback.
+    pub hover: Option<Position>,
+    /// The mouse is over something clickable (the pointer shows a hand).
+    pub pointer: bool,
     /// Where `clove` was started: the shell's directory.
     pub start_dir: PathBuf,
     /// The shell integration is there to cd on exit.
@@ -115,6 +119,8 @@ impl App {
             pending_select: None,
             last_click: None,
             log_height: 10,
+            hover: None,
+            pointer: false,
             start_dir: PathBuf::new(),
             integrated: false,
             service: None,
@@ -1453,6 +1459,10 @@ impl App {
                 }
                 _ => vec![],
             },
+            MouseEventKind::Moved | MouseEventKind::Drag(_) => {
+                self.hover = Some(pos);
+                vec![]
+            }
             _ => vec![],
         }
     }

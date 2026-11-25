@@ -637,6 +637,37 @@ fn toasts_sit_bottom_right() {
 }
 
 #[test]
+fn hover_underlines_what_a_click_would_do() {
+    use ratatui::style::Modifier;
+    let mut hov = app();
+    let (s, _) = render(&mut hov, 120, 24);
+    let moved = |a: &mut App, x: u16, y: u16| {
+        a.on_input(TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        }))
+    };
+    // A footer hint.
+    let (x, y) = find(&s, "n new");
+    moved(&mut hov, x, y);
+    let (_, buf) = render(&mut hov, 120, 24);
+    assert!(buf[(x, y)].modifier.contains(Modifier::UNDERLINED));
+    assert!(hov.pointer, "hand pointer over a hint");
+    // A clone row.
+    let (x, y) = find(&s, "fix-race");
+    moved(&mut hov, x, y);
+    let (_, buf) = render(&mut hov, 120, 24);
+    assert!(buf[(x, y)].modifier.contains(Modifier::UNDERLINED));
+    // Empty space: nothing, plain pointer.
+    moved(&mut hov, 60, 20);
+    let (_, buf) = render(&mut hov, 120, 24);
+    assert!(!buf[(60, 20)].modifier.contains(Modifier::UNDERLINED));
+    assert!(!hov.pointer);
+}
+
+#[test]
 fn help_overlay() {
     let mut app = app();
     key(&mut app, KeyCode::Char('?'));

@@ -48,6 +48,7 @@ pub fn run(start_dir: &Path) -> Result<()> {
     let mut term = Term::enter()?;
     let start = Instant::now();
     let mut effects = vec![];
+    let mut pointer_shown = false;
 
     while app.exit.is_none() {
         app.now_ms = start.elapsed().as_millis() as u64;
@@ -60,6 +61,10 @@ pub fn run(start_dir: &Path) -> Result<()> {
         }
         let busy = app.animate();
         term.terminal.draw(|f| ui::draw(f, &mut app))?;
+        if app.pointer != pointer_shown {
+            set_pointer(app.pointer);
+            pointer_shown = app.pointer;
+        }
 
         let timeout = Duration::from_millis(if busy { 40 } else { 250 });
         if event::poll(timeout)? {
@@ -277,7 +282,18 @@ fn setup() -> Result<()> {
     Ok(())
 }
 
+/// OSC 22: a hand over clickable things in terminals that support pointer
+/// shapes (ghostty, kitty, WezTerm, foot); others ignore it.
+fn set_pointer(hand: bool) {
+    use std::io::Write;
+    let shape = if hand { "pointer" } else { "default" };
+    let mut e = std::io::stderr();
+    let _ = write!(e, "\x1b]22;{shape}\x1b\\");
+    let _ = e.flush();
+}
+
 fn restore() {
+    set_pointer(false);
     let _ = execute!(
         std::io::stderr(),
         DisableBracketedPaste,

@@ -48,6 +48,25 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_footer(f, app, footer);
     draw_modal(f, app, area, list);
     draw_toasts(f, app, body);
+    draw_hover(f, app);
+}
+
+/// Underlines whatever a click would act on under the mouse, so it's clear
+/// the UI takes the mouse. The runtime also turns the pointer into a hand.
+fn draw_hover(f: &mut Frame, app: &mut App) {
+    let hit = app.hover.and_then(|p| {
+        app.hits
+            .iter()
+            .rev()
+            .find(|(r, _)| r.contains(p))
+            .filter(|(_, h)| h.clickable())
+            .map(|(r, _)| *r)
+    });
+    app.pointer = hit.is_some();
+    if let Some(r) = hit {
+        f.buffer_mut()
+            .set_style(r, Style::new().add_modifier(Modifier::UNDERLINED));
+    }
 }
 
 // ---- building blocks -------------------------------------------------
