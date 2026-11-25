@@ -292,6 +292,35 @@ pub fn write_json<T: Serialize>(path: &Path, v: &T) -> Result<()> {
 }
 
 /// Every repository clove knows about on this machine.
+/// A per-user secret that marks the `.clove-env` files clove wrote. The shell
+/// integration embeds it and ignores any file without it, so a repo cannot
+/// ship its own `.clove-env` to set PATH in your shell.
+pub fn env_token() -> Result<String> {
+    let path = state_home().join("env-token");
+    if let Ok(t) = std::fs::read_to_string(&path)
+        && t.trim().len() == 32
+    {
+        return Ok(t.trim().to_string());
+    }
+    let mut bytes = [0u8; 16];
+    use std::io::Read;
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    std::fs::create_dir_all(state_home())?;
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)?;
+        use std::io::Write;
+        f.write_all(token.as_bytes())?;
+    }
+    Ok(token)
+}
+
 pub fn known_repos() -> Vec<RepoRecord> {
     let mut out = vec![];
     if let Ok(rd) = std::fs::read_dir(state_home().join("repos")) {

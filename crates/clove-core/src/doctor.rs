@@ -202,23 +202,6 @@ pub fn repo(c: &Clove) -> Vec<Check> {
             ));
         }
     }
-    if c.uses_pnpm() {
-        match (c.pnpm_store(), c.pnpm_store_unpinned()) {
-            (Some(_), Some(store)) => out.push(check(
-                "pnpm store",
-                Level::Warn,
-                "a plain `pnpm i` in a clone would start an empty store on the clone's volume and rebuild node_modules",
-                Some(format!("pnpm config set store-dir {store} --global")),
-            )),
-            (Some(store), None) => out.push(check("pnpm store", Level::Ok, format!("pinned to {store}"), None)),
-            (None, _) => out.push(check(
-                "pnpm store",
-                Level::Warn,
-                "could not run `pnpm store path`",
-                None,
-            )),
-        }
-    }
     #[cfg(target_os = "linux")]
     out.extend(fstab(c));
     #[cfg(target_os = "linux")]

@@ -734,6 +734,7 @@ impl Clove {
                 ),
             });
         }
+        let _ = self.write_clone_env(&wt, &name);
         // Fresh copies of local-only files: the golden ones may be older.
         if !golden.copied.is_empty() {
             let files = golden.copied.clone();
@@ -879,32 +880,29 @@ impl Clove {
         Some(store)
     }
 
-    /// The store clove's steps give pnpm, when a plain `pnpm` run by you in a
-    /// clone would not use it. Each clone is its own volume, so pnpm's default
-    /// there is a new, empty store on that volume, and the first `pnpm i`
-    /// rebuilds node_modules from scratch.
-    pub fn pnpm_store_unpinned(&self) -> Option<String> {
-        if !self.uses_pnpm() {
-            return None;
-        }
-        let store = self.pnpm_store()?;
-        let pinned_by_env = ["pnpm_config_store_dir", "npm_config_store_dir"]
-            .iter()
-            .any(|k| std::env::var(k).is_ok_and(|v| v.trim() == store));
-        let argv = crate::detect::wrap(self.config.exec, "pnpm config get store-dir --global");
-        let global = run(Command::new(&argv[0]).args(&argv[1..]).current_dir(&self.root)).unwrap_or_default();
-        let pinned = global.lines().last().is_some_and(|g| g.trim() == store);
-        (!pinned && !pinned_by_env).then_some(store)
-    }
-
-    /// Sets pnpm's global store-dir to `store`: the store the main checkout
-    /// already uses, so nothing changes outside clones.
-    pub fn pin_pnpm_store(&self, store: &str) -> Result<()> {
-        let argv = crate::detect::wrap(
-            self.config.exec,
-            &format!("pnpm config set store-dir '{store}' --global"),
-        );
-        run(Command::new(&argv[0]).args(&argv[1..]).current_dir(&self.root)).map(|_| ())
+    /// The environment a shell inside the clone should have: what clove's own
+    /// steps get (config `env`, pnpm's store, CLOVE_*). Written next to the
+    /// worktree, outside git, for the shell integration to load on `cd`.
+    /// A clone is its own volume, so tools that keep a cache per disk (pnpm's
+    /// store) would otherwise start an empty one there.
+    pub fn write_clone_env(&self, wt: &Path, name: &str) -> Result<()> {
+        let Some(dir) = wt.parent() else {
+            return Ok(());
+        };
+        let valid = |k: &str| {
+            k.chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        };
+        let mut body = format!("#clove-env {}\n", crate::repo::env_token()?);
+        body += &self
+            .step_env(wt, name)
+            .into_iter()
+            .filter(|(k, v)| valid(k) && !v.contains('\n'))
+            .map(|(k, v)| format!("{k}={v}\n"))
+            .collect::<String>();
+        write_atomic(&dir.join(CLONE_ENV_FILE), body.as_bytes())
     }
 
     /// Writes a worktree admin dir from a HEAD/index snapshot and links the
@@ -993,6 +991,8 @@ impl Clove {
             .clone_meta(name)?
             .with_context(|| format!("no clone named `{name}`"))?;
         record.backend.store()?.clone_attach(self, name, &meta.mount)?;
+        // Clones made before this file existed get it on their next mount.
+        let _ = self.write_clone_env(&meta.path, name);
         Ok(meta.path)
     }
 
@@ -1239,6 +1239,9 @@ impl Clove {
         })
     }
 }
+
+/// Next to each clone's worktree: KEY=VALUE lines the shell integration loads.
+pub const CLONE_ENV_FILE: &str = ".clove-env";
 
 fn admin_name_of(wt: &Path) -> Result<String> {
     let s = std::fs::read_to_string(wt.join(".git"))?;

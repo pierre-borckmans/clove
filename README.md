@@ -61,7 +61,7 @@ clove shell-init --install         # adds the shell integration to ~/.zshrc (bas
 
 Homebrew works on macOS and Linux. Prebuilt binaries for both are on the [releases page](https://github.com/pierre-borckmans/clove/releases). From source: `cargo install --git https://github.com/pierre-borckmans/clove clove-cli`.
 
-Shell integration lets `clove new` and `clove cd` change your directory, and adds completions for clone and branch names.
+Shell integration lets `clove new`, `clove cd` and the terminal UI change your directory, and adds completions for clone and branch names. It also gives your shell each clone's environment while you're inside it: clove writes a `.clove-env` file next to the clone's worktree (outside git) with the variables its own steps use, such as pnpm's store and your config's `env`, and the shell loads it on `cd` and restores your variables on the way out. Each clone is its own volume, so without this a plain `pnpm i` in a clone would start an empty store and rebuild `node_modules`. Only files clove wrote are loaded: each carries a per-user token, so a repo can't ship one. Shells without the integration can use `clove run <clone> -- <command>`.
 
 ## Use
 

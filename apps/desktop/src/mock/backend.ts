@@ -307,14 +307,6 @@ const commands: Record<string, (a: Args) => unknown> = {
         fix: null,
       },
     ];
-    if (r.status.steps.some((s) => s.name === "pnpm"))
-      checks.push({
-        name: "pnpm store",
-        level: "warn",
-        detail:
-          "clove steps pin the store, but a plain `pnpm add` in a clone would start an empty store on the clone's volume",
-        fix: "pnpm config set store-dir /Users/ada/Library/pnpm/store/v10 --global",
-      });
     if (g)
       checks.push({
         name: "golden",
