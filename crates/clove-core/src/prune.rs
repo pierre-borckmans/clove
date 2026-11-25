@@ -158,20 +158,43 @@ impl Clove {
     /// [`Clove::merge_checks`] plus the repo's plain git worktrees, in the
     /// same GitHub request. Both land in the prune cache.
     pub fn all_merge_checks(&self, mount: bool) -> Result<Checks> {
+        self.merge_checks_with(mount, |asks| match github_repo(&self.root, &self.config.base) {
+            Some((owner, repo)) => match lookup_prs(&self.root, &owner, &repo, asks) {
+                Ok(p) => (p, None),
+                Err(e) => (
+                    BTreeMap::new(),
+                    Some(format!("GitHub lookup failed, so only local proofs count: {e:#}")),
+                ),
+            },
+            None => (
+                BTreeMap::new(),
+                Some("no GitHub remote (or no `gh`): squash-merged PRs can't be detected".into()),
+            ),
+        })
+    }
+
+    /// [`Clove::all_merge_checks`] with the PR lookup given: (clone name or
+    /// worktree key, branch) pairs in, PRs by key and a warning out.
+    pub(crate) fn merge_checks_with(
+        &self,
+        mount: bool,
+        lookup: impl FnOnce(&[(String, String)]) -> (BTreeMap<String, Pr>, Option<String>),
+    ) -> Result<Checks> {
         let mut infos = vec![];
         for name in self.clone_names()? {
-            let was_mounted = self.info(&name, false).is_ok_and(|i| i.mounted);
-            if !mount && !was_mounted {
+            // Without `mount`, status waits until a PR says it matters.
+            if !mount {
                 infos.push(self.info(&name, false)?);
                 continue;
             }
+            let was_mounted = self.info(&name, false).is_ok_and(|i| i.mounted);
             let _ = self.mount(&name);
             infos.push(self.info(&name, true)?);
             if !was_mounted {
                 let _ = self.unmount(&name, false);
             }
         }
-        let others = self.other_worktrees(true).unwrap_or_default();
+        let mut others = self.other_worktrees(false).unwrap_or_default();
         let base_short = self
             .config
             .base
@@ -186,19 +209,27 @@ impl Clove {
             let b = w.branch.clone().filter(|b| b != base_short)?;
             Some((wt_key(&w.path), b))
         }));
-        let (prs, warning) = match github_repo(&self.root, &self.config.base) {
-            Some((owner, repo)) => match lookup_prs(&self.root, &owner, &repo, &asks) {
-                Ok(p) => (p, None),
-                Err(e) => (
-                    BTreeMap::new(),
-                    Some(format!("GitHub lookup failed, so only local proofs count: {e:#}")),
-                ),
-            },
-            None => (
-                BTreeMap::new(),
-                Some("no GitHub remote (or no `gh`): squash-merged PRs can't be detected".into()),
-            ),
+        let (prs, warning) = lookup(&asks);
+        // Uncommitted changes only matter where a PR (or a detached head
+        // already in the base) would let it go: ask git there only.
+        let candidate = |key: &str, branch: &Option<String>| match prs.get(key) {
+            Some(p) => p.state == PrState::Merged,
+            None => branch.is_none(),
         };
+        for i in infos.iter_mut() {
+            if i.mounted
+                && i.dirty.is_none()
+                && candidate(&i.name, &i.branch)
+                && let Ok(full) = self.info(&i.name, true)
+            {
+                *i = full;
+            }
+        }
+        for w in others.iter_mut() {
+            if candidate(&wt_key(&w.path), &w.branch) {
+                self.fill_status(w);
+            }
+        }
         let checks: Vec<MergeCheck> = infos
             .iter()
             .map(|i| self.classify(i, prs.get(&i.name).cloned()))

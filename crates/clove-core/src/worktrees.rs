@@ -248,66 +248,65 @@ impl Clove {
             })
             .collect();
         if status {
-            std::thread::scope(|s| {
-                for w in list.iter_mut().filter(|w| !w.missing) {
-                    let common = &self.common_dir;
-                    s.spawn(move || {
-                        // Reused until the worktree's index, HEAD or branch
-                        // moves, or its tree changes (see `memo`).
-                        let mut files = vec![common.join("packed-refs")];
-                        if let Some(admin) = admin_dir(&w.path) {
-                            files.extend([admin.join("HEAD"), admin.join("index")]);
-                        }
-                        if let Some(b) = &w.branch {
-                            files.push(common.join("refs/heads").join(b));
-                        }
-                        let key = format!("wt-status:{}", w.path.display());
-                        let detached = w.branch.is_none();
-                        let (st, detached_commits) = crate::memo::get_tree(&key, &w.path, &files, || {
-                            let st = git::out(&w.path, &["status", "--short", "--untracked-files=normal"])
-                                .map_err(|e| format!("{e:#}"));
-                            let n = if detached {
-                                git::out(
-                                    &w.path,
-                                    &[
-                                        "rev-list",
-                                        "--count",
-                                        "HEAD",
-                                        "--not",
-                                        "--branches",
-                                        "--tags",
-                                        "--remotes",
-                                    ],
-                                )
-                                .ok()
-                                .and_then(|n| n.parse::<u32>().ok())
-                            } else {
-                                None
-                            };
-                            (st, n)
-                        });
-                        w.dirty = st.as_ref().ok().map(|s| !s.trim().is_empty());
-                        if let Ok(s) = st {
-                            let lines: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
-                            w.changes_total = lines.len();
-                            w.changes = lines.iter().take(MAX_CHANGES).map(|l| l.to_string()).collect();
-                        }
-                        if detached {
-                            w.detached_commits = detached_commits;
-                        }
-                        w.blocker = w.removal_blocker(false, false);
-                        w.can_force = w.forceable();
-                        w.adopt_blocker = w.adopt_blocker();
-                    });
-                }
-            });
-            for w in list.iter_mut().filter(|w| w.missing) {
-                w.blocker = w.removal_blocker(false, false);
-                w.can_force = w.forceable();
-                w.adopt_blocker = w.adopt_blocker();
+            // One at a time: parallel statuses contend in the kernel and cost
+            // several times the CPU for no wall time gained.
+            for w in &mut list {
+                self.fill_status(w);
             }
         }
         Ok(list)
+    }
+
+    /// Fills a worktree's changes, detached commits and blockers. Reused until
+    /// its index, HEAD or branch moves, or its tree changes (see `memo`).
+    pub(crate) fn fill_status(&self, w: &mut OtherWorktree) {
+        if !w.missing {
+            let common = &self.common_dir;
+            let mut files = vec![common.join("packed-refs")];
+            if let Some(admin) = admin_dir(&w.path) {
+                files.extend([admin.join("HEAD"), admin.join("index")]);
+            }
+            if let Some(b) = &w.branch {
+                files.push(common.join("refs/heads").join(b));
+            }
+            let key = format!("wt-status:{}", w.path.display());
+            let detached = w.branch.is_none();
+            let (st, detached_commits) = crate::memo::get_tree(&key, &w.path, &files, || {
+                let st = git::out(&w.path, &["status", "--short", "--untracked-files=normal"])
+                    .map_err(|e| format!("{e:#}"));
+                let n = if detached {
+                    git::out(
+                        &w.path,
+                        &[
+                            "rev-list",
+                            "--count",
+                            "HEAD",
+                            "--not",
+                            "--branches",
+                            "--tags",
+                            "--remotes",
+                        ],
+                    )
+                    .ok()
+                    .and_then(|n| n.parse::<u32>().ok())
+                } else {
+                    None
+                };
+                (st, n)
+            });
+            w.dirty = st.as_ref().ok().map(|s| !s.trim().is_empty());
+            if let Ok(s) = st {
+                let lines: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
+                w.changes_total = lines.len();
+                w.changes = lines.iter().take(MAX_CHANGES).map(|l| l.to_string()).collect();
+            }
+            if detached {
+                w.detached_commits = detached_commits;
+            }
+        }
+        w.blocker = w.removal_blocker(false, false);
+        w.can_force = w.forceable();
+        w.adopt_blocker = w.adopt_blocker();
     }
 
     /// Finds a plain worktree by path (or a path inside it, `.` for here),
@@ -872,6 +871,53 @@ mod tests {
         // Merged by its PR (not by ancestry): -D still deletes the branch.
         assert!(!git::ref_exists(&r.dir, "refs/heads/merged"));
         assert!(git::ref_exists(&r.dir, "refs/heads/open"));
+    }
+
+    #[test]
+    fn the_pr_check_asks_git_only_where_a_pr_merged() {
+        let r = repo();
+        let mk = |name: &str| {
+            let p = r.add(name, &["-b", name]);
+            std::fs::write(p.join("x"), "x").unwrap();
+            p
+        };
+        mk("merged-dirty");
+        mk("open-dirty");
+        let checks = r
+            .clove
+            .merge_checks_with(false, |asks| {
+                let prs = asks
+                    .iter()
+                    .map(|(k, b)| {
+                        let state = if b == "merged-dirty" {
+                            PrState::Merged
+                        } else {
+                            PrState::Open
+                        };
+                        let head_oid = git(&r.dir, &["rev-parse", b]);
+                        let pr = Pr {
+                            number: 1,
+                            state,
+                            head_oid,
+                            title: String::new(),
+                            url: String::new(),
+                        };
+                        (k.clone(), pr)
+                    })
+                    .collect();
+                (prs, None)
+            })
+            .unwrap();
+        let c = |n: &str| checks.worktrees.iter().find(|c| c.name == n).unwrap();
+        // Status was asked for the merged one: its changes keep it.
+        assert_eq!(
+            c("merged-dirty").verdict,
+            Verdict::Review,
+            "{}",
+            c("merged-dirty").reason
+        );
+        assert!(c("merged-dirty").reason.contains("uncommitted"));
+        assert_eq!(c("open-dirty").verdict, Verdict::Keep);
     }
 
     #[test]
