@@ -344,7 +344,13 @@ pub async fn service_set(install: bool) -> CmdResult<bool> {
 /// The last PR check per clone (from `clove prune`, the service, or cleanup).
 #[tauri::command]
 pub async fn prs(root: PathBuf) -> CmdResult<Vec<MergeCheck>> {
-    block(move || Ok(Clove::open(&root)?.prune_cache().map(|p| p.checks).unwrap_or_default())).await
+    block(move || {
+        Ok(Clove::open(&root)?
+            .prune_cache()
+            .map(|p| p.checks)
+            .unwrap_or_default())
+    })
+    .await
 }
 
 #[derive(Serialize)]
@@ -422,8 +428,9 @@ pub async fn shell_status() -> CmdResult<ShellStatus> {
 #[tauri::command]
 pub async fn shell_install() -> CmdResult<ShellStatus> {
     block(|| {
-        let shell = clove_core::shellrc::detect()
-            .ok_or_else(|| anyhow::anyhow!("unsupported login shell: add `clove shell-init` to your rc by hand"))?;
+        let shell = clove_core::shellrc::detect().ok_or_else(|| {
+            anyhow::anyhow!("unsupported login shell: add `clove shell-init` to your rc by hand")
+        })?;
         clove_core::shellrc::install(shell)?;
         Ok(shell_status_now())
     })
