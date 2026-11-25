@@ -20,6 +20,7 @@ Getting started:
   clove new feat/login       a ready worktree in ~1s, deps and env included
   clove ls                   list clones
   clove rm feat/login        unmount and delete it
+  clove prune                remove clones whose PR is merged
   clove ui                   all of the above, interactively
 
 Shell integration (cd into new clones, completions):
@@ -91,6 +92,9 @@ enum Cmd {
         /// Rerun every warm step, not only those whose inputs changed.
         #[arg(long)]
         full: bool,
+        /// Also check which clones' PRs are merged, for `clove ls` (the service uses this).
+        #[arg(long, hide = true)]
+        prs: bool,
     },
     /// Re-sync a clone after its branch moved: copy local files, rerun changed setup steps.
     Setup {
@@ -122,6 +126,13 @@ enum Cmd {
     },
     /// Check the machine and repo setup.
     Doctor,
+    /// Remove clones whose pull request is merged (asks GitHub through `gh`).
+    /// Lists them unless --apply, or you confirm the prompt.
+    Prune {
+        /// Remove them and their branches without asking.
+        #[arg(long)]
+        apply: bool,
+    },
     /// Find leftovers from interrupted operations.
     Gc {
         /// Remove them (default: only list).
@@ -279,6 +290,7 @@ fn run(cli: Cli) -> Result<()> {
             all_repos,
             if_stale,
             full,
+            prs,
         } => {
             let targets: Vec<Clove> = if *all_repos {
                 clove_core::known_repos()
@@ -291,6 +303,10 @@ fn run(cli: Cli) -> Result<()> {
             let mut metas = vec![];
             let mut failed = false;
             for c in &targets {
+                if *prs {
+                    // Background only: unmounted clones are not mounted to look inside.
+                    let _ = c.merge_checks(false);
+                }
                 if *if_stale {
                     let _ = c.fetch_if_due();
                     let fresh = c.freshness().ok().flatten();
@@ -399,6 +415,7 @@ fn run(cli: Cli) -> Result<()> {
                     &RemoveOptions {
                         force: a.force,
                         delete_branch: a.delete_branch,
+                        branch_merged: false,
                     },
                     r,
                 )?;
@@ -488,6 +505,7 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Cmd::Doctor => cmd_doctor(&cli)?,
+        Cmd::Prune { apply } => cmd_prune(&cli, *apply, r)?,
         Cmd::Gc { apply } => {
             let c = repo(&cli)?;
             let actions = c.gc(*apply)?;
@@ -828,7 +846,18 @@ fn cmd_list(cli: &Cli, status: bool) -> Result<()> {
         eprintln!("no clones yet. {}", paint(BOLD, hint));
         return Ok(());
     }
-    let mut t = Table::new(&["", "NAME", "BRANCH", "CHANGES", "AGE", "OWN", "PATH"]);
+    // PRs from the last `clove prune` or background check; never asks GitHub here.
+    let prs: std::collections::BTreeMap<String, clove_core::MergeCheck> = c
+        .prune_cache()
+        .map(|p| p.checks.into_iter().map(|m| (m.clone.clone(), m)).collect())
+        .unwrap_or_default();
+    let mut headers = vec!["", "NAME", "BRANCH", "CHANGES"];
+    if !prs.is_empty() {
+        headers.push("PR");
+    }
+    headers.extend(["AGE", "OWN", "PATH"]);
+    let mut t = Table::new(&headers);
+    let mut prunable = 0;
     let now = clove_core::util::now_unix();
     let cwd = std::env::current_dir().unwrap_or_default();
     for i in &clones {
@@ -861,17 +890,138 @@ fn cmd_list(cli: &Cli, status: bool) -> Result<()> {
         } else {
             styled(YELLOW, changes.trim().to_string())
         };
-        t.row(vec![
-            dot,
-            styled(BOLD, i.name.clone()),
-            branch,
-            changes,
+        let mut row = vec![dot, styled(BOLD, i.name.clone()), branch, changes];
+        if !prs.is_empty() {
+            let m = prs.get(&i.name);
+            if m.is_some_and(|m| m.verdict == clove_core::Verdict::Prune) {
+                prunable += 1;
+            }
+            row.push(match m.and_then(|m| m.pr.as_ref()) {
+                Some(p) => {
+                    let (style, word) = match p.state {
+                        clove_core::PrState::Merged => (GREEN, "merged"),
+                        clove_core::PrState::Open => (CYAN, "open"),
+                        clove_core::PrState::Closed => (DIM, "closed"),
+                    };
+                    styled(style, format!("#{} {word}", p.number))
+                }
+                None => styled(DIM, "-"),
+            });
+        }
+        row.extend([
             cell(clove_core::util::human_age(now.saturating_sub(i.created_at))),
             cell(clove_core::util::human_bytes(i.own_bytes)),
             styled(DIM, tilde(&i.path)),
         ]);
+        t.row(row);
     }
     t.print();
+    if prunable > 0 {
+        eprintln!(
+            "\n{} {prunable} merged clone{} can go: {}",
+            paint(GREEN, "✓"),
+            if prunable == 1 { "" } else { "s" },
+            paint(BOLD, "clove prune")
+        );
+    }
+    Ok(())
+}
+
+fn cmd_prune(cli: &Cli, apply: bool, r: &dyn clove_core::Reporter) -> Result<()> {
+    use clove_core::Verdict;
+    let c = repo(cli)?;
+    let (checks, warning) = c.merge_checks(true)?;
+    let go: Vec<&clove_core::MergeCheck> = checks.iter().filter(|m| m.verdict == Verdict::Prune).collect();
+    let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    if !cli.json {
+        if let Some(w) = &warning {
+            eprintln!("{} {w}", paint(YELLOW, "!"));
+        }
+        if checks.is_empty() {
+            eprintln!("no clones yet.");
+            return Ok(());
+        }
+        let mut t = Table::new(&["", "NAME", "BRANCH", "WHY", "OWN"]);
+        for m in &checks {
+            let (mark, why) = match m.verdict {
+                Verdict::Prune => (styled(GREEN, "✓"), styled(GREEN, m.reason.clone())),
+                Verdict::Review => (styled(YELLOW, "!"), styled(YELLOW, m.reason.clone())),
+                Verdict::Keep => (styled(DIM, "·"), styled(DIM, m.reason.clone())),
+            };
+            t.row(vec![
+                mark,
+                styled(BOLD, m.clone.clone()),
+                styled(MAGENTA, m.branch.clone().unwrap_or_else(|| "(detached)".into())),
+                why,
+                cell(clove_core::util::human_bytes(m.own_bytes)),
+            ]);
+        }
+        t.print();
+    }
+    let freed: u64 = go.iter().map(|m| m.own_bytes).sum();
+    let mut confirmed = apply;
+    if go.is_empty() {
+        if !cli.json {
+            eprintln!("\nnothing to prune");
+        }
+    } else if !apply && !cli.json {
+        let what = format!(
+            "{} clone{} and {} ({})",
+            go.len(),
+            if go.len() == 1 { "" } else { "s" },
+            if go.len() == 1 {
+                "its branch"
+            } else {
+                "their branches"
+            },
+            clove_core::util::human_bytes(freed)
+        );
+        if interactive {
+            eprint!("\nRemove {what}? [y/N] ");
+            let mut answer = String::new();
+            std::io::stdin().read_line(&mut answer)?;
+            confirmed = matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+        } else {
+            eprintln!("\n{what} can go: {}", paint(BOLD, "clove prune --apply"));
+        }
+    }
+    let mut removed = vec![];
+    if confirmed {
+        // The shell's cwd keeps a volume busy: leave first, then prune again.
+        let cwd = std::env::current_dir().ok();
+        let inside = go.iter().any(|m| {
+            cwd.as_ref()
+                .is_some_and(|d| d.starts_with(c.clone_mount(&m.clone)))
+        });
+        if inside {
+            if shell::request_cd_then(&c.root, &["prune".to_string(), "--apply".to_string()]) {
+                eprintln!("{}", paint(DIM, "pruning after leaving this clone"));
+                return Ok(());
+            }
+            bail!("you are inside a clone to prune; cd out first (or set up `clove shell-init`)");
+        }
+        for m in &go {
+            if !cli.json {
+                eprintln!("{} {}", paint(MAGENTA, "−"), paint(BOLD, &m.clone));
+            }
+            let res = c.remove(
+                &m.clone,
+                &RemoveOptions {
+                    force: false,
+                    delete_branch: true,
+                    branch_merged: true,
+                },
+                r,
+            );
+            match res {
+                Ok(()) => removed.push(m.clone.clone()),
+                Err(e) => eprintln!("{} kept {}: {e:#}", paint(YELLOW, "!"), m.clone),
+            }
+        }
+    }
+    if cli.json {
+        return emit(&serde_json::json!({ "checks": checks, "warning": warning, "removed": removed }));
+    }
     Ok(())
 }
 
@@ -1029,6 +1179,7 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
                 &RemoveOptions {
                     force: false,
                     delete_branch: true,
+                    branch_merged: false,
                 },
                 &TermReporter::new(false),
             )?;

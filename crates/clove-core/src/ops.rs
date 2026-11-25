@@ -68,6 +68,9 @@ pub struct RemoveOptions {
     pub force: bool,
     /// Also delete the branch (`git branch -d`, or `-D` with force).
     pub delete_branch: bool,
+    /// The caller proved nothing on the branch is missing from the base (a
+    /// squash-merged PR), so `-D` is safe where `-d` would refuse.
+    pub branch_merged: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -869,7 +872,11 @@ impl Clove {
             // A branch whose tip is already in its base loses nothing; `-d` would
             // still refuse when the main checkout's branch is behind that base.
             let merged = git::ok(&self.root, &["merge-base", "--is-ancestor", &b, &meta.base]);
-            let flag = if opts.force || merged { "-D" } else { "-d" };
+            let flag = if opts.force || merged || opts.branch_merged {
+                "-D"
+            } else {
+                "-d"
+            };
             if let Err(e) = git::run_ok(&self.root, &["branch", flag, &b]) {
                 r.event(Event::Warn {
                     message: format!("kept branch {b}: {e:#}"),

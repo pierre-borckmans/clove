@@ -3,7 +3,7 @@
 
 #![cfg(target_os = "macos")]
 
-use clove_core::{Clove, Event, NewOptions, RefreshOptions, RemoveOptions, Silent};
+use clove_core::{Clove, Event, NewOptions, RefreshOptions, RemoveOptions, Silent, Verdict};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Mutex;
@@ -197,6 +197,7 @@ fn full_lifecycle() {
         &RemoveOptions {
             force: false,
             delete_branch: true,
+            branch_merged: false,
         },
         &Silent,
     )
@@ -230,6 +231,7 @@ fn full_lifecycle() {
         &RemoveOptions {
             force: false,
             delete_branch: true,
+            branch_merged: false,
         },
         &Silent,
     )
@@ -321,6 +323,20 @@ fn full_lifecycle() {
             .contains("more")
     );
 
+    // prune without GitHub: only local proofs count. peek is a detached checkout
+    // of base history, so it can go; branches with no PR stay.
+    let (checks, warning) = c.merge_checks(true).unwrap();
+    assert!(warning.is_some(), "no GitHub remote here");
+    for m in &checks {
+        let want = if m.clone == "peek" {
+            Verdict::Prune
+        } else {
+            Verdict::Keep
+        };
+        assert_eq!(m.verdict, want, "{m:?}");
+    }
+    assert!(c.prune_cache().is_some_and(|p| p.checks.len() == checks.len()));
+
     // remove refuses dirty clones without --force
     std::fs::write(a.path.join("app.txt"), "dirty\n").unwrap();
     assert!(c.remove("feat-a", &RemoveOptions::default(), &Silent).is_err());
@@ -329,6 +345,7 @@ fn full_lifecycle() {
         &RemoveOptions {
             force: true,
             delete_branch: true,
+            branch_merged: false,
         },
         &Silent,
     )

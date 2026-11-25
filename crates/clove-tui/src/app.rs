@@ -1083,6 +1083,7 @@ impl App {
                     opts: RemoveOptions {
                         force: f.force,
                         delete_branch: f.delete_branch,
+                        branch_merged: false,
                     },
                 };
                 return (None, self.spawn(task, After::Nothing));

@@ -61,6 +61,7 @@ clove ls                      # clones, branch, dirty/ahead/behind, own disk
 clove cd feat-login           # jump to a clone; `clove cd` goes back to the main checkout
 clove run feat-login -- pnpm test   # run inside the clone's dev environment
 clove rm feat-login -D        # unmount, delete, delete the branch
+clove prune                   # remove clones whose PR is merged, and their branches
 clove setup                   # in a clone, after a pull: rerun the setup steps that changed
 clove refresh                 # bring the golden image to the latest base (incremental)
 clove doctor                  # check the setup, with a fix for each problem
@@ -73,6 +74,8 @@ path=$(clove new --json agent/task-42 | jq -r .path)
 ```
 
 `clove new pr:123` checks out a pull request as branch `pr/123`.
+
+`clove prune` asks GitHub (through `gh`) for each clone's pull request. A clone goes when its PR is merged, its tip is the commit GitHub merged (or one the PR contains), and it has no uncommitted changes. That works for squash merges, which `git branch --merged` misses. A clone with commits after the merge, or with local edits, is listed for review and kept, as is any branch without a PR, since that may be fresh work. It lists first and asks; `--apply` skips the question. Run from inside a merged clone, it leaves the clone first. `clove ls` shows each clone's PR from the last check, which the background service refreshes.
 
 To make Claude Code put its worktrees (`claude --worktree`, subagents) in clones, merge the block from `clove hook claude` into `~/.claude/settings.json`. The create hook makes a clone named after the worktree, and the remove hook deletes it, along with the branch if the branch has no commits of its own.
 

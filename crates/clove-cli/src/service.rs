@@ -91,7 +91,7 @@ pub fn install(every: u64) -> Result<Vec<PathBuf>> {
         .collect();
     let refresh = plist(
         REFRESH,
-        &["refresh", "--all-repos", "--if-stale"],
+        &["refresh", "--all-repos", "--if-stale", "--prs"],
         &format!(
             "  <key>StartInterval</key><integer>{every}</integer>\n  \
              <key>ThrottleInterval</key><integer>30</integer>\n  \

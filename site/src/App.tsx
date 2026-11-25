@@ -429,6 +429,10 @@ function Cli() {
     ["clove refresh", "Build the next golden image from the latest base."],
     ["clove status", "Golden generation, age, commits behind, clones."],
     ["clove doctor", "Check the machine and the repo setup."],
+    [
+      "clove prune",
+      "Remove clones whose PR is merged, squash merges included, and their branches.",
+    ],
     ["clove gc", "Find leftovers from interrupted runs."],
     ["clove mount --all-repos", "Remount everything after a reboot."],
     ["clove new --fetch", "Fetch the base even if it was fetched in the last 5 minutes."],
