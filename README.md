@@ -84,7 +84,7 @@ clove config --edit           # open your settings for this repo (--edit team, -
 The same features are in three places, and each one gets new features at the same time:
 
 - **The CLI**, above.
-- **`clove ui`**, a terminal UI with mouse support. A sidebar lists every repo, with its clones and whether its golden image is fresh. `s` opens settings (config files, steps, service), `g` cleans up merged clones and leftovers, and Enter quits into the selected clone.
+- **`clove`** on its own opens a terminal UI with mouse support (`clove tui` too). A sidebar lists every repo, with its clones and whether its golden image is fresh. `s` opens settings (config files, steps, service), `g` cleans up merged clones and leftovers, and Enter quits into the selected clone.
 - **The Mac app** (`apps/desktop`), with the same sidebar, settings and cleanup, plus a menu-bar popover.
 
 Every command takes `--json`. `clove new --json` prints the clone's path, branch and timings, so an agent can create its own worktree:

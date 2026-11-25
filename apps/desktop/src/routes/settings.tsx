@@ -134,8 +134,8 @@ function ShellRow() {
           </span>
         )}
         <span className="text-[12px] text-faint">
-          Lets <Mono className="text-faint">clove new</Mono>, <Mono className="text-faint">clove cd</Mono> and{" "}
-          <Mono className="text-faint">clove ui</Mono> change your terminal's directory.
+          Lets <Mono className="text-faint">clove new</Mono>, <Mono className="text-faint">clove cd</Mono> and the
+          terminal UI change your terminal's directory.
         </span>
       </div>
     </Row>

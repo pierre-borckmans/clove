@@ -440,8 +440,8 @@ function Cli() {
     ["clove new --fetch", "Fetch the base even if it was fetched in the last 5 minutes."],
     ["clove new pr:123", "Check out pull request 123 as the local branch pr/123."],
     [
-      "clove ui",
-      "Terminal UI with mouse support and live progress. Quitting cds into the selected clone.",
+      "clove",
+      "On its own: the terminal UI, with mouse support and live progress. Quitting cds into the selected clone.",
     ],
     ["clove hook claude", "Print the Claude Code hooks that turn its worktrees into clones."],
     [
@@ -461,7 +461,7 @@ function Cli() {
       </dl>
       <div className="mt-14">
         <h3 className="text-[1.4rem] font-medium">
-          <code className="font-mono text-[1.15rem]">clove ui</code>
+          <code className="font-mono text-[1.15rem]">clove</code>
         </h3>
         <Prose className="mt-3 mb-6 text-[1rem]">
           <p>

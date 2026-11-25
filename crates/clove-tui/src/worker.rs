@@ -33,7 +33,7 @@ pub fn discover(start: &Path) -> (Vec<RepoTab>, usize, Option<String>) {
             tabs,
             0,
             Some(format!(
-                "{e:#}. Run `clove ui` inside a git repository, or `clove init` in one first."
+                "{e:#}. Run `clove` inside a git repository, or `clove init` in one first."
             )),
         ),
         Err(_) => (tabs, 0, None),

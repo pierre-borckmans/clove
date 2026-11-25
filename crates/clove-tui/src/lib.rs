@@ -1,7 +1,7 @@
 //! Terminal UI for clove: browse clones across repos, create, remove, mount,
 //! refresh the golden image with live progress, and cd into a clone on exit.
 //!
-//! The UI draws on stderr, so `cd "$(clove ui)"` works even without the shell
+//! The UI draws on stderr, so `cd "$(clove)"` works even without the shell
 //! integration: the chosen path is printed on stdout after the screen closes.
 
 mod app;
@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 
 pub fn run(start_dir: &Path) -> Result<()> {
     if !std::io::stderr().is_terminal() {
-        anyhow::bail!("clove ui needs a terminal");
+        anyhow::bail!("clove's terminal UI needs a terminal");
     }
     let (repos, idx, notice) = worker::discover(start_dir);
     let mut app = App::new(repos, idx);
@@ -92,7 +92,7 @@ pub fn run(start_dir: &Path) -> Result<()> {
                     shell_quote(&path.to_string_lossy())
                 );
             } else {
-                // `cd "$(clove ui)"`
+                // `cd "$(clove)"`
                 println!("{}", path.display());
             }
         }

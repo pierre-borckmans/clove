@@ -21,7 +21,7 @@ Getting started:
   clove rm feat/login        unmount and delete it
   clove prune                remove clones whose PR is merged
   clove repos                every repo clove manages
-  clove ui                   all of the above, interactively
+  clove                      all of the above, interactively (also: clove tui)
 
 Shell integration (cd into new clones, completions):
   eval \"$(clove shell-init zsh)\"     # or bash; fish: clove shell-init fish | source
@@ -172,8 +172,9 @@ enum Cmd {
         #[arg(long)]
         install: bool,
     },
-    /// Interactive terminal UI.
-    Ui,
+    /// Terminal UI: repos, clones, live progress. Bare `clove` opens it too.
+    #[command(alias = "ui")]
+    Tui,
 }
 
 #[derive(Subcommand)]
@@ -281,6 +282,12 @@ fn run(cli: Cli) -> Result<()> {
     let reporter = TermReporter::new(cli.verbose);
     let r: &dyn clove_core::Reporter = if cli.json { &Silent } else { &reporter };
     let Some(cmd) = &cli.cmd else {
+        // In a terminal, the bare command is the TUI (like lazygit, k9s); piped,
+        // it prints help. stdout may be captured: `cd "$(clove)"`.
+        let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+        if interactive && !cli.json && has_somewhere_to_go(&cli) {
+            return run_tui(&cli);
+        }
         return home(&cli);
     };
     match cmd {
@@ -689,13 +696,7 @@ fn run(cli: Cli) -> Result<()> {
                 print!("{}", shell::init(sh));
             }
         }
-        Cmd::Ui => {
-            let dir = match &cli.dir {
-                Some(d) => d.clone(),
-                None => std::env::current_dir()?,
-            };
-            clove_tui::run(&dir)?;
-        }
+        Cmd::Tui => run_tui(&cli)?,
     }
     Ok(())
 }
@@ -1424,6 +1425,23 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
 }
 
 /// `clove` with no command: the mark, where this repo stands, and what to type next.
+fn tui_dir(cli: &Cli) -> Result<PathBuf> {
+    Ok(match &cli.dir {
+        Some(d) => d.clone(),
+        None => std::env::current_dir()?,
+    })
+}
+
+fn run_tui(cli: &Cli) -> Result<()> {
+    clove_tui::run(&tui_dir(cli)?)
+}
+
+/// The TUI has something to show: a repo clove manages, or a git repo here
+/// that it can set up. Otherwise the banner explains how to start.
+fn has_somewhere_to_go(cli: &Cli) -> bool {
+    !clove_core::known_repos().is_empty() || tui_dir(cli).is_ok_and(|d| Clove::discover(&d).is_ok())
+}
+
 fn home(cli: &Cli) -> Result<()> {
     if !std::io::stdout().is_terminal() || cli.json {
         Cli::command().print_help()?;
@@ -1458,7 +1476,7 @@ fn home(cli: &Cli) -> Result<()> {
                 println!();
                 hint("clove new <branch>", "a ready worktree");
                 hint("clove ls", "your clones");
-                hint("clove ui", "browse and manage them");
+                hint("clove tui", "browse and manage them");
             }
             _ => {
                 println!(
@@ -1473,7 +1491,7 @@ fn home(cli: &Cli) -> Result<()> {
         },
         Err(_) => {
             hint("cd <repo> && clove init", "set up a repository");
-            hint("clove ui", "browse repos you already set up");
+            hint("clove tui", "browse repos you already set up");
         }
     }
     println!();
