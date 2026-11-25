@@ -4,7 +4,9 @@ use anstream::{eprintln, println};
 use anstyle::{AnsiColor, Style};
 use clove_core::{Event, Reporter, Timing};
 use std::io::{IsTerminal, Write};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 pub const DIM: Style = Style::new().dimmed();
 pub const BOLD: Style = Style::new().bold();
@@ -45,11 +47,38 @@ pub fn tilde(p: &std::path::Path) -> String {
     }
 }
 
-/// Prints each step as it finishes, with a live line showing command output.
+/// The brand green, for spinners and bars.
+pub const ACCENT: Style =
+    Style::new().fg_color(Some(anstyle::Color::Rgb(anstyle::RgbColor(0x3f, 0x8f, 0x63))));
+
+const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const NAME_W: usize = 24;
+/// Steps slower than this get their time in bold.
+const SLOW_MS: f64 = 10_000.0;
+
+struct Running {
+    step: String,
+    since: Instant,
+    last: String,
+}
+
+#[derive(Default)]
+struct State {
+    running: Vec<Running>,
+    /// A live line is on screen and must be cleared before printing.
+    drawn: bool,
+    frame: usize,
+}
+
+/// Prints each step as it finishes. In a terminal, the running step gets a
+/// spinner, a ticking timer and its latest output line, redrawn by a small
+/// ticker thread; piped output stays one plain line per finished step.
 pub struct TermReporter {
     live: bool,
     verbose: bool,
-    state: Mutex<Option<String>>,
+    state: Arc<Mutex<State>>,
+    stop: Arc<AtomicBool>,
+    ticker: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl TermReporter {
@@ -57,77 +86,162 @@ impl TermReporter {
         Self {
             live: std::io::stderr().is_terminal(),
             verbose,
-            state: Mutex::new(None),
+            state: Arc::new(Mutex::new(State::default())),
+            stop: Arc::new(AtomicBool::new(false)),
+            ticker: Mutex::new(None),
         }
     }
 
-    fn clear(&self) {
-        if self.live {
-            let mut e = std::io::stderr();
-            let _ = write!(e, "\r\x1b[2K");
-            let _ = e.flush();
+    fn ensure_ticker(&self) {
+        let mut t = self.ticker.lock().unwrap();
+        if t.is_some() || !self.live {
+            return;
         }
+        let (state, stop) = (self.state.clone(), self.stop.clone());
+        *t = Some(std::thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(80));
+                let mut s = state.lock().unwrap();
+                if !s.running.is_empty() {
+                    s.frame += 1;
+                    draw(&mut s);
+                }
+            }
+        }));
     }
+}
 
-    fn width() -> usize {
-        std::env::var("COLUMNS")
-            .ok()
-            .and_then(|c| c.parse().ok())
-            .unwrap_or(100)
+impl Drop for TermReporter {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(t) = self.ticker.lock().unwrap().take() {
+            let _ = t.join();
+        }
+        clear(&mut self.state.lock().unwrap());
     }
+}
+
+/// Terminal width from the tty itself; COLUMNS is rarely exported.
+pub fn term_width() -> usize {
+    // SAFETY: TIOCGWINSZ fills a zeroed winsize; fd 2 may not be a tty, then rc != 0.
+    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::ioctl(2, libc::TIOCGWINSZ, &mut ws) };
+    if rc == 0 && ws.ws_col > 0 {
+        return ws.ws_col as usize;
+    }
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(100)
+}
+
+fn clear(s: &mut State) {
+    if s.drawn {
+        let mut e = std::io::stderr();
+        let _ = write!(e, "\r\x1b[2K");
+        let _ = e.flush();
+        s.drawn = false;
+    }
+}
+
+fn pad(s: &str, w: usize) -> String {
+    let n = s.chars().count();
+    if n >= w {
+        s.chars().take(w).collect()
+    } else {
+        format!("{s}{}", " ".repeat(w - n))
+    }
+}
+
+/// Right-aligned step time; slow ones in bold so they stand out.
+fn time_cell(ms: f64) -> String {
+    let t = format!("{:>6}", secs(ms));
+    if ms >= SLOW_MS {
+        paint(BOLD, t)
+    } else {
+        paint(DIM, t)
+    }
+}
+
+/// The live line: spinner, step (+N when several run), timer, last output.
+fn draw(s: &mut State) {
+    let Some(cur) = s.running.last() else {
+        return;
+    };
+    let width = term_width();
+    let others = s.running.len() - 1;
+    let name = if others > 0 {
+        format!("{} +{others}", cur.step)
+    } else {
+        cur.step.clone()
+    };
+    let ms = cur.since.elapsed().as_secs_f64() * 1000.0;
+    // "  ⠋ " + name + " " + time(6) + "  "
+    let used = 4 + NAME_W + 1 + 6 + 2;
+    let room = width.saturating_sub(used + 1);
+    let last: String = cur.last.chars().filter(|c| !c.is_control()).take(room).collect();
+    let mut e = anstream::stderr();
+    let _ = write!(
+        e,
+        "\r\x1b[2K  {} {} {}  {}",
+        paint(ACCENT, FRAMES[s.frame % FRAMES.len()]),
+        pad(&name, NAME_W),
+        time_cell(ms),
+        paint(DIM, last)
+    );
+    let _ = e.flush();
+    s.drawn = true;
 }
 
 impl Reporter for TermReporter {
     fn event(&self, event: Event) {
-        let mut cur = self.state.lock().unwrap();
+        let mut s = self.state.lock().unwrap();
         match event {
             Event::Start { step } => {
+                s.running.push(Running {
+                    step,
+                    since: Instant::now(),
+                    last: String::new(),
+                });
                 if self.live {
-                    let mut e = anstream::stderr();
-                    let _ = write!(e, "\r\x1b[2K  {} {}", paint(CYAN, "◌"), paint(DIM, &step));
-                    let _ = e.flush();
+                    draw(&mut s);
+                    drop(s);
+                    self.ensure_ticker();
+                    return;
                 }
-                *cur = Some(step);
             }
             Event::Done { step, took } => {
-                self.clear();
+                s.running.retain(|r| r.step != step);
+                clear(&mut s);
                 eprintln!(
-                    "  {} {:<24} {}",
+                    "  {} {} {}",
                     paint(GREEN, "✓"),
-                    step,
-                    paint(DIM, secs(took.as_secs_f64() * 1000.0))
+                    pad(&step, NAME_W),
+                    time_cell(took.as_secs_f64() * 1000.0)
                 );
-                *cur = None;
             }
             Event::Skip { step, reason } => {
-                self.clear();
+                clear(&mut s);
                 eprintln!(
                     "  {} {} {}",
                     paint(DIM, "·"),
-                    paint(DIM, format!("{step:<24}")),
+                    paint(DIM, pad(&step, NAME_W)),
                     paint(DIM, reason)
                 );
             }
             Event::Output { step, line } => {
                 if self.verbose {
-                    self.clear();
+                    clear(&mut s);
                     eprintln!("    {} {}", paint(DIM, "│"), paint(DIM, line));
-                } else if self.live {
-                    let room = Self::width().saturating_sub(step.len() + 10);
-                    let line: String = line.chars().filter(|c| !c.is_control()).take(room).collect();
-                    let mut e = anstream::stderr();
-                    let _ = write!(
-                        e,
-                        "\r\x1b[2K  {} {} {}",
-                        paint(CYAN, "◌"),
-                        paint(DIM, &step),
-                        paint(DIM, line)
-                    );
-                    let _ = e.flush();
+                } else if let Some(r) = s.running.iter_mut().find(|r| r.step == step) {
+                    let line = line.trim();
+                    if !line.is_empty() {
+                        r.last = line.to_string();
+                    }
                 }
             }
             Event::Warn { message } => {
-                self.clear();
+                clear(&mut s);
                 for (i, l) in message.lines().enumerate() {
                     if i == 0 {
                         eprintln!("  {} {}", paint(YELLOW, "!"), paint(YELLOW, l));
@@ -137,6 +251,37 @@ impl Reporter for TermReporter {
                 }
             }
         }
+        if self.live && !s.running.is_empty() {
+            draw(&mut s);
+        }
+    }
+}
+
+/// After a long operation: one bar per step that took a real share of the
+/// time, scaled to the slowest, so where the time went is obvious.
+pub fn timing_bars(timings: &[Timing]) {
+    let total = total_ms(timings);
+    if total < 10_000.0 || !std::io::stderr().is_terminal() {
+        return;
+    }
+    let shown: Vec<&Timing> = timings.iter().filter(|t| t.ms >= total * 0.03).collect();
+    let max = shown.iter().map(|t| t.ms).fold(0.0, f64::max);
+    let bar_w = term_width().saturating_sub(4 + NAME_W + 1 + 8).clamp(10, 40);
+    const EIGHTHS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+    eprintln!();
+    for t in shown {
+        let cells = t.ms / max * bar_w as f64;
+        let full = cells.floor() as usize;
+        let part = ((cells - full as f64) * 8.0) as usize;
+        let bar = format!("{}{}", "█".repeat(full), EIGHTHS[part.min(7)]);
+        let pad_n = bar_w.saturating_sub(full + usize::from(part > 0));
+        eprintln!(
+            "    {} {}{} {}",
+            paint(DIM, pad(&t.step, NAME_W)),
+            paint(ACCENT, bar),
+            " ".repeat(pad_n),
+            time_cell(t.ms)
+        );
     }
 }
 

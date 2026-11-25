@@ -294,10 +294,11 @@ fn run(cli: Cli) -> Result<()> {
             if cli.json {
                 return emit(&meta);
             }
+            timing_bars(&meta.timings);
             eprintln!(
                 "\n{} golden image ready in {}. Next: {}",
                 paint(GREEN, "●"),
-                secs(total_ms(&meta.timings)),
+                paint(BOLD, secs(total_ms(&meta.timings))),
                 paint(BOLD, "clove new <branch>")
             );
             after_init()?;
@@ -346,6 +347,7 @@ fn run(cli: Cli) -> Result<()> {
                 match c.refresh_with(&clove_core::RefreshOptions { full: *full }, r) {
                     Ok(meta) => {
                         if !cli.json {
+                            timing_bars(&meta.timings);
                             eprintln!(
                                 "{} golden gen {} at {} ({})\n",
                                 paint(GREEN, "●"),
