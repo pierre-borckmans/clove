@@ -1946,3 +1946,24 @@ fn the_worktrees_panel_resizes_and_falls_back_inline_when_short() {
     assert!(!s.contains("git worktrees 3"), "{s}");
     assert!(s.contains("OTHER GIT WORKTREES"), "{s}");
 }
+
+#[test]
+fn any_cut_text_gets_its_full_text_as_a_tooltip() {
+    const WHY: &str = "vmc-runner deploy checkout, held while railway link runs against the staging cluster";
+    let mut app = app_with_worktrees();
+    let root = PathBuf::from("/work/app");
+    let mut d = app.data.get(&root).unwrap().clone();
+    d.worktrees[1].lock_reason = Some(WHY.into());
+    app.apply_data(d);
+    // Select the locked worktree: its detail pane shows the reason, cut.
+    key(&mut app, KeyCode::End);
+    key(&mut app, KeyCode::Up);
+    let (s, _) = render(&mut app, 140, 30);
+    assert!(!s.contains(WHY), "{s}");
+    let (x, y) = find(&s, "vmc-runner deploy");
+    moved(&mut app, x + 2, y);
+    app.now_ms += crate::tooltip::DELAY_MS;
+    let (s, _) = render(&mut app, 140, 30);
+    assert!(s.contains("held while railway"), "{s}");
+    assert!(s.contains("staging cluster"), "{s}");
+}

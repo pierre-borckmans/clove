@@ -20,6 +20,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     app.hits.clear();
     app.tips.clear();
     app.panels.clear();
+    fmt::take_cuts();
     let area = f.area();
     if area.width < 60 || area.height < 14 {
         let msg = Paragraph::new(vec![
@@ -44,8 +45,59 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_footer(f, app, footer);
     draw_modal(f, app, area, list);
     draw_toasts(f, app, body);
+    tip_cuts(f, app);
     draw_hover(f, app);
     draw_tooltip(f, app);
+}
+
+/// Gives every text cut this frame (see `fmt::take_cuts`) a tooltip with its
+/// full text where it shows on screen, unless a tip is already there or the
+/// spot is behind an open modal. Ambiguous cuts (same shown text, different
+/// full texts) are skipped.
+fn tip_cuts(f: &mut Frame, app: &mut App) {
+    let mut cuts: Vec<(String, String)> = fmt::take_cuts();
+    cuts.sort();
+    cuts.dedup();
+    let buf = f.buffer_mut();
+    let area = buf.area;
+    for (i, (shown, full)) in cuts.iter().enumerate() {
+        let ambiguous = cuts
+            .iter()
+            .enumerate()
+            .any(|(j, (s, fl))| j != i && s == shown && fl != full);
+        if ambiguous {
+            continue;
+        }
+        let want: Vec<String> = shown.chars().map(String::from).collect();
+        let w = width(shown) as u16;
+        for y in area.top()..area.bottom() {
+            // Cells left to right, skipping the blank halves of wide chars.
+            let row: Vec<(u16, &str)> = (area.left()..area.right())
+                .filter_map(|x| buf.cell((x, y)).map(|c| (x, c.symbol())))
+                .filter(|(_, s)| !s.is_empty())
+                .collect();
+            if row.len() < want.len() {
+                continue;
+            }
+            for start in 0..=row.len() - want.len() {
+                if !want.iter().zip(&row[start..]).all(|(a, (_, b))| a == b) {
+                    continue;
+                }
+                let r = Rect::new(row[start].0, y, w, 1);
+                let at = Position::new(r.x, r.y);
+                let covered = app.tips.iter().any(|(t, _)| t.contains(at));
+                let behind_modal = app
+                    .hits
+                    .iter()
+                    .rev()
+                    .find(|(h, _)| h.contains(at))
+                    .is_some_and(|(_, h)| matches!(h, Hit::Dismiss));
+                if !covered && !behind_modal {
+                    app.tips.push((r, Tip::new(full.clone())));
+                }
+            }
+        }
+    }
 }
 
 /// The tooltip of whatever the mouse rests on, once it has rested long enough.

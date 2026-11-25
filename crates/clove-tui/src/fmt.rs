@@ -7,6 +7,24 @@ pub fn width(s: &str) -> usize {
     s.width()
 }
 
+thread_local! {
+    /// Every cut made while drawing a frame: (shown, full). The UI finds the
+    /// shown text on screen afterwards and gives it a tooltip with the full
+    /// text, so any truncation gets one without extra code.
+    static CUTS: std::cell::RefCell<Vec<(String, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn record(shown: &str, full: &str) {
+    if shown.chars().count() > 1 {
+        CUTS.with(|c| c.borrow_mut().push((shown.to_string(), full.to_string())));
+    }
+}
+
+/// Takes the cuts recorded since the last call.
+pub fn take_cuts() -> Vec<(String, String)> {
+    CUTS.with(|c| std::mem::take(&mut *c.borrow_mut()))
+}
+
 /// Cuts `s` to `w` columns, ending with `…` when it had to cut.
 pub fn trunc(s: &str, w: usize) -> String {
     if s.width() <= w {
@@ -15,6 +33,12 @@ pub fn trunc(s: &str, w: usize) -> String {
     if w == 0 {
         return String::new();
     }
+    let out = trunc_raw(s, w);
+    record(&out, s);
+    out
+}
+
+fn trunc_raw(s: &str, w: usize) -> String {
     let mut out = String::new();
     let mut cur = 0;
     for c in s.chars() {
@@ -37,6 +61,12 @@ pub fn trunc_left(s: &str, w: usize) -> String {
     if w == 0 {
         return String::new();
     }
+    let out = trunc_left_raw(s, w);
+    record(&out, s);
+    out
+}
+
+fn trunc_left_raw(s: &str, w: usize) -> String {
     let mut tail: Vec<char> = vec![];
     let mut cur = 0;
     for c in s.chars().rev() {

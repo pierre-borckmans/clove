@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph, Widget};
 use unicode_width::UnicodeWidthChar;
 
 /// How long the mouse rests on something before its tooltip shows.
-pub const DELAY_MS: u64 = 500;
+pub const DELAY_MS: u64 = 250;
 /// Widest tooltip, borders included.
 pub const MAX_WIDTH: u16 = 50;
 /// Text lines past this end in `…`.
