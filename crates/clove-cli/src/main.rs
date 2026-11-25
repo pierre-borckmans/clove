@@ -1347,17 +1347,25 @@ fn cmd_config_action(cli: &Cli, action: &ConfigAction) -> Result<()> {
             if cli.json {
                 return emit(&states);
             }
+            // Paths under home print as ~/..., and long values end in an ellipsis.
+            const MAX: usize = 48;
+            let shown = |s: &settings::FieldState| {
+                let v = if s.effective.starts_with('/') {
+                    render::tilde(std::path::Path::new(&s.effective))
+                } else {
+                    s.effective.clone()
+                };
+                if v.chars().count() > MAX {
+                    format!("{}…", v.chars().take(MAX - 1).collect::<String>())
+                } else {
+                    v
+                }
+            };
             let kw = states.iter().map(|s| s.field.key.len()).max().unwrap_or(0);
-            let vw = states
-                .iter()
-                .map(|s| s.effective.chars().count())
-                .max()
-                .unwrap_or(0)
-                .min(40);
+            let vw = states.iter().map(|s| shown(s).chars().count()).max().unwrap_or(0);
             for s in &states {
                 let from = s.source.map(|l| l.label()).unwrap_or("default");
-                let v: String = s.effective.chars().take(40).collect();
-                println!("{:<kw$}  {:<vw$}  {}", s.field.key, v, paint(DIM, from));
+                println!("{:<kw$}  {:<vw$}  {}", s.field.key, shown(s), paint(DIM, from));
             }
         }
         ConfigAction::Set { key, value, layer } => {

@@ -216,11 +216,11 @@ pub fn parse_value(f: &Field, input: &str) -> Result<Value> {
             Value::from(parse_bool(s).with_context(|| format!("{key}: use true or false, not {s:?}"))?)
         }
         Kind::Seconds => {
-            let secs = parse_duration(s).with_context(|| format!("{key}: bad duration"))?;
+            let secs = parse_duration(s).map_err(|e| anyhow::anyhow!("{key}: {e}"))?;
             Value::from(i64::try_from(secs).context("duration too long")?)
         }
         Kind::Duration => {
-            parse_duration(s).with_context(|| format!("{key}: bad duration"))?;
+            parse_duration(s).map_err(|e| anyhow::anyhow!("{key}: {e}"))?;
             Value::from(s)
         }
         Kind::Int => {
