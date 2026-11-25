@@ -74,6 +74,7 @@ clove cd feat-login           # jump to a clone; `clove cd` goes back to the mai
 clove run feat-login -- pnpm test   # run inside the clone's dev environment
 clove rm feat-login -D        # unmount, delete, delete the branch
 clove prune                   # remove clones whose PR is merged, and their branches
+clove adopt ../old-worktree   # turn a plain git worktree into a clone on its branch
 clove setup                   # in a clone, after a pull: rerun the setup steps that changed
 clove refresh                 # bring the golden image to the latest base (incremental)
 clove doctor                  # check the setup, with a fix for each problem
@@ -97,6 +98,8 @@ path=$(clove new --json agent/task-42 | jq -r .path)
 ```
 
 `clove new pr:123` checks out a pull request as branch `pr/123`.
+
+`clove ls` also lists the repo's other git worktrees, the ones clove didn't make (made before clove, or by an agent's `git worktree add`). `clove rm <path or folder name>` removes one with `git worktree remove`, never forced, so a locked or modified worktree stays, and so does a detached one holding commits that are on no branch. `clove prune` and cleanup remove the ones whose PR is merged. `clove adopt` detaches the old worktree so git lets go of its branch, makes a clone on that branch, then removes the old worktree. If the clone fails, the old worktree goes back on its branch. Ignored files in it, like build output or `.env`, are not carried over.
 
 `clove prune` asks GitHub (through `gh`) for each clone's pull request. A clone goes when its PR is merged, its tip is the commit GitHub merged (or one the PR contains), and it has no uncommitted changes. That works for squash merges, which `git branch --merged` misses. A clone with commits after the merge, or with local edits, is listed for review and kept, as is any branch without a PR, since that may be fresh work. It lists first and asks; `--apply` skips the question. Run from inside a merged clone, it leaves the clone first. `clove ls` shows each clone's PR from the last check, which the background service refreshes.
 

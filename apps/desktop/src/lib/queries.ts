@@ -10,6 +10,7 @@ export const keys = {
   repos: ["repos"] as const,
   status: (root: string) => ["status", root] as const,
   clones: (root: string) => ["clones", root] as const,
+  worktrees: (root: string) => ["worktrees", root] as const,
   refs: (root: string) => ["refs", root] as const,
   doctorMachine: ["doctor", "machine"] as const,
   doctorRepo: (root: string) => ["doctor", "repo", root] as const,
@@ -65,6 +66,16 @@ export function useClones(root: string | undefined) {
   return useQuery({
     queryKey: keys.clones(root ?? ""),
     queryFn: () => api.clones(root as string, true),
+    enabled: !!root,
+    refetchInterval: POLL_MS,
+  });
+}
+
+/** The repo's plain git worktrees (ones clove didn't make). */
+export function useWorktrees(root: string | undefined) {
+  return useQuery({
+    queryKey: keys.worktrees(root ?? ""),
+    queryFn: () => api.worktrees(root as string, true),
     enabled: !!root,
     refetchInterval: POLL_MS,
   });

@@ -5,7 +5,7 @@ use crate::fmt;
 use crate::model::*;
 use clove_core::repo::sanitize_name;
 use clove_core::settings::{self, FIELDS, FieldState, Kind, Layer};
-use clove_core::{CloneInfo, Event, NewOptions, RemoveOptions};
+use clove_core::{CloneInfo, Event, NewOptions, OtherWorktree, RemoveOptions};
 use ratatui::crossterm::event::{
     Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
     MouseEventKind,
@@ -193,6 +193,42 @@ impl App {
         self.visible().get(self.selected).copied()
     }
 
+    /// Plain git worktrees matching the filter; they list after the clones.
+    pub fn visible_worktrees(&self) -> Vec<&OtherWorktree> {
+        let Some(d) = self.current() else {
+            return vec![];
+        };
+        let q = self.filter.to_lowercase();
+        d.worktrees
+            .iter()
+            .filter(|w| {
+                q.is_empty()
+                    || w.name.to_lowercase().contains(&q)
+                    || w.branch.as_deref().is_some_and(|b| b.to_lowercase().contains(&q))
+            })
+            .collect()
+    }
+
+    /// Selection indexes run over the clones, then the worktrees.
+    pub fn selected_worktree(&self) -> Option<&OtherWorktree> {
+        let n = self.visible().len();
+        self.selected
+            .checked_sub(n)
+            .and_then(|i| self.visible_worktrees().get(i).copied())
+    }
+
+    /// Selectable rows: clones and plain worktrees.
+    pub fn rows(&self) -> usize {
+        self.visible().len() + self.visible_worktrees().len()
+    }
+
+    /// The running job on a plain worktree of the current repo.
+    pub fn busy_worktree(&self, path: &std::path::Path) -> Option<&Job> {
+        let root = self.repo()?.root.clone();
+        self.running()
+            .find(|j| j.repo == root && j.worktree() == Some(path))
+    }
+
     pub fn job(&self, id: u64) -> Option<&Job> {
         self.jobs.iter().find(|j| j.id == id)
     }
@@ -224,7 +260,7 @@ impl App {
         let Some(d) = self.current() else {
             return false;
         };
-        !d.clones.is_empty()
+        (!d.clones.is_empty() || !d.worktrees.is_empty())
             && self
                 .prs_checked
                 .get(&d.root)
@@ -568,7 +604,7 @@ impl App {
             Ok(Outcome::RemovedWhenFree(users)) => {
                 let s = format!(
                     "{} is in use by {}: removing it as soon as {} exit",
-                    job.target().unwrap_or(""),
+                    job.subject(),
                     users.join(", "),
                     if users.len() == 1 { "it" } else { "they" }
                 );
@@ -576,7 +612,7 @@ impl App {
                 Ok(s)
             }
             Ok(Outcome::Removed) => {
-                let s = format!("removed {}", job.target().unwrap_or(""));
+                let s = format!("removed {}", job.subject());
                 toasts.push((ToastKind::Ok, s.clone()));
                 Ok(s)
             }
@@ -597,12 +633,16 @@ impl App {
             Ok(Outcome::Gc(cleanup)) => {
                 let apply = matches!(task, Task::Gc { apply: true });
                 if apply {
-                    let n = cleanup.removed.len() + cleanup.leftovers.len();
+                    let wt = cleanup.removed_worktrees.len();
+                    let n = cleanup.removed.len() + wt + cleanup.leftovers.len();
                     toasts.push((
                         ToastKind::Ok,
-                        match (cleanup.removed.len(), cleanup.leftovers.len()) {
-                            (0, 0) => "nothing to clean".to_string(),
-                            (c, 0) => format!("removed {c} merged clone{}", if c == 1 { "" } else { "s" }),
+                        match (cleanup.removed.len(), wt, cleanup.leftovers.len()) {
+                            (0, 0, 0) => "nothing to clean".to_string(),
+                            (c, 0, 0) => format!("removed {c} merged clone{}", if c == 1 { "" } else { "s" }),
+                            (0, w, 0) => {
+                                format!("removed {w} merged worktree{}", if w == 1 { "" } else { "s" })
+                            }
                             _ => format!("cleaned {n} item{}", if n == 1 { "" } else { "s" }),
                         },
                     ));
@@ -727,6 +767,7 @@ impl App {
             self.watch = Some(d.watch.clone());
         }
         let keep = self.selected_clone().map(|c| c.name.clone());
+        let keep_wt = self.selected_worktree().map(|w| w.path.clone());
         if let Some(t) = self.repos.iter_mut().find(|t| t.root == d.root) {
             t.summary = Some(d.summary.clone());
         }
@@ -740,8 +781,12 @@ impl App {
             && let Some(i) = vis.iter().position(|c| c.name == w)
         {
             self.selected = i;
+        } else if let Some(p) = keep_wt
+            && let Some(i) = self.visible_worktrees().iter().position(|w| w.path == p)
+        {
+            self.selected = vis.len() + i;
         }
-        let n = self.visible().len();
+        let n = self.rows();
         self.selected = self.selected.min(n.saturating_sub(1));
     }
 
@@ -846,7 +891,7 @@ impl App {
     }
 
     fn move_sel(&mut self, delta: isize) {
-        let n = self.visible().len();
+        let n = self.rows();
         if n == 0 {
             self.selected = 0;
             return;
@@ -909,6 +954,7 @@ impl App {
             KeyCode::Char('i') => return self.init(),
             KeyCode::Enter => return self.cd_selected(),
             KeyCode::Char('o') => return self.open_selected(),
+            KeyCode::Char('c') => self.open_adopt(),
             KeyCode::Char('/') => {
                 self.filtering = true;
             }
@@ -966,6 +1012,31 @@ impl App {
     }
 
     fn open_remove(&mut self) {
+        if let Some(w) = self.selected_worktree().cloned() {
+            if self.busy_worktree(&w.path).is_some() {
+                return;
+            }
+            let base = self.current().map(|d| d.status.base.clone()).unwrap_or_default();
+            self.modal = Some(Modal::Remove(RemoveForm {
+                inside: self.start_dir.starts_with(&w.path),
+                name: w.name,
+                branch: w.branch,
+                path: w.path,
+                mounted: !w.missing,
+                dirty: w.dirty,
+                ahead: None,
+                base,
+                delete_branch: false,
+                force: false,
+                focus: 0,
+                worktree: true,
+                blocker: w.blocker,
+            }));
+            if let Some(Modal::Remove(f)) = &mut self.modal {
+                f.focus_on(RemoveItem::Remove);
+            }
+            return;
+        }
         let Some(c) = self.selected_clone().cloned() else {
             return;
         };
@@ -986,13 +1057,79 @@ impl App {
             force: c.dirty == Some(true),
             focus: 0,
             inside,
+            worktree: false,
+            blocker: None,
         }));
         if let Some(Modal::Remove(f)) = &mut self.modal {
             f.focus_on(RemoveItem::Remove);
         }
     }
 
+    /// Asks before turning the selected plain worktree into a clone.
+    fn open_adopt(&mut self) {
+        let Some(w) = self.selected_worktree().cloned() else {
+            if self.selected_clone().is_some() {
+                self.toast(
+                    ToastKind::Info,
+                    "c turns a plain git worktree into a clone; this is one already",
+                );
+            }
+            return;
+        };
+        if self.busy_worktree(&w.path).is_some() {
+            return;
+        }
+        if !self.has_golden() {
+            self.toast(ToastKind::Info, "build the golden image first: press i");
+            return;
+        }
+        let blocker = w.blocker.clone().or_else(|| {
+            w.branch
+                .is_none()
+                .then(|| format!("{} is detached; a clone takes a branch", w.name))
+        });
+        self.modal = Some(Modal::Adopt(AdoptForm {
+            name: w.name,
+            path: w.path,
+            branch: w.branch,
+            blocker,
+            focus_cancel: false,
+        }));
+    }
+
+    fn adopt_key(&mut self, mut f: AdoptForm, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => (None, vec![]),
+            KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Tab
+            | KeyCode::BackTab
+            | KeyCode::Up
+            | KeyCode::Down => {
+                f.focus_cancel = !f.focus_cancel;
+                (Some(Modal::Adopt(f)), vec![])
+            }
+            KeyCode::Enter | KeyCode::Char(' ') if f.focus_cancel => (None, vec![]),
+            KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('y') => {
+                if let Some(b) = &f.blocker {
+                    self.toast(ToastKind::Err, b.clone());
+                    return (Some(Modal::Adopt(f)), vec![]);
+                }
+                let task = Task::Adopt {
+                    path: f.path.clone(),
+                    name: f.name.clone(),
+                };
+                (None, self.spawn(task, After::Nothing))
+            }
+            _ => (Some(Modal::Adopt(f)), vec![]),
+        }
+    }
+
     fn mount_selected(&mut self, after: After) -> Vec<Effect> {
+        if self.selected_worktree().is_some() {
+            self.toast(ToastKind::Info, "a plain git worktree has nothing to mount");
+            return vec![];
+        }
         let Some(c) = self.selected_clone().cloned() else {
             return vec![];
         };
@@ -1007,6 +1144,10 @@ impl App {
     }
 
     fn unmount_selected(&mut self) -> Vec<Effect> {
+        if self.selected_worktree().is_some() {
+            self.toast(ToastKind::Info, "a plain git worktree has nothing to unmount");
+            return vec![];
+        }
         let Some(c) = self.selected_clone().cloned() else {
             return vec![];
         };
@@ -1053,6 +1194,14 @@ impl App {
     }
 
     fn cd_selected(&mut self) -> Vec<Effect> {
+        if let Some(w) = self.selected_worktree().cloned() {
+            if w.missing {
+                self.toast(ToastKind::Warn, format!("{} is gone from disk", w.name));
+            } else {
+                self.exit = Some(Exit::Cd(w.path));
+            }
+            return vec![];
+        }
         let Some(c) = self.selected_clone().cloned() else {
             return vec![];
         };
@@ -1068,6 +1217,13 @@ impl App {
     }
 
     fn open_selected(&mut self) -> Vec<Effect> {
+        if let Some(w) = self.selected_worktree().cloned() {
+            return if w.missing {
+                vec![]
+            } else {
+                vec![Effect::OpenEditor(w.path)]
+            };
+        }
         let Some(c) = self.selected_clone().cloned() else {
             return vec![];
         };
@@ -1096,6 +1252,7 @@ impl App {
             ),
             Modal::New(f) => self.new_form_key(f, k),
             Modal::Remove(f) => self.remove_form_key(f, k),
+            Modal::Adopt(f) => self.adopt_key(f, k),
             Modal::Gc(g) => self.gc_key(g, k),
             Modal::Doctor(d) => self.doctor_key(d, k),
             Modal::Settings(v) => self.settings_key(v, k),
@@ -1235,6 +1392,10 @@ impl App {
                 if f.focused() == RemoveItem::Cancel && k.code != KeyCode::Char('y') {
                     return (None, vec![]);
                 }
+                if let Some(b) = f.blocker.clone().filter(|_| f.worktree) {
+                    self.toast(ToastKind::Err, b);
+                    return (Some(Modal::Remove(f)), vec![]);
+                }
                 if f.inside {
                     // The shell sits in this clone and holds its volume: quit,
                     // move the shell to the main checkout, remove it from there.
@@ -1255,9 +1416,21 @@ impl App {
                     if f.force {
                         args.push("--force".into());
                     }
-                    args.push(f.name.clone());
+                    args.push(if f.worktree {
+                        f.path.to_string_lossy().to_string()
+                    } else {
+                        f.name.clone()
+                    });
                     self.exit = Some(Exit::CdThen(root, args));
                     return (None, vec![]);
+                }
+                if f.worktree {
+                    let task = Task::RemoveWorktree {
+                        path: f.path.clone(),
+                        name: f.name.clone(),
+                        delete_branch: f.delete_branch,
+                    };
+                    return (None, self.spawn(task, After::Nothing));
                 }
                 let task = Task::Remove {
                     name: f.name.clone(),
@@ -1685,6 +1858,8 @@ fn job_title(t: &Task) -> String {
         Task::Refresh => "refresh".into(),
         Task::New(_) => "new".into(),
         Task::Remove { name, .. } => format!("remove {name}"),
+        Task::RemoveWorktree { name, .. } => format!("remove worktree {name}"),
+        Task::Adopt { name, .. } => format!("adopt {name}"),
         Task::Mount { name } => format!("mount {name}"),
         Task::Unmount { name } => format!("unmount {name}"),
         Task::Gc { .. } => "gc".into(),
@@ -1694,9 +1869,13 @@ fn job_title(t: &Task) -> String {
     }
 }
 
-/// Something cleanup can remove: a leftover or a provably merged clone.
+/// Something cleanup can remove: a leftover, or a provably merged clone or worktree.
 pub fn cleanup_has_work(c: &Cleanup) -> bool {
-    !c.leftovers.is_empty() || c.checks.iter().any(|m| m.verdict == clove_core::Verdict::Prune)
+    !c.leftovers.is_empty()
+        || c.checks.iter().any(|m| m.verdict == clove_core::Verdict::Prune)
+        || c.worktrees
+            .iter()
+            .any(|m| m.verdict == clove_core::Verdict::Prune)
 }
 
 fn scroll_job(job: &mut Job, d: isize, page: usize) {

@@ -7,15 +7,20 @@ import { RepoMark } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
-import { bytes } from "@/lib/format";
+import { bytes, tildify } from "@/lib/format";
 import { keys, useRepos } from "@/lib/queries";
-import type { Cleanup, MergeCheck, RepoSummary } from "@/lib/types";
+import type { Cleanup, MergeCheck, RepoSummary, WorktreeCheck } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-/** Something cleanup can remove: a leftover or a provably merged clone. */
-const hasWork = (c: Cleanup) => c.leftovers.length > 0 || c.checks.some((m) => m.verdict === "prune");
+/** Something cleanup can remove: a leftover, or a provably merged clone or worktree. */
+const hasWork = (c: Cleanup) =>
+  c.leftovers.length > 0 ||
+  c.checks.some((m) => m.verdict === "prune") ||
+  c.worktrees.some((m) => m.verdict === "prune");
 /** Clones worth showing: merged ones, ready to go or needing a look. */
 const merged = (c: Cleanup) => c.checks.filter((m) => m.verdict !== "keep");
+/** Plain git worktrees worth showing, the same way. */
+const mergedWorktrees = (c: Cleanup) => c.worktrees.filter((m) => m.verdict !== "keep");
 
 export function CleanupPage() {
   const { data: repos = [] } = useRepos();
@@ -29,14 +34,22 @@ export function CleanupPage() {
   const loading = results.some((q) => q.isLoading);
   const shown = repos
     .map((r, i) => ({ repo: r, data: results[i]?.data, error: results[i]?.error }))
-    .filter((x) => x.error || (x.data && (merged(x.data).length > 0 || x.data.leftovers.length > 0 || x.data.warning)));
+    .filter(
+      (x) =>
+        x.error ||
+        (x.data &&
+          (merged(x.data).length > 0 ||
+            mergedWorktrees(x.data).length > 0 ||
+            x.data.leftovers.length > 0 ||
+            x.data.warning)),
+    );
 
   return (
     <>
       <PaneHeader>
         <h1 className="text-[14px] font-semibold tracking-tight">Cleanup</h1>
         <span className="text-[12.5px] text-muted-foreground">
-          Clones whose pull request is merged, and leftovers from interrupted runs
+          Clones and git worktrees whose pull request is merged, and leftovers from interrupted runs
         </span>
         <div data-tauri-drag-region className="h-full flex-1" />
       </PaneHeader>
@@ -88,12 +101,16 @@ function RepoCleanup({ repo, data }: { repo: RepoSummary; data: Cleanup }) {
         parts.push(
           `${done.removed.length} merged clone${done.removed.length === 1 ? "" : "s"} and branch${done.removed.length === 1 ? "" : "es"}`,
         );
+      if (done.removed_worktrees.length)
+        parts.push(
+          `${done.removed_worktrees.length} merged git worktree${done.removed_worktrees.length === 1 ? "" : "s"}`,
+        );
       if (done.leftovers.length)
         parts.push(`${done.leftovers.length} leftover${done.leftovers.length === 1 ? "" : "s"}`);
       toast.success(`Cleaned up ${repo.name}`, {
         description: parts.length ? `Removed ${parts.join(" and ")}` : "Nothing left to remove",
       });
-      for (const k of done.kept) toast.warning("Kept a merged clone", { description: k });
+      for (const k of done.kept) toast.warning("Kept a merged one", { description: k });
     },
     onError: (e) => toast.error(`Cleanup of ${repo.name} failed`, { description: String(e) }),
     onSettled: () => qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== "cleanup" }),
@@ -102,6 +119,9 @@ function RepoCleanup({ repo, data }: { repo: RepoSummary; data: Cleanup }) {
   const clones = merged(result);
   const ready = clones.filter((m) => m.verdict === "prune" && !result.removed.includes(m.clone));
   const kept = result.checks.length - clones.length;
+  const worktrees = mergedWorktrees(result);
+  const readyWt = worktrees.filter((m) => m.verdict === "prune" && !result.removed_worktrees.includes(m.path));
+  const keptWt = result.worktrees.length - worktrees.length;
   const work = !apply.data && hasWork(result);
 
   return (
@@ -112,6 +132,7 @@ function RepoCleanup({ repo, data }: { repo: RepoSummary; data: Cleanup }) {
         <span className="text-[12px] text-muted-foreground">
           {[
             ready.length && `${ready.length} merged`,
+            readyWt.length && `${readyWt.length} merged worktree${readyWt.length === 1 ? "" : "s"}`,
             result.leftovers.length && `${result.leftovers.length} leftover${result.leftovers.length === 1 ? "" : "s"}`,
           ]
             .filter(Boolean)
@@ -151,6 +172,21 @@ function RepoCleanup({ repo, data }: { repo: RepoSummary; data: Cleanup }) {
           {kept} other clone{kept === 1 ? "" : "s"} kept: open PR, no PR, or not merged
         </p>
       )}
+      {worktrees.length > 0 && (
+        <>
+          <Heading>Merged git worktrees</Heading>
+          <ul>
+            {worktrees.map((m) => (
+              <WorktreeRow key={m.path} check={m} removed={result.removed_worktrees.includes(m.path)} />
+            ))}
+          </ul>
+        </>
+      )}
+      {keptWt > 0 && (
+        <p className="border-b px-4 py-2 text-[12px] text-faint">
+          {keptWt} other git worktree{keptWt === 1 ? "" : "s"} kept: no PR, open PR, or detached
+        </p>
+      )}
       {result.leftovers.length > 0 && (
         <>
           <Heading>Leftovers</Heading>
@@ -183,6 +219,21 @@ function Heading({ children }: { children: string }) {
     <div className="border-b bg-muted/40 px-4 py-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
       {children}
     </div>
+  );
+}
+
+function WorktreeRow({ check: m, removed }: { check: WorktreeCheck; removed: boolean }) {
+  const ok = m.verdict === "prune" || removed;
+  return (
+    <li className="grid grid-cols-[16px_minmax(0,180px)_minmax(0,1fr)_minmax(0,160px)] items-center gap-3 border-b px-4 py-2.5 last:border-b-0">
+      {ok ? <GitMerge className="size-3.5 text-sage" /> : <TriangleAlert className="size-3.5 text-amber" />}
+      <span className={cn("truncate text-[13px]", removed && "text-muted-foreground line-through")}>{m.name}</span>
+      <span className={cn("truncate text-[12.5px]", ok ? "text-sage" : "text-amber")}>
+        {removed ? "removed with git worktree remove" : m.reason}
+        {m.verdict === "review" && !removed && <span className="text-faint"> · kept, review by hand</span>}
+      </span>
+      <span className="truncate text-right font-mono text-[11.5px] text-faint">{tildify(m.path)}</span>
+    </li>
   );
 }
 

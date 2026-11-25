@@ -5,9 +5,9 @@ use crate::app::App;
 use crate::fmt::{self, pad, trunc, trunc_left, width};
 use crate::model::*;
 use crate::theme::*;
-use clove_core::CloneInfo;
 use clove_core::doctor::Level;
 use clove_core::settings::{FIELDS, Kind, Layer};
+use clove_core::{CloneInfo, OtherWorktree};
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::{Constraint, Layout, Margin, Position, Rect};
@@ -492,6 +492,7 @@ fn empty_state(f: &mut Frame, area: Rect, mut lines: Vec<Line>) {
 
 fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
     let total = app.current().map(|d| d.clones.len()).unwrap_or(0);
+    let total_wt = app.current().map(|d| d.worktrees.len()).unwrap_or(0);
     let vis_len = app.visible().len();
     let mut t = vec![Span::styled("clones", title())];
     if app.current().is_some() {
@@ -501,6 +502,15 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
             format!(" {vis_len}/{total}")
         };
         t.push(Span::styled(count, muted()));
+        if total_wt > 0 {
+            t.push(Span::styled(
+                format!(
+                    " · {total_wt} git worktree{}",
+                    if total_wt == 1 { "" } else { "s" }
+                ),
+                muted(),
+            ));
+        }
     }
     if app.filtering || !app.filter.is_empty() {
         t.push(Span::styled("  /", key()));
@@ -579,7 +589,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         empty_state(f, inner, lines);
         return;
     }
-    if total == 0 {
+    if total == 0 && total_wt == 0 {
         empty_state(
             f,
             inner,
@@ -596,7 +606,8 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let clones: Vec<CloneInfo> = app.visible().into_iter().cloned().collect();
-    if clones.is_empty() {
+    let wts: Vec<OtherWorktree> = app.visible_worktrees().into_iter().cloned().collect();
+    if clones.is_empty() && wts.is_empty() {
         empty_state(
             f,
             inner,
@@ -607,7 +618,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         );
         return;
     }
-    draw_table(f, app, area, inner, &clones);
+    draw_table(f, app, area, inner, &clones, &wts);
 }
 
 struct Cols {
@@ -619,16 +630,18 @@ struct Cols {
     path: usize,
 }
 
-fn columns(clones: &[CloneInfo], w: usize) -> Cols {
+fn columns(clones: &[CloneInfo], wts: &[OtherWorktree], w: usize) -> Cols {
     let name = clones
         .iter()
         .map(|c| width(&c.name))
+        .chain(wts.iter().map(|w| width(&w.name)))
         .max()
         .unwrap_or(4)
         .clamp(4, 26);
     let branch = clones
         .iter()
         .map(|c| c.branch.as_deref().map(width).unwrap_or(10))
+        .chain(wts.iter().map(|w| w.branch.as_deref().map(width).unwrap_or(10)))
         .max()
         .unwrap_or(6)
         .clamp(6, 30);
@@ -658,8 +671,24 @@ fn columns(clones: &[CloneInfo], w: usize) -> Cols {
     c
 }
 
-fn draw_table(f: &mut Frame, app: &mut App, area: Rect, inner: Rect, clones: &[CloneInfo]) {
-    let cols = columns(clones, inner.width as usize);
+/// One line of the list: a clone, the worktrees' heading (with a blank line
+/// before it), or a plain worktree.
+enum ListLine<'a> {
+    Clone(usize, &'a CloneInfo),
+    Gap,
+    Heading,
+    Worktree(usize, &'a OtherWorktree),
+}
+
+fn draw_table(
+    f: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    inner: Rect,
+    clones: &[CloneInfo],
+    wts: &[OtherWorktree],
+) {
+    let cols = columns(clones, wts, inner.width as usize);
     let gap = "  ";
     let mut head = format!(
         "  {}{gap}{}{gap}{}{gap}{:>age$}{gap}{:>size$}",
@@ -681,17 +710,65 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect, inner: Rect, clones: &[C
         Line::from(Span::styled(head, muted().add_modifier(Modifier::BOLD))),
     );
 
+    let mut lines: Vec<ListLine> = clones
+        .iter()
+        .enumerate()
+        .map(|(i, c)| ListLine::Clone(i, c))
+        .collect();
+    if !wts.is_empty() {
+        if !clones.is_empty() {
+            lines.push(ListLine::Gap);
+        }
+        lines.push(ListLine::Heading);
+        let n = clones.len();
+        lines.extend(wts.iter().enumerate().map(|(i, w)| ListLine::Worktree(n + i, w)));
+    }
     let h = inner.height.saturating_sub(1) as usize;
-    let len = clones.len();
+    let len = lines.len();
     app.list_height = h;
-    app.list_scroll.follow(app.selected, h, len);
+    // The selection counts rows; the worktrees sit below a heading.
+    let sel_line = lines
+        .iter()
+        .position(|l| matches!(l, ListLine::Clone(i, _) | ListLine::Worktree(i, _) if *i == app.selected))
+        .unwrap_or(0);
+    // Keep the heading in view above the first worktree.
+    let first_wt = clones.len() == app.selected && sel_line > 0;
+    app.list_scroll
+        .follow(if first_wt { sel_line - 1 } else { sel_line }, h, len);
+    app.list_scroll.follow(sel_line, h, len);
     app.list_scroll.clamp(h, len);
     let off = app.list_scroll.offset().min(len.saturating_sub(h));
 
-    for (vi, c) in clones.iter().enumerate().skip(off).take(h) {
-        let r = row(inner, 1 + (vi - off) as u16);
-        let line = clone_row(app, c, &cols);
-        put(f, r, line);
+    for (li, l) in lines.iter().enumerate().skip(off).take(h) {
+        let r = row(inner, 1 + (li - off) as u16);
+        let vi = match l {
+            ListLine::Gap => continue,
+            ListLine::Heading => {
+                put(
+                    f,
+                    r,
+                    Line::from(vec![
+                        Span::styled("  OTHER GIT WORKTREES", muted().add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            trunc(
+                                "  not clones · c makes one a clone",
+                                r.width.saturating_sub(22) as usize,
+                            ),
+                            muted(),
+                        ),
+                    ]),
+                );
+                continue;
+            }
+            ListLine::Clone(vi, c) => {
+                put(f, r, clone_row(app, c, &cols));
+                *vi
+            }
+            ListLine::Worktree(vi, w) => {
+                put(f, r, worktree_row(app, w, &cols));
+                *vi
+            }
+        };
         if vi == app.selected {
             f.buffer_mut().set_style(r, selected());
         }
@@ -748,6 +825,90 @@ fn clone_row<'a>(app: &App, c: &CloneInfo, cols: &Cols) -> Line<'a> {
     Line::from(spans)
 }
 
+/// A plain git worktree: no size or age (clove didn't make it), dimmer than clones.
+fn worktree_row<'a>(app: &App, w: &OtherWorktree, cols: &Cols) -> Line<'a> {
+    let gap = || Span::raw("  ");
+    let busy = app.busy_worktree(&w.path);
+    let dot = match busy {
+        Some(_) => Span::styled(format!("{} ", spinner(app.now_ms)), fg(BOTTLE)),
+        None => Span::styled("◇ ", muted()),
+    };
+    let branch = match &w.branch {
+        Some(b) => Span::styled(pad(b, cols.branch), fg(PLUM)),
+        None => Span::styled(
+            pad(
+                &match w.head.as_deref() {
+                    Some(h) => format!("detached @{}", &h[..h.len().min(7)]),
+                    None => "detached".into(),
+                },
+                cols.branch,
+            ),
+            muted(),
+        ),
+    };
+    let mut parts: Vec<(String, Style)> = vec![];
+    if let Some(j) = busy {
+        parts.push((format!("{}…", j.verb()), fg(BOTTLE)));
+    } else {
+        if w.missing {
+            parts.push(("missing".into(), fg(AMBER)));
+        }
+        if w.locked {
+            parts.push(("locked".into(), muted()));
+        }
+        if w.dirty == Some(true) {
+            parts.push(("dirty".into(), fg(AMBER)));
+        }
+        if w.detached_commits.is_some_and(|n| n > 0) {
+            parts.push(("orphans".into(), fg(AMBER)));
+        }
+        match w.pr.as_ref().map(|p| (&p.state, p.number)) {
+            Some((clove_core::PrState::Merged, _)) => parts.insert(0, ("merged".into(), fg(SAGE))),
+            Some((clove_core::PrState::Open, n)) => parts.push((format!("#{n}"), muted())),
+            _ => {}
+        }
+        if parts.is_empty() {
+            let s = if w.dirty.is_some() { "clean" } else { "·" };
+            parts.push((s.into(), muted()));
+        }
+    }
+    let mut spans = vec![
+        dot,
+        Span::styled(pad(&w.name, cols.name), Style::new()),
+        gap(),
+        branch,
+        gap(),
+    ];
+    spans.extend(cell_parts(parts, cols.changes));
+    spans.push(gap());
+    spans.push(Span::raw(" ".repeat(cols.age)));
+    spans.push(gap());
+    spans.push(Span::raw(" ".repeat(cols.size)));
+    if cols.path > 0 {
+        spans.push(gap());
+        spans.push(Span::styled(trunc_left(&fmt::tilde(&w.path), cols.path), muted()));
+    }
+    Line::from(spans)
+}
+
+/// Joins styled words into a cell `w` wide, cutting what doesn't fit.
+fn cell_parts<'a>(parts: Vec<(String, Style)>, w: usize) -> Vec<Span<'a>> {
+    let mut out = vec![];
+    let mut used = 0;
+    for (i, (s, st)) in parts.into_iter().enumerate() {
+        let s = if i > 0 { format!(" {s}") } else { s };
+        let room = w.saturating_sub(used);
+        if room == 0 {
+            break;
+        }
+        let s = trunc(&s, room);
+        used += width(&s);
+        out.push(Span::styled(s, st));
+    }
+    out.push(Span::raw(" ".repeat(w.saturating_sub(used))));
+    out
+}
+
 /// The CHANGES cell, padded to `w`.
 fn changes<'a>(app: &App, c: &CloneInfo, w: usize) -> Vec<Span<'a>> {
     let mut parts: Vec<(String, Style)> = vec![];
@@ -786,20 +947,7 @@ fn changes<'a>(app: &App, c: &CloneInfo, w: usize) -> Vec<Span<'a>> {
             clove_core::PrState::Closed => {}
         }
     }
-    let mut out = vec![];
-    let mut used = 0;
-    for (i, (s, st)) in parts.into_iter().enumerate() {
-        let s = if i > 0 { format!(" {s}") } else { s };
-        let room = w.saturating_sub(used);
-        if room == 0 {
-            break;
-        }
-        let s = trunc(&s, room);
-        used += width(&s);
-        out.push(Span::styled(s, st));
-    }
-    out.push(Span::raw(" ".repeat(w.saturating_sub(used))));
-    out
+    cell_parts(parts, w)
 }
 
 /// Appends a TIMINGS header and one bar per step, scaled to the slowest; the
@@ -888,7 +1036,87 @@ fn draw_golden_detail(f: &mut Frame, app: &App, area: Rect) -> bool {
     true
 }
 
+fn draw_worktree_detail(f: &mut Frame, app: &App, area: Rect, w: &OtherWorktree) {
+    let block = panel(
+        vec![
+            Span::styled(w.name.clone(), title()),
+            Span::styled(" · git worktree", muted()),
+        ],
+        false,
+    );
+    let inner = block.inner(area).inner(Margin::new(2, 1));
+    f.render_widget(block, area);
+    let iw = inner.width as usize;
+    let vw = iw.saturating_sub(8);
+    let sep = || Span::styled(" · ", muted());
+    let mut lines = vec![];
+    lines.push(kv(
+        "branch",
+        match &w.branch {
+            Some(b) => vec![Span::styled(trunc(b, vw), fg(PLUM))],
+            None => vec![Span::styled("detached", muted())],
+        },
+    ));
+    if let Some(h) = &w.head {
+        lines.push(kv("head", vec![Span::styled(fmt::short_commit(h), muted())]));
+    }
+    let mut status = if let Some(j) = app.busy_worktree(&w.path) {
+        vec![Span::styled(
+            format!("{} {}", spinner(app.now_ms), j.verb()),
+            fg(BOTTLE),
+        )]
+    } else if w.missing {
+        vec![Span::styled("folder is gone", fg(AMBER))]
+    } else {
+        match w.dirty {
+            Some(true) => vec![Span::styled("dirty", fg(AMBER))],
+            Some(false) => vec![Span::styled("clean", muted())],
+            None => vec![Span::styled("·", muted())],
+        }
+    };
+    if w.locked {
+        status.extend([sep(), Span::styled("locked", muted())]);
+    }
+    if let Some(n) = w.detached_commits.filter(|n| *n > 0) {
+        status.extend([
+            sep(),
+            Span::styled(format!("{n} commits on no branch"), fg(AMBER)),
+        ]);
+    }
+    lines.push(kv("status", status));
+    if let Some(r) = &w.lock_reason {
+        lines.push(kv("lock", vec![Span::styled(trunc(r, vw), muted())]));
+    }
+    if let Some(p) = &w.pr {
+        let (word, st) = match p.state {
+            clove_core::PrState::Merged => ("merged", fg(SAGE)),
+            clove_core::PrState::Open => ("open", Style::new()),
+            clove_core::PrState::Closed => ("closed", muted()),
+        };
+        lines.push(kv("pr", vec![Span::styled(format!("#{} {word}", p.number), st)]));
+    }
+    lines.push(kv("path", vec![Span::raw(trunc_left(&fmt::tilde(&w.path), vw))]));
+    lines.push(Line::from(""));
+    for l in fmt::wrap(
+        "a plain git worktree clove didn't make: no image, no warm deps",
+        iw,
+    ) {
+        lines.push(Line::from(Span::styled(l, muted())));
+    }
+    lines.push(Line::from(vec![
+        Span::styled("c", key()),
+        Span::styled(" makes it a clone on its branch · ", muted()),
+        Span::styled("d", key()),
+        Span::styled(" removes it", muted()),
+    ]));
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
 fn draw_detail(f: &mut Frame, app: &mut App, area: Rect) {
+    if let Some(w) = app.selected_worktree().cloned() {
+        draw_worktree_detail(f, app, area, &w);
+        return;
+    }
     let Some(c) = app.selected_clone().cloned() else {
         if draw_golden_detail(f, app, area) {
             return;
@@ -998,6 +1226,15 @@ fn hints(app: &App) -> Vec<Hint> {
             ("⇧tab", "field", BackTab),
             ("esc", "cancel", Esc),
         ],
+        Some(Modal::Adopt(a)) => vec![
+            if a.focus_cancel {
+                ("⏎", "cancel", Enter)
+            } else {
+                ("⏎", "make clone", Enter)
+            },
+            ("←→", "move", Right),
+            ("esc", "cancel", Esc),
+        ],
         Some(Modal::Remove(f)) => {
             let mut v = vec![("↑↓", "move", Down)];
             if matches!(f.focused(), RemoveItem::DeleteBranch | RemoveItem::Force) {
@@ -1072,6 +1309,15 @@ fn hints(app: &App) -> Vec<Hint> {
             let mut v: Vec<Hint> = vec![];
             if app.current().is_some() && !app.has_golden() {
                 v.push(("i", "init", Char('i')));
+            } else if app.selected_worktree().is_some() {
+                v.extend([
+                    ("⏎", "cd", Enter),
+                    ("c", "make clone", Char('c')),
+                    ("d", "remove", Char('d')),
+                    ("n", "new", Char('n')),
+                    ("o", "open", Char('o')),
+                    ("/", "filter", Char('/')),
+                ]);
             } else if let Some(c) = app.selected_clone() {
                 v.extend([
                     ("⏎", "cd", Enter),
@@ -1251,6 +1497,7 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect, list: Rect) {
         Modal::New(form) => draw_new(f, app, list, &form),
         Modal::Help => draw_help(f, app, area),
         Modal::Remove(r) => draw_remove(f, app, area, &r),
+        Modal::Adopt(a) => draw_adopt(f, app, area, &a),
         Modal::Gc(g) => draw_gc(f, app, area, &g),
         Modal::Doctor(d) => draw_doctor(f, app, area, d),
         Modal::Settings(v) => draw_settings(f, app, area, v),
@@ -1425,6 +1672,7 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
                 ("d", "remove (asks first)"),
                 ("m / u", "mount / unmount"),
                 ("o", "open in $EDITOR"),
+                ("c", "make a plain git worktree a clone"),
                 ("/", "filter by name or branch"),
                 ("↑↓ jk", "move · wheel scrolls"),
             ],
@@ -1442,7 +1690,7 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
             &[
                 ("tab [ ] 1-9", "switch repository"),
                 ("s", "settings, service"),
-                ("g", "cleanup: merged clones, leftovers"),
+                ("g", "cleanup: merged clones/worktrees"),
                 ("D", "doctor"),
                 ("ctrl-r", "reload now"),
                 ("q esc", "quit"),
@@ -1493,17 +1741,35 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
         muted(),
     )));
     lines.push(Line::from(""));
-    match (r.mounted, r.dirty) {
-        (true, Some(true)) => lines.push(Line::from(Span::styled(
-            "! uncommitted changes will be discarded",
-            fg(AMBER).add_modifier(Modifier::BOLD),
-        ))),
-        (true, Some(false)) => lines.push(Line::from(Span::styled("✓ working tree is clean", fg(SAGE)))),
-        (true, None) => lines.push(Line::from(Span::styled("· working tree state unknown", muted()))),
-        (false, _) => lines.push(Line::from(Span::styled(
-            "○ not mounted: anything uncommitted inside the image goes too",
+    if r.worktree {
+        lines.push(Line::from(Span::styled(
+            "plain git worktree: `git worktree remove`, never forced",
             muted(),
-        ))),
+        )));
+        match &r.blocker {
+            Some(b) => {
+                for l in fmt::wrap(&format!("✗ {b}"), iw) {
+                    lines.push(Line::from(Span::styled(
+                        l,
+                        fg(AMBER).add_modifier(Modifier::BOLD),
+                    )));
+                }
+            }
+            None => lines.push(Line::from(Span::styled("✓ working tree is clean", fg(SAGE)))),
+        }
+    } else {
+        match (r.mounted, r.dirty) {
+            (true, Some(true)) => lines.push(Line::from(Span::styled(
+                "! uncommitted changes will be discarded",
+                fg(AMBER).add_modifier(Modifier::BOLD),
+            ))),
+            (true, Some(false)) => lines.push(Line::from(Span::styled("✓ working tree is clean", fg(SAGE)))),
+            (true, None) => lines.push(Line::from(Span::styled("· working tree state unknown", muted()))),
+            (false, _) => lines.push(Line::from(Span::styled(
+                "○ not mounted: anything uncommitted inside the image goes too",
+                muted(),
+            ))),
+        }
     }
     if let Some(a) = r.ahead.filter(|a| *a > 0) {
         let s = format!(
@@ -1518,8 +1784,11 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
         )));
     }
     if r.inside {
+        let what = if r.worktree { "worktree" } else { "clone" };
         for l in fmt::wrap(
-            "you're in this clone: clove quits, moves your shell to the main checkout, then removes it",
+            &format!(
+                "you're in this {what}: clove quits, moves your shell to the main checkout, then removes it"
+            ),
             iw,
         ) {
             lines.push(Line::from(Span::styled(l, muted())));
@@ -1552,13 +1821,15 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
             Span::styled(trunc(b, iw.saturating_sub(30)), fg(PLUM)),
         ]));
     }
-    toggles.push((lines.len(), RemoveItem::Force));
-    let (cursor, mark, st) = check(RemoveItem::Force, r.force);
-    lines.push(Line::from(vec![
-        cursor,
-        mark,
-        Span::styled("force: discard changes, eject if busy", st),
-    ]));
+    if !r.worktree {
+        toggles.push((lines.len(), RemoveItem::Force));
+        let (cursor, mark, st) = check(RemoveItem::Force, r.force);
+        lines.push(Line::from(vec![
+            cursor,
+            mark,
+            Span::styled("force: discard changes, eject if busy", st),
+        ]));
+    }
     lines.push(Line::from(""));
     let danger = r.force && r.dirty == Some(true);
     let confirm = if danger { "discard & remove" } else { "remove" };
@@ -1577,7 +1848,7 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
     let rect = centered(area, w, h);
     open_modal(f, &mut app.hits, area, rect);
     let block = modal_block(vec![
-        Span::styled("remove ", title()),
+        Span::styled(if r.worktree { "remove worktree " } else { "remove " }, title()),
         Span::styled(r.name.clone(), bold()),
     ]);
     let inner = block.inner(rect);
@@ -1585,6 +1856,68 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
     for (i, item) in toggles {
         app.hits.push((row(inner, i as u16), Hit::RemoveRow(item)));
     }
+    let bx = inner.x + (iw.saturating_sub(bw)) as u16;
+    let by = inner.y + btn_line;
+    if by < inner.bottom() {
+        app.hits.push((Rect::new(bx, by, b1w, 1), key_hit('y')));
+        app.hits.push((
+            Rect::new(bx + b1w + 2, by, b2w, 1),
+            Hit::Key(KeyCode::Esc, KeyModifiers::NONE),
+        ));
+    }
+}
+
+fn draw_adopt(f: &mut Frame, app: &mut App, area: Rect, a: &AdoptForm) {
+    let w: u16 = 64;
+    let iw = (w - 6) as usize;
+    let mut lines = vec![];
+    let mut head = vec![Span::styled(a.name.clone(), bold())];
+    if let Some(b) = &a.branch {
+        head.push(Span::styled("  on ", muted()));
+        head.push(Span::styled(b.clone(), fg(PLUM)));
+    }
+    lines.push(Line::from(head));
+    lines.push(Line::from(Span::styled(
+        trunc_left(&fmt::tilde(&a.path), iw),
+        muted(),
+    )));
+    lines.push(Line::from(""));
+    for l in fmt::wrap(
+        "makes a clove clone on the same branch, then removes this worktree with `git worktree remove`. Ignored files in it (build output, .env) go with it. If the clone fails, the worktree stays as it was.",
+        iw,
+    ) {
+        lines.push(Line::from(Span::styled(l, muted())));
+    }
+    if let Some(b) = &a.blocker {
+        lines.push(Line::from(""));
+        for l in fmt::wrap(&format!("✗ {b}"), iw) {
+            lines.push(Line::from(Span::styled(
+                l,
+                fg(AMBER).add_modifier(Modifier::BOLD),
+            )));
+        }
+    }
+    lines.push(Line::from(""));
+    let b1 = button("make clone", !a.focus_cancel, false);
+    let b2 = button("cancel", a.focus_cancel, false);
+    let (b1w, b2w) = (width(&b1.content) as u16, width(&b2.content) as u16);
+    let bw = (b1w + 2 + b2w) as usize;
+    let btn_line = lines.len() as u16;
+    lines.push(Line::from(vec![
+        Span::raw(" ".repeat(iw.saturating_sub(bw))),
+        b1,
+        Span::raw("  "),
+        b2,
+    ]));
+    let h = lines.len() as u16 + 4;
+    let rect = centered(area, w, h);
+    open_modal(f, &mut app.hits, area, rect);
+    let block = modal_block(vec![
+        Span::styled("make a clone of ", title()),
+        Span::styled(a.name.clone(), bold()),
+    ]);
+    let inner = block.inner(rect);
+    f.render_widget(Paragraph::new(lines).block(block), rect);
     let bx = inner.x + (iw.saturating_sub(bw)) as u16;
     let by = inner.y + btn_line;
     if by < inner.bottom() {
@@ -1666,6 +1999,49 @@ fn draw_gc(f: &mut Frame, app: &mut App, area: Rect, g: &GcView) {
                     muted(),
                 )));
             }
+            let wt_shown: Vec<_> = c
+                .worktrees
+                .iter()
+                .filter(|m| m.verdict != Verdict::Keep)
+                .collect();
+            let wt_kept = c.worktrees.len() - wt_shown.len();
+            if !c.worktrees.is_empty() {
+                lines.push(Line::from(""));
+                lines.push(section("merged git worktrees"));
+                if wt_shown.is_empty() {
+                    lines.push(Line::from(Span::styled("  none", muted())));
+                }
+                let nw = wt_shown.iter().map(|m| width(&m.name)).max().unwrap_or(4).min(24);
+                for m in &wt_shown {
+                    let gone = c.removed_worktrees.contains(&m.path);
+                    let (icon, st) = match m.verdict {
+                        _ if gone => ("✓ ", fg(SAGE)),
+                        Verdict::Prune => ("✓ ", fg(SAGE)),
+                        _ => ("! ", fg(AMBER)),
+                    };
+                    let why = if gone {
+                        "removed".to_string()
+                    } else {
+                        m.reason.clone()
+                    };
+                    let room = iw.saturating_sub(nw + 4);
+                    lines.push(Line::from(vec![
+                        Span::styled(icon, st),
+                        Span::styled(pad(&trunc(&m.name, nw), nw), Style::new()),
+                        Span::raw("  "),
+                        Span::styled(trunc(&why, room), st),
+                    ]));
+                }
+                if wt_kept > 0 {
+                    lines.push(Line::from(Span::styled(
+                        format!(
+                            "  {wt_kept} other worktree{} kept: no PR, open, or detached",
+                            if wt_kept == 1 { "" } else { "s" }
+                        ),
+                        muted(),
+                    )));
+                }
+            }
             lines.push(Line::from(""));
             lines.push(section("leftovers"));
             if c.leftovers.is_empty() {
@@ -1692,7 +2068,7 @@ fn draw_gc(f: &mut Frame, app: &mut App, area: Rect, g: &GcView) {
                 lines.push(Line::from(Span::styled("done", fg(SAGE))));
             } else if crate::app::cleanup_has_work(c) {
                 lines.push(Line::from(Span::styled(
-                    "removes the ✓ clones (and their branches) and the leftovers",
+                    "removes the ✓ ones (and their branches) and the leftovers",
                     muted(),
                 )));
                 lines.push(Line::from(""));

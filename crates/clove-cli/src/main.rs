@@ -19,7 +19,8 @@ Getting started:
   clove new feat/login       a ready worktree in ~1s, deps and env included
   clove ls                   list clones
   clove rm feat/login        unmount and delete it
-  clove prune                remove clones whose PR is merged
+  clove prune                remove clones (and plain git worktrees) whose PR is merged
+  clove adopt ../old-wt      turn a plain git worktree into a clone on its branch
   clove repos                every repo clove manages
   clove                      all of the above, interactively (also: clove tui)
 
@@ -52,14 +53,36 @@ enum Cmd {
     /// Create a clone on a branch (new, local, or from origin).
     #[command(visible_alias = "add")]
     New(NewArgs),
-    /// List clones.
+    /// List clones, then the repo's other git worktrees (ones clove didn't make).
     #[command(visible_alias = "ls")]
     List {
         /// Skip git status (faster with many clones).
         #[arg(long)]
         fast: bool,
+        /// Only the plain git worktrees. With --json, their list (plain `ls
+        /// --json` stays the clones' list).
+        #[arg(long)]
+        worktrees: bool,
+    },
+    /// Turn a plain git worktree into a clone on the same branch. The worktree
+    /// must be clean; it is removed (`git worktree remove`) once the clone exists.
+    Adopt {
+        /// Path, folder name or branch of the worktree.
+        #[arg(add = ArgValueCompleter::new(complete::worktrees))]
+        worktree: String,
+        /// Clone name (default: the branch with / turned into -).
+        #[arg(short, long)]
+        name: Option<String>,
+        /// Skip setup steps.
+        #[arg(long)]
+        no_setup: bool,
+        /// Stay in the current directory (with shell integration, adopt cds by default).
+        #[arg(long)]
+        no_cd: bool,
     },
     /// Remove clones: unmount, delete the image and the git registration.
+    /// A plain git worktree (path or folder name) goes with `git worktree
+    /// remove`, never forced: locked, dirty or detached work stays.
     #[command(visible_alias = "rm")]
     Remove(RemoveArgs),
     /// Change directory to a clone (needs shell integration). No argument: the main checkout.
@@ -126,7 +149,8 @@ enum Cmd {
     },
     /// Check the machine and repo setup.
     Doctor,
-    /// Remove clones whose pull request is merged (asks GitHub through `gh`).
+    /// Remove clones whose pull request is merged (asks GitHub through `gh`),
+    /// and plain git worktrees whose PR is merged and that are clean and unlocked.
     /// Lists them unless --apply, or you confirm the prompt.
     Prune {
         /// Remove them and their branches without asking.
@@ -282,7 +306,7 @@ struct NewArgs {
 
 #[derive(Args)]
 struct RemoveArgs {
-    #[arg(add = ArgValueCompleter::new(complete::clones), required_unless_present = "all")]
+    #[arg(add = ArgValueCompleter::new(complete::removable), required_unless_present = "all")]
     clones: Vec<String>,
     /// Every clone of this repo.
     #[arg(long, conflicts_with = "clones")]
@@ -443,14 +467,53 @@ fn run(cli: Cli) -> Result<()> {
                 bail!("setup failed: {}", info.failed_steps.join(", "));
             }
         }
-        Cmd::List { fast } => cmd_list(&cli, !fast)?,
+        Cmd::List { fast, worktrees } => cmd_list(&cli, !fast, *worktrees)?,
+        Cmd::Adopt {
+            worktree,
+            name,
+            no_setup,
+            no_cd,
+        } => cmd_adopt(&cli, worktree, name.clone(), *no_setup, *no_cd, r)?,
         Cmd::Remove(a) => {
             let c = repo(&cli)?;
+            // Clones first; what isn't one may be a plain git worktree.
+            let mut plain = vec![];
             let names = if a.all {
                 c.clone_names()?
             } else {
-                a.clones.iter().map(|q| c.resolve(q)).collect::<Result<_>>()?
+                let mut names = vec![];
+                for q in &a.clones {
+                    match c.resolve(q) {
+                        Ok(n) => names.push(n),
+                        Err(e) => match c.resolve_worktree(q) {
+                            Ok(w) => plain.push(w),
+                            Err(_) => return Err(e),
+                        },
+                    }
+                }
+                names
             };
+            let mut removed_worktrees = vec![];
+            for w in &plain {
+                if !cli.json {
+                    eprintln!(
+                        "{} {} {}",
+                        paint(MAGENTA, "−"),
+                        paint(BOLD, &w.name),
+                        paint(DIM, "(plain git worktree: git worktree remove)")
+                    );
+                }
+                let opts = RemoveOptions {
+                    force: a.force,
+                    delete_branch: a.delete_branch,
+                    branch_merged: false,
+                };
+                c.remove_worktree(&w.path, &opts, r)?;
+                if std::env::current_dir().is_ok_and(|d| d.starts_with(&w.path)) {
+                    shell::request_cd(&c.root);
+                }
+                removed_worktrees.push(w.path.clone());
+            }
             // The shell's cwd keeps a volume busy. With shell integration, the
             // wrapper cds to the main checkout and then removes that clone.
             let cwd = std::env::current_dir().ok();
@@ -513,7 +576,11 @@ fn run(cli: Cli) -> Result<()> {
                 spawn_pending_waiter(&c);
             }
             if cli.json {
-                return emit(&serde_json::json!({ "removed": removed, "when_free": when_free }));
+                return emit(&serde_json::json!({
+                    "removed": removed,
+                    "when_free": when_free,
+                    "removed_worktrees": removed_worktrees,
+                }));
             }
         }
         Cmd::Cd { clone } => {
@@ -1023,7 +1090,9 @@ fn maybe_background_pr_check(c: &Clove) {
     let fresh = c
         .prune_cache()
         .is_some_and(|p| clove_core::util::now_unix().saturating_sub(p.checked_at) < 300);
-    if fresh || c.clone_names().map(|n| n.is_empty()).unwrap_or(true) {
+    let nothing = c.clone_names().map(|n| n.is_empty()).unwrap_or(true)
+        && c.other_worktrees(false).map(|w| w.is_empty()).unwrap_or(true);
+    if fresh || nothing {
         return;
     }
     let Ok(exe) = std::env::current_exe() else { return };
@@ -1120,8 +1189,20 @@ fn exec_in(c: &Clove, name: &str, path: &std::path::Path, command: &[String]) ->
     Err(err).with_context(|| format!("exec {prog}"))
 }
 
-fn cmd_list(cli: &Cli, status: bool) -> Result<()> {
+fn cmd_list(cli: &Cli, status: bool, only_worktrees: bool) -> Result<()> {
     let c = repo(cli)?;
+    let others = c.other_worktrees(status)?;
+    if only_worktrees {
+        maybe_background_pr_check(&c);
+        if cli.json {
+            return emit(&others);
+        }
+        if others.is_empty() {
+            eprintln!("no other git worktrees");
+        }
+        print_worktrees(&others, status, false);
+        return Ok(());
+    }
     let clones = c.list(status)?;
     maybe_background_pr_check(&c);
     if cli.json {
@@ -1134,6 +1215,7 @@ fn cmd_list(cli: &Cli, status: bool) -> Result<()> {
             "clove init"
         };
         eprintln!("no clones yet. {}", paint(BOLD, hint));
+        print_worktrees(&others, status, true);
         return Ok(());
     }
     // PRs from the last `clove prune` or background check; never asks GitHub here.
@@ -1212,6 +1294,7 @@ fn cmd_list(cli: &Cli, status: bool) -> Result<()> {
         t.row(row);
     }
     t.print();
+    print_worktrees(&others, status, true);
     if broken > 0 {
         eprintln!(
             "\n{} {broken} clone{} broken outside clove: {} finishes removing {}",
@@ -1232,17 +1315,135 @@ fn cmd_list(cli: &Cli, status: bool) -> Result<()> {
     Ok(())
 }
 
+/// The "other git worktrees" section: dimmer than clones, after them.
+fn print_worktrees(others: &[clove_core::OtherWorktree], status: bool, heading: bool) {
+    if others.is_empty() {
+        return;
+    }
+    if heading {
+        eprintln!(
+            "\n{} {}",
+            paint(DIM, "other git worktrees"),
+            paint(
+                DIM,
+                "(not clones: `clove adopt` makes one a clone, `clove rm` removes it)"
+            )
+        );
+    }
+    let mut t = Table::new(&["", "NAME", "BRANCH", "STATE", "PR", "PATH"]);
+    for w in others {
+        let branch = match &w.branch {
+            Some(b) => styled(MAGENTA, b.clone()),
+            None => styled(DIM, format!("({})", w.head.as_deref().unwrap_or("detached"))),
+        };
+        let mut state = vec![];
+        if w.missing {
+            state.push("missing".to_string());
+        }
+        if w.locked {
+            state.push(match &w.lock_reason {
+                Some(r) => format!("locked: {r}"),
+                None => "locked".into(),
+            });
+        }
+        if w.dirty == Some(true) {
+            state.push("dirty".into());
+        }
+        if let Some(n) = w.detached_commits.filter(|n| *n > 0) {
+            state.push(format!(
+                "{n} commit{} on no branch",
+                if n == 1 { "" } else { "s" }
+            ));
+        }
+        let state = if state.is_empty() {
+            styled(DIM, if status { "clean" } else { "-" })
+        } else {
+            styled(YELLOW, state.join(", "))
+        };
+        let pr = match &w.pr {
+            Some(p) => {
+                let (style, word) = match p.state {
+                    clove_core::PrState::Merged => (GREEN, "merged"),
+                    clove_core::PrState::Open => (CYAN, "open"),
+                    clove_core::PrState::Closed => (DIM, "closed"),
+                };
+                styled(style, format!("#{} {word}", p.number))
+            }
+            None => styled(DIM, "-"),
+        };
+        t.row(vec![
+            styled(DIM, "◇"),
+            cell(w.name.clone()),
+            branch,
+            state,
+            pr,
+            styled(DIM, tilde(&w.path)),
+        ]);
+    }
+    t.print();
+}
+
+fn cmd_adopt(
+    cli: &Cli,
+    query: &str,
+    name: Option<String>,
+    no_setup: bool,
+    no_cd: bool,
+    r: &dyn clove_core::Reporter,
+) -> Result<()> {
+    let c = repo(cli)?;
+    let w = c.resolve_worktree(query)?;
+    if !cli.json {
+        eprintln!(
+            "{} {} {}",
+            paint(GREEN, "+"),
+            paint(BOLD, &w.name),
+            paint(DIM, format!("(git worktree at {}) → clone", tilde(&w.path)))
+        );
+    }
+    let was_inside = std::env::current_dir().is_ok_and(|d| d.starts_with(&w.path));
+    let info = c.adopt(&w.path, &clove_core::AdoptOptions { name, no_setup }, r)?;
+    if cli.json {
+        return emit(&info);
+    }
+    eprintln!(
+        "\n{} {} {} {}",
+        paint(GREEN, "●"),
+        paint(BOLD, &info.name),
+        paint(DIM, format!("ready in {}", secs(info.total_ms))),
+        tilde(&info.path)
+    );
+    if !info.failed_steps.is_empty() {
+        eprintln!(
+            "  {} setup failed: {} (the clone is usable; see the log above)",
+            paint(YELLOW, "!"),
+            info.failed_steps.join(", ")
+        );
+    }
+    // The old folder is gone; a shell standing in it follows the branch.
+    if (!no_cd || was_inside) && !shell::request_cd(&info.path) && std::io::stdout().is_terminal() {
+        hint_shell_init();
+    }
+    Ok(())
+}
+
 fn cmd_prune(cli: &Cli, apply: bool, r: &dyn clove_core::Reporter) -> Result<()> {
     use clove_core::Verdict;
     let c = repo(cli)?;
-    let (checks, warning) = c.merge_checks(true)?;
+    let clove_core::Checks {
+        clones: checks,
+        worktrees,
+        warning,
+    } = c.all_merge_checks(true)?;
     let go: Vec<&clove_core::MergeCheck> = checks.iter().filter(|m| m.verdict == Verdict::Prune).collect();
+    let go_wt: Vec<&clove_core::WorktreeCheck> =
+        worktrees.iter().filter(|m| m.verdict == Verdict::Prune).collect();
     let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
     if !cli.json {
         if let Some(w) = &warning {
             eprintln!("{} {w}", paint(YELLOW, "!"));
         }
-        if checks.is_empty() {
+        if checks.is_empty() && worktrees.is_empty() {
             eprintln!("no clones yet.");
             return Ok(());
         }
@@ -1261,25 +1462,63 @@ fn cmd_prune(cli: &Cli, apply: bool, r: &dyn clove_core::Reporter) -> Result<()>
                 cell(clove_core::util::human_bytes(m.own_bytes)),
             ]);
         }
-        t.print();
+        if !checks.is_empty() {
+            t.print();
+        }
+        if !worktrees.is_empty() {
+            eprintln!(
+                "\n{}",
+                paint(
+                    DIM,
+                    "other git worktrees (removed with `git worktree remove`, never forced)"
+                )
+            );
+            let mut t = Table::new(&["", "NAME", "BRANCH", "WHY", "PATH"]);
+            for m in &worktrees {
+                let (mark, why) = match m.verdict {
+                    Verdict::Prune => (styled(GREEN, "✓"), styled(GREEN, m.reason.clone())),
+                    Verdict::Review => (styled(YELLOW, "!"), styled(YELLOW, m.reason.clone())),
+                    Verdict::Keep => (styled(DIM, "·"), styled(DIM, m.reason.clone())),
+                };
+                t.row(vec![
+                    mark,
+                    cell(m.name.clone()),
+                    styled(MAGENTA, m.branch.clone().unwrap_or_else(|| "(detached)".into())),
+                    why,
+                    styled(DIM, tilde(&m.path)),
+                ]);
+            }
+            t.print();
+        }
     }
     let freed: u64 = go.iter().map(|m| m.own_bytes).sum();
     let mut confirmed = apply;
-    if go.is_empty() {
+    if go.is_empty() && go_wt.is_empty() {
         if !cli.json {
             eprintln!("\nnothing to prune");
         }
     } else if !apply && !cli.json {
+        let mut parts = vec![];
+        if !go.is_empty() {
+            parts.push(format!(
+                "{} clone{} ({})",
+                go.len(),
+                if go.len() == 1 { "" } else { "s" },
+                clove_core::util::human_bytes(freed)
+            ));
+        }
+        if !go_wt.is_empty() {
+            parts.push(format!(
+                "{} git worktree{}",
+                go_wt.len(),
+                if go_wt.len() == 1 { "" } else { "s" }
+            ));
+        }
+        let n = go.len() + go_wt.len();
         let what = format!(
-            "{} clone{} and {} ({})",
-            go.len(),
-            if go.len() == 1 { "" } else { "s" },
-            if go.len() == 1 {
-                "its branch"
-            } else {
-                "their branches"
-            },
-            clove_core::util::human_bytes(freed)
+            "{} and {}",
+            parts.join(" and "),
+            if n == 1 { "its branch" } else { "their branches" }
         );
         if interactive {
             confirmed = ask(&format!("Remove {what}?"), &[], false)?;
@@ -1288,6 +1527,7 @@ fn cmd_prune(cli: &Cli, apply: bool, r: &dyn clove_core::Reporter) -> Result<()>
         }
     }
     let mut removed = vec![];
+    let mut removed_worktrees: Vec<std::path::PathBuf> = vec![];
     if confirmed {
         // The shell's cwd keeps a volume busy: leave first, then prune again.
         let cwd = std::env::current_dir().ok();
@@ -1320,9 +1560,36 @@ fn cmd_prune(cli: &Cli, apply: bool, r: &dyn clove_core::Reporter) -> Result<()>
                 Err(e) => eprintln!("{} kept {}: {e:#}", paint(YELLOW, "!"), m.clone),
             }
         }
+        for m in &go_wt {
+            if !cli.json {
+                eprintln!(
+                    "{} {} {}",
+                    paint(MAGENTA, "−"),
+                    paint(BOLD, &m.name),
+                    paint(DIM, "(git worktree)")
+                );
+            }
+        }
+        // Failures come back in `kept`, printed below.
+        let (gone, kept) = c.remove_merged_worktrees(&worktrees, &Silent);
+        for k in &kept {
+            if !cli.json {
+                eprintln!("{} {k}", paint(YELLOW, "!"));
+            }
+        }
+        if std::env::current_dir().is_ok_and(|d| gone.iter().any(|g| d.starts_with(g))) {
+            shell::request_cd(&c.root);
+        }
+        removed_worktrees = gone;
     }
     if cli.json {
-        return emit(&serde_json::json!({ "checks": checks, "warning": warning, "removed": removed }));
+        return emit(&serde_json::json!({
+            "checks": checks,
+            "worktrees": worktrees,
+            "warning": warning,
+            "removed": removed,
+            "removed_worktrees": removed_worktrees,
+        }));
     }
     Ok(())
 }

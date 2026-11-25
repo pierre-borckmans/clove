@@ -46,6 +46,19 @@ pub enum OpRequest {
         #[serde(default)]
         delete_branch: bool,
     },
+    /// `git worktree remove` on a plain worktree, never forced.
+    RemoveWorktree {
+        root: PathBuf,
+        path: PathBuf,
+        #[serde(default)]
+        delete_branch: bool,
+    },
+    /// Turn a plain worktree into a clone on its branch.
+    Adopt {
+        root: PathBuf,
+        path: PathBuf,
+        name: Option<String>,
+    },
     Deinit {
         root: PathBuf,
     },
@@ -186,6 +199,25 @@ pub fn run(op: &OpRequest, r: &dyn clove_core::Reporter) -> anyhow::Result<serde
                     serde_json::json!({ "when_free": users })
                 }
             }
+        }
+        OpRequest::RemoveWorktree {
+            root,
+            path,
+            delete_branch,
+        } => {
+            let opts = RemoveOptions {
+                delete_branch: *delete_branch,
+                ..Default::default()
+            };
+            Clove::open(root)?.remove_worktree(path, &opts, r)?;
+            serde_json::Value::Null
+        }
+        OpRequest::Adopt { root, path, name } => {
+            let opts = clove_core::AdoptOptions {
+                name: name.clone().filter(|s| !s.trim().is_empty()),
+                no_setup: false,
+            };
+            serde_json::to_value(Clove::open(root)?.adopt(path, &opts, r)?)?
         }
         OpRequest::Deinit { root } => {
             Clove::open(root)?.deinit(r)?;

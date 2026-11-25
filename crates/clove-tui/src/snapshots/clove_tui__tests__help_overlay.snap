@@ -12,25 +12,25 @@ expression: s
 │   web       set up ││             d   remove (asks first)                  │        3h    230M   │
 │                    ││         m / u   mount / unmount                      │ed      3h     14M   │
 │                    ││             o   open in $EDITOR                      │        4d     14M   │
-│                    ││             /   filter by name or branch             │        3h     14M   │
+│                    ││             c   make a plain git worktree a clone    │        3h     14M   │
+│                    ││             /   filter by name or branch             │                     │
 │                    ││         ↑↓ jk   move · wheel scrolls                 │                     │
 │                    ││                                                      │                     │
 │                    ││  GOLDEN IMAGE                                        │                     │
 │                    ││             r   refresh to latest base               │                     │
 │                    ││             i   build it (first time)                │                     │
 │                    ││             l   watch the last operation             │                     │
-│                    ││                                                      │                     │
-│                    ││  ANYWHERE                                            │─────────────────────╯
-│                    ││   tab [ ] 1-9   switch repository                    │─────────────────────╮
+│                    ││                                                      │─────────────────────╯
+│                    ││  ANYWHERE                                            │─────────────────────╮
+│                    ││   tab [ ] 1-9   switch repository                    │                     │
 │                    ││             s   settings, service                    │                     │
-│                    ││             g   cleanup: merged clones, leftovers    │                     │
+│                    ││             g   cleanup: merged clones/worktrees     │                     │
 │                    ││             D   doctor                               │                     │
 │                    ││        ctrl-r   reload now                           │                     │
-│                    ││         q esc   quit                                 │                     │
-│ ────────────────── ││                                                      │                     │
-│ s settings         ││  rows, tabs, buttons and hints are clickable         │                     │
-│ g cleanup          ││                                                      │               3.2s  │
-│ D doctor           │╰──────────────────────────────────────────────────────╯                6ms  │
-│ S service          ││                                                                            │
+│ ────────────────── ││         q esc   quit                                 │                     │
+│ s settings         ││                                                      │                     │
+│ g cleanup          ││  rows, tabs, buttons and hints are clickable         │               3.2s  │
+│ D doctor           ││                                                      │                6ms  │
+│ S service          │╰──────────────────────────────────────────────────────╯                     │
 ╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯
  esc close

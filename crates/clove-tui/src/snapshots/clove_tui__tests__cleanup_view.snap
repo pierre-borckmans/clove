@@ -19,7 +19,7 @@ expression: s
 │                    ││  LEFTOVERS                                                               │                     │
 │                    ││  · unregistered clone image /state/clones/old                            │                     │
 │                    ││                                                                          │                     │
-│                    ││  removes the ✓ clones (and their branches) and the leftovers             │                     │
+│                    ││  removes the ✓ ones (and their branches) and the leftovers               │                     │
 │                    ││                                                                          │                     │
 │                    ││                                                        remove    close   │                     │
 │                    ││                                                                          │                     │

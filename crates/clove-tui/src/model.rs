@@ -22,6 +22,8 @@ pub struct RepoData {
     pub root: PathBuf,
     pub status: RepoStatus,
     pub clones: Vec<CloneInfo>,
+    /// Plain git worktrees clove didn't make (see `Clove::other_worktrees`).
+    pub worktrees: Vec<clove_core::OtherWorktree>,
     pub config: Config,
     /// The last PR check per clone (`clove prune`, the service, or cleanup here).
     pub prs: BTreeMap<String, MergeCheck>,
@@ -62,7 +64,18 @@ pub enum Task {
     Unmount {
         name: String,
     },
-    /// Leftovers and merged clones; `apply` removes both.
+    /// `git worktree remove` on a plain worktree (`name` is for display).
+    RemoveWorktree {
+        path: PathBuf,
+        name: String,
+        delete_branch: bool,
+    },
+    /// Turn a plain worktree into a clone on its branch.
+    Adopt {
+        path: PathBuf,
+        name: String,
+    },
+    /// Leftovers, merged clones and merged worktrees; `apply` removes them.
     Gc {
         apply: bool,
     },
@@ -98,14 +111,7 @@ pub enum Outcome {
     ShellInstalled(PathBuf, bool),
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct Cleanup {
-    pub leftovers: Vec<String>,
-    pub checks: Vec<MergeCheck>,
-    /// GitHub could not be asked; only local proofs counted.
-    pub warning: Option<String>,
-    pub removed: Vec<String>,
-}
+pub use clove_core::Cleanup;
 
 pub enum Msg {
     /// Something the current repo is made of changed on disk.
@@ -249,6 +255,8 @@ impl Job {
                 (None, None) => "new clone".into(),
             },
             Task::Remove { name, .. } => format!("remove {name}"),
+            Task::RemoveWorktree { name, .. } => format!("remove worktree {name}"),
+            Task::Adopt { name, .. } => format!("make {name} a clone"),
             Task::Mount { name } => format!("mount {name}"),
             Task::Unmount { name } => format!("unmount {name}"),
             Task::Gc { apply: false } => "scan for leftovers".into(),
@@ -263,7 +271,8 @@ impl Job {
     /// Short verb for a spinner next to a clone row.
     pub fn verb(&self) -> &'static str {
         match &self.task {
-            Task::Remove { .. } => "removing",
+            Task::Remove { .. } | Task::RemoveWorktree { .. } => "removing",
+            Task::Adopt { .. } => "adopting",
             Task::Mount { .. } => "mounting",
             Task::Unmount { .. } => "unmounting",
             Task::New(_) => "creating",
@@ -279,9 +288,28 @@ impl Job {
         }
     }
 
+    /// Plain worktree this job works on, if any.
+    pub fn worktree(&self) -> Option<&std::path::Path> {
+        match &self.task {
+            Task::RemoveWorktree { path, .. } | Task::Adopt { path, .. } => Some(path),
+            _ => None,
+        }
+    }
+
+    /// What the job works on, for messages: a clone or worktree name.
+    pub fn subject(&self) -> &str {
+        match &self.task {
+            Task::RemoveWorktree { name, .. } | Task::Adopt { name, .. } => name,
+            _ => self.target().unwrap_or(""),
+        }
+    }
+
     /// Jobs with steps and output worth watching get the progress view.
     pub fn has_progress(&self) -> bool {
-        matches!(self.task, Task::Init | Task::Refresh | Task::New(_))
+        matches!(
+            self.task,
+            Task::Init | Task::Refresh | Task::New(_) | Task::Adopt { .. }
+        )
     }
 
     pub fn elapsed_ms(&self, now_ms: u64) -> u64 {
@@ -442,6 +470,10 @@ pub struct RemoveForm {
     pub focus: usize,
     /// The shell that started the TUI is inside this clone.
     pub inside: bool,
+    /// A plain git worktree, not a clone: no force, `git worktree remove`.
+    pub worktree: bool,
+    /// Why a plain worktree can't go (locked, dirty, ...), if it can't.
+    pub blocker: Option<String>,
 }
 
 /// The focusable rows of the remove dialog, top to bottom.
@@ -459,7 +491,10 @@ impl RemoveForm {
         if self.branch.is_some() {
             v.push(RemoveItem::DeleteBranch);
         }
-        v.extend([RemoveItem::Force, RemoveItem::Remove, RemoveItem::Cancel]);
+        if !self.worktree {
+            v.push(RemoveItem::Force);
+        }
+        v.extend([RemoveItem::Remove, RemoveItem::Cancel]);
         v
     }
 
@@ -485,6 +520,18 @@ impl RemoveForm {
     }
 }
 
+/// Confirms turning a plain worktree into a clone.
+#[derive(Debug, Clone)]
+pub struct AdoptForm {
+    pub name: String,
+    pub path: PathBuf,
+    pub branch: Option<String>,
+    /// Why it can't be adopted (dirty, detached, ...), if it can't.
+    pub blocker: Option<String>,
+    /// Cancel has focus (else convert).
+    pub focus_cancel: bool,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct GcView {
     pub result: Option<Cleanup>,
@@ -507,6 +554,7 @@ pub enum Modal {
     Help,
     New(NewForm),
     Remove(RemoveForm),
+    Adopt(AdoptForm),
     Gc(GcView),
     Doctor(DoctorView),
     Settings(SettingsView),

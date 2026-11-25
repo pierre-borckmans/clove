@@ -174,6 +174,7 @@ fn data(root: impl Into<PathBuf>, status: RepoStatus, clones: Vec<CloneInfo>) ->
         root: root.into(),
         status,
         clones,
+        worktrees: vec![],
         fields: clove_core::settings::resolve(&[None, None, None], &config()),
         config: config(),
         prs: Default::default(),
@@ -412,7 +413,7 @@ fn cleanup_view() {
                 m("spike-cache", Verdict::Keep, "no PR", None),
             ],
             warning: None,
-            removed: vec![],
+            ..Default::default()
         }),
         ..Default::default()
     }));
@@ -1378,4 +1379,190 @@ fn reload_requested_mid_load_runs_after_it() {
         service: false,
     });
     assert!(app.needs_reload());
+}
+
+fn worktree(name: &str, branch: Option<&str>) -> clove_core::OtherWorktree {
+    clove_core::OtherWorktree {
+        name: name.into(),
+        path: PathBuf::from(format!("/work/{name}")),
+        branch: branch.map(String::from),
+        head: Some("1a2b3c4d5e6f".into()),
+        locked: false,
+        lock_reason: None,
+        prunable: None,
+        missing: false,
+        dirty: Some(false),
+        detached_commits: branch.is_none().then_some(0),
+        pr: None,
+        blocker: None,
+    }
+}
+
+/// The app with three plain worktrees after the five clones: a merged one,
+/// a locked dirty one, and a detached one.
+fn app_with_worktrees() -> App {
+    let mut app = app();
+    let mut merged = worktree("app-docs", Some("pierre/docs"));
+    merged.pr = Some(clove_core::Pr {
+        number: 41,
+        state: clove_core::PrState::Merged,
+        head_oid: "1a2b3c".into(),
+        title: String::new(),
+        url: String::new(),
+    });
+    let mut locked = worktree("app-agent", Some("agent/task"));
+    locked.locked = true;
+    locked.lock_reason = Some("agent busy".into());
+    locked.dirty = Some(true);
+    locked.blocker = Some("app-agent is locked (agent busy)".into());
+    let det = worktree("app-use", None);
+    let root = PathBuf::from("/work/app");
+    let mut d = app.data.get(&root).unwrap().clone();
+    d.worktrees = vec![merged, locked, det];
+    app.apply_data(d);
+    app
+}
+
+#[test]
+fn worktrees_list_under_the_clones() {
+    let mut app = app_with_worktrees();
+    let (s, _) = render(&mut app, 140, 30);
+    insta::assert_snapshot!(s);
+    // Selection runs from the last clone into the worktrees.
+    key(&mut app, KeyCode::End);
+    assert_eq!(app.selected_worktree().unwrap().name, "app-use");
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Up);
+    assert_eq!(app.selected_worktree().unwrap().name, "app-docs");
+    key(&mut app, KeyCode::Up);
+    assert_eq!(app.selected_clone().unwrap().name, "detached");
+    // The filter covers worktrees too.
+    key(&mut app, KeyCode::Char('/'));
+    typed(&mut app, "agent");
+    key(&mut app, KeyCode::Enter);
+    assert!(app.visible().is_empty());
+    assert_eq!(app.selected_worktree().unwrap().name, "app-agent");
+}
+
+#[test]
+fn worktree_detail_and_mouse() {
+    let mut app = app_with_worktrees();
+    let (s, _) = render(&mut app, 140, 30);
+    let (x, y) = find(&s, "app-docs");
+    click(&mut app, x, y);
+    assert_eq!(app.selected_worktree().unwrap().name, "app-docs");
+    let (s, _) = render(&mut app, 140, 30);
+    assert!(s.contains("app-docs · git worktree"), "{s}");
+    assert!(s.contains("#41 merged"), "{s}");
+    // Double click cds into it, like a clone.
+    app.now_ms += 150;
+    click(&mut app, x, y);
+    assert_eq!(app.exit, Some(Exit::Cd("/work/app-docs".into())));
+}
+
+#[test]
+fn removing_a_worktree_never_forces() {
+    let mut app = app_with_worktrees();
+    key(&mut app, KeyCode::End);
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Char('d'));
+    let Some(Modal::Remove(f)) = &app.modal else {
+        panic!("no remove dialog");
+    };
+    assert!(f.worktree);
+    assert!(!f.items().contains(&RemoveItem::Force));
+    let (s, _) = render(&mut app, 120, 28);
+    assert!(s.contains("never forced"), "{s}");
+    // Up from the remove button reaches "also delete branch".
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Char(' '));
+    key(&mut app, KeyCode::Down);
+    let fx = key(&mut app, KeyCode::Enter);
+    assert!(matches!(&fx[..], [Effect::Spawn { .. }]));
+    match &app.jobs.last().unwrap().task {
+        Task::RemoveWorktree {
+            path, delete_branch, ..
+        } => {
+            assert_eq!(path, &PathBuf::from("/work/app-docs"));
+            assert!(*delete_branch);
+        }
+        t => panic!("{t:?}"),
+    }
+    // A locked worktree: the dialog says why, and Enter does nothing.
+    key(&mut app, KeyCode::Down);
+    assert_eq!(app.selected_worktree().unwrap().name, "app-agent");
+    key(&mut app, KeyCode::Char('d'));
+    let (s, _) = render(&mut app, 120, 28);
+    assert!(s.contains("locked (agent busy)"), "{s}");
+    let jobs = app.jobs.len();
+    assert!(key(&mut app, KeyCode::Enter).is_empty());
+    assert_eq!(app.jobs.len(), jobs);
+    assert!(matches!(app.modal, Some(Modal::Remove(_))));
+}
+
+#[test]
+fn make_a_worktree_a_clone() {
+    let mut app = app_with_worktrees();
+    key(&mut app, KeyCode::End);
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Char('c'));
+    let (s, _) = render(&mut app, 120, 28);
+    insta::assert_snapshot!(s);
+    let fx = key(&mut app, KeyCode::Enter);
+    assert!(matches!(&fx[..], [Effect::Spawn { .. }]));
+    let job = app.jobs.last().unwrap();
+    assert!(matches!(&job.task, Task::Adopt { path, .. } if path == &PathBuf::from("/work/app-docs")));
+    // It streams setup steps like a new clone.
+    assert!(matches!(app.modal, Some(Modal::Job(_))));
+
+    // A detached worktree has no branch for a clone.
+    app.modal = None;
+    key(&mut app, KeyCode::End);
+    key(&mut app, KeyCode::Char('c'));
+    let Some(Modal::Adopt(a)) = &app.modal else {
+        panic!("no adopt dialog");
+    };
+    assert!(a.blocker.as_deref().is_some_and(|b| b.contains("detached")));
+    let n = app.jobs.len();
+    key(&mut app, KeyCode::Enter);
+    assert_eq!(app.jobs.len(), n);
+}
+
+#[test]
+fn cleanup_lists_merged_worktrees() {
+    use clove_core::{Verdict, WorktreeCheck};
+    let wc = |name: &str, verdict, reason: &str| WorktreeCheck {
+        name: name.into(),
+        path: PathBuf::from(format!("/work/{name}")),
+        branch: Some(name.into()),
+        head: None,
+        pr: None,
+        verdict,
+        reason: reason.into(),
+    };
+    let mut app = app_with_worktrees();
+    let result = Cleanup {
+        worktrees: vec![
+            wc("app-docs", Verdict::Prune, "PR #41 merged"),
+            wc(
+                "app-agent",
+                Verdict::Review,
+                "PR #40 merged, but locked (agent busy)",
+            ),
+            wc("app-use", Verdict::Keep, "detached, no PR"),
+        ],
+        ..Default::default()
+    };
+    assert!(crate::app::cleanup_has_work(&result));
+    app.modal = Some(Modal::Gc(GcView {
+        result: Some(result),
+        ..Default::default()
+    }));
+    let (s, _) = render(&mut app, 120, 34);
+    assert!(s.contains("MERGED GIT WORKTREES"), "{s}");
+    assert!(s.contains("✓ app-docs"), "{s}");
+    assert!(s.contains("! app-agent"), "{s}");
+    assert!(s.contains("1 other worktree kept"), "{s}");
 }

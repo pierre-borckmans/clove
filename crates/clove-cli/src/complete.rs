@@ -26,6 +26,28 @@ pub fn clones(current: &OsStr) -> Vec<CompletionCandidate> {
         .collect()
 }
 
+/// Plain git worktrees (not clones), by folder name.
+pub fn worktrees(current: &OsStr) -> Vec<CompletionCandidate> {
+    let prefix = current.to_string_lossy();
+    let Some(c) = repo() else { return vec![] };
+    c.other_worktrees(false)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|w| w.name.starts_with(prefix.as_ref()))
+        .map(|w| {
+            let help = w.branch.unwrap_or_else(|| "detached".into());
+            CompletionCandidate::new(w.name).help(Some(format!("{help} (git worktree)").into()))
+        })
+        .collect()
+}
+
+/// Clones, then plain git worktrees: what `clove rm` takes.
+pub fn removable(current: &OsStr) -> Vec<CompletionCandidate> {
+    let mut v = clones(current);
+    v.extend(worktrees(current));
+    v
+}
+
 /// Existing branches worth a clone: the same list the TUI and app offer
 /// (no base, no agent scaffolding, nothing merged or checked out elsewhere).
 pub fn branches(current: &OsStr) -> Vec<CompletionCandidate> {

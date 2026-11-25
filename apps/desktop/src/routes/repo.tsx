@@ -8,8 +8,9 @@ import { Shortcut } from "@/components/shortcut";
 import { RepoMark } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { WorktreeList } from "@/components/worktree-list";
 import { tildify } from "@/lib/format";
-import { copyPath, useClones, useRepo, useStatus } from "@/lib/queries";
+import { copyPath, useClones, useRepo, useStatus, useWorktrees } from "@/lib/queries";
 import { setUi } from "@/lib/ui";
 
 export function RepoPage() {
@@ -17,15 +18,17 @@ export function RepoPage() {
   const { repo, isLoading } = useRepo(repoId);
   const status = useStatus(repo?.root);
   const clones = useClones(repo?.root);
+  const worktrees = useWorktrees(repo?.root);
 
   useEffect(() => {
     const refetch = () => {
       void status.refetch();
       void clones.refetch();
+      void worktrees.refetch();
     };
     window.addEventListener("clove:refetch", refetch);
     return () => window.removeEventListener("clove:refetch", refetch);
-  }, [status, clones]);
+  }, [status, clones, worktrees]);
 
   if (!repo) {
     return (
@@ -73,6 +76,7 @@ export function RepoPage() {
           ) : (
             <Skeleton className="h-[240px] rounded-xl" />
           )}
+          {worktrees.data && <WorktreeList root={repo.root} worktrees={worktrees.data} />}
         </div>
       </div>
     </>

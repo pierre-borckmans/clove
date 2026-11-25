@@ -1,6 +1,15 @@
 // Realistic state for the browser build: three repos on a dev laptop.
 
-import type { Check, CloneInfo, GoldenStatus, MergeCheck, RepoStatus, Step } from "@/lib/types";
+import type {
+  Check,
+  CloneInfo,
+  GoldenStatus,
+  MergeCheck,
+  OtherWorktree,
+  RepoStatus,
+  Step,
+  WorktreeCheck,
+} from "@/lib/types";
 
 const now = () => Math.floor(Date.now() / 1000);
 const MB = 1024 * 1024;
@@ -12,6 +21,8 @@ export type MockRepo = {
   gc: string[];
   /** Last PR check per clone. */
   prs: MergeCheck[];
+  /** Plain git worktrees clove didn't make. */
+  worktrees: OtherWorktree[];
   /** Why the golden image is stale, or null when fresh. */
   stale: string | null;
   /** Config files that exist (by layer label). */
@@ -65,6 +76,34 @@ function check(
     reason,
     own_bytes: ownMb * MB,
   };
+}
+
+function worktree(p: Partial<OtherWorktree> & Pick<OtherWorktree, "name" | "path">): OtherWorktree {
+  return {
+    branch: null,
+    head: "5a6b7c8d9e0f",
+    locked: false,
+    lock_reason: null,
+    prunable: null,
+    missing: false,
+    dirty: false,
+    detached_commits: null,
+    pr: null,
+    blocker: null,
+    ...p,
+  };
+}
+
+/** What a PR check says about a plain worktree (mirrors classify_worktree). */
+export function worktreeCheck(w: OtherWorktree): WorktreeCheck {
+  const base = { name: w.name, path: w.path, branch: w.branch, head: w.head, pr: w.pr };
+  if (!w.branch) return { ...base, verdict: "keep", reason: "detached, no PR" };
+  if (!w.pr) return { ...base, verdict: "keep", reason: "no PR" };
+  if (w.pr.state !== "merged") return { ...base, verdict: "keep", reason: `PR #${w.pr.number} ${w.pr.state}` };
+  const merged = `PR #${w.pr.number} merged`;
+  if (w.locked) return { ...base, verdict: "review", reason: `${merged}, but locked` };
+  if (w.dirty) return { ...base, verdict: "review", reason: `${merged}, but has uncommitted changes` };
+  return { ...base, verdict: "prune", reason: merged };
 }
 
 function golden(p: Partial<GoldenStatus> & Pick<GoldenStatus, "generation" | "commit">): GoldenStatus {
@@ -216,6 +255,30 @@ export function seed(): Map<string, MockRepo> {
       }),
     ],
     gc: ["remove old golden gen-13", "remove empty mount point /Users/ada/src/mono.clove/spike-wasm"],
+    worktrees: [
+      worktree({
+        name: "mono-docs-rewrite",
+        path: "/Users/ada/src/mono-docs-rewrite",
+        branch: "ada/docs-rewrite",
+        pr: { number: 1433, state: "merged", head_oid: "5a6b7c8d9e0f", title: "", url: "" },
+      }),
+      worktree({
+        name: "mono-agent-search",
+        path: "/Users/ada/src/mono-agent-search",
+        branch: "agent/search-index",
+        dirty: true,
+        pr: { number: 1446, state: "open", head_oid: "5a6b7c8d9e0f", title: "", url: "" },
+        blocker: "mono-agent-search has uncommitted changes",
+      }),
+      worktree({
+        name: "mono-deploy",
+        path: "/Users/ada/src/mono-deploy",
+        locked: true,
+        lock_reason: "deploy runner",
+        detached_commits: 0,
+        blocker: "mono-deploy is locked (deploy runner); `git worktree unlock` it first if it's really done",
+      }),
+    ],
     prs: [
       check("chore-bump-vite", "chore/bump-vite", "prune", "PR #1428 merged", { number: 1428, state: "merged" }, 22),
       check("fix-cache-stampede", "fix/cache-stampede", "keep", "PR #1441 open", { number: 1441, state: "open" }, 96),
@@ -305,6 +368,7 @@ export function seed(): Map<string, MockRepo> {
     ],
     gc: [],
     prs: [],
+    worktrees: [],
     stale: null,
     layers: ["team"],
     refs: [
@@ -346,6 +410,7 @@ export function seed(): Map<string, MockRepo> {
     clones: [],
     gc: [],
     prs: [],
+    worktrees: [],
     stale: null,
     layers: [],
     refs: [

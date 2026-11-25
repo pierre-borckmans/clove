@@ -4,7 +4,7 @@
 use crate::ops::block;
 use clove_core::doctor::{self, Check};
 use clove_core::settings::{self, FieldState, Layer};
-use clove_core::{CloneInfo, Clove, Config, Freshness, MergeCheck, RepoStatus, Verdict, known_repos};
+use clove_core::{CloneInfo, Clove, Config, Freshness, MergeCheck, OtherWorktree, RepoStatus, known_repos};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::process::Command;
@@ -81,6 +81,12 @@ pub async fn repo_status(root: PathBuf) -> CmdResult<RepoStatus> {
 #[tauri::command]
 pub async fn clones(root: PathBuf, status: bool) -> CmdResult<Vec<CloneInfo>> {
     block(move || Clove::open(&root)?.list(status)).await
+}
+
+/// The repo's plain git worktrees: not the main checkout, clones or golden.
+#[tauri::command]
+pub async fn worktrees(root: PathBuf, status: bool) -> CmdResult<Vec<OtherWorktree>> {
+    block(move || Clove::open(&root)?.other_worktrees(status)).await
 }
 
 #[derive(Serialize)]
@@ -392,48 +398,12 @@ pub async fn check_prs(root: PathBuf) -> CmdResult<Vec<MergeCheck>> {
     block(move || Ok(Clove::open(&root)?.merge_checks(false)?.0)).await
 }
 
-#[derive(Serialize)]
-pub struct Cleanup {
-    pub leftovers: Vec<String>,
-    pub checks: Vec<MergeCheck>,
-    /// GitHub could not be asked; only local proofs counted.
-    pub warning: Option<String>,
-    pub removed: Vec<String>,
-    /// Merged clones that could not be removed, with why.
-    pub kept: Vec<String>,
-}
-
-/// Leftovers plus clones whose PR is merged. `apply` removes the provably
-/// merged clones with their branches and the leftovers, like the TUI's cleanup.
+/// Leftovers plus clones and plain worktrees whose PR is merged. `apply`
+/// removes the provably merged ones with their branches and the leftovers,
+/// like the TUI's cleanup.
 #[tauri::command]
-pub async fn cleanup(root: PathBuf, apply: bool) -> CmdResult<Cleanup> {
-    block(move || {
-        let c = Clove::open(&root)?;
-        let leftovers = c.gc(apply)?;
-        let (checks, warning) = c.merge_checks(true)?;
-        let (mut removed, mut kept) = (vec![], vec![]);
-        if apply {
-            for m in checks.iter().filter(|m| m.verdict == Verdict::Prune) {
-                let opts = clove_core::RemoveOptions {
-                    force: false,
-                    delete_branch: true,
-                    branch_merged: true,
-                };
-                match c.remove(&m.clone, &opts, &clove_core::Silent) {
-                    Ok(()) => removed.push(m.clone.clone()),
-                    Err(e) => kept.push(format!("{}: {}", m.clone, err(e))),
-                }
-            }
-        }
-        Ok(Cleanup {
-            leftovers,
-            checks,
-            warning,
-            removed,
-            kept,
-        })
-    })
-    .await
+pub async fn cleanup(root: PathBuf, apply: bool) -> CmdResult<clove_core::Cleanup> {
+    block(move || Clove::open(&root)?.cleanup(apply, &clove_core::Silent)).await
 }
 
 #[derive(Serialize)]
