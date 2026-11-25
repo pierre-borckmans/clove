@@ -1,14 +1,17 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { CircleCheck, FilePen, FilePlus, Laptop, TriangleAlert } from "lucide-react";
-import type { ReactNode } from "react";
+import { CircleCheck, FilePen, FilePlus, Laptop, RotateCcw, TriangleAlert } from "lucide-react";
+import { type ReactNode, useState } from "react";
 import { PaneHeader } from "@/components/app-shell";
 import { RepoMark } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { ago, tildify } from "@/lib/format";
+import { tildify } from "@/lib/format";
 import {
   editConfig,
+  useConfigSet,
   useRepoConfig,
   useRepos,
   useService,
@@ -16,7 +19,7 @@ import {
   useShell,
   useShellInstall,
 } from "@/lib/queries";
-import type { RepoConfig } from "@/lib/types";
+import { type FieldState, LAYERS, type Layer, type RepoConfig } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /** The resolved config for one repo, where each layer lives, and the machine-wide pieces. */
@@ -67,7 +70,7 @@ export function SettingsPage() {
             ) : !cfg.data ? (
               <Skeleton className="h-64 rounded-xl" />
             ) : (
-              <RepoSections cfg={cfg.data} />
+              <RepoSections cfg={cfg.data} root={repo.root} />
             ))}
         </div>
       </div>
@@ -142,9 +145,12 @@ function ShellRow() {
   );
 }
 
-function RepoSections({ cfg }: { cfg: RepoConfig }) {
+function RepoSections({ cfg, root }: { cfg: RepoConfig; root: string }) {
   const c = cfg.config;
   const f = cfg.freshness;
+  const [target, setTarget] = useState<Layer>("you");
+  const sections = [...new Set(cfg.fields.map((x) => x.section))];
+  const labelOf = (l: Layer) => cfg.layers[LAYERS.indexOf(l)]?.label ?? l;
   return (
     <>
       <Section title="Config files" subtitle="later ones win">
@@ -169,110 +175,230 @@ function RepoSections({ cfg }: { cfg: RepoConfig }) {
             </Button>
           </div>
         ))}
+        <Row label="Save changes to">
+          <div className="flex flex-wrap gap-1.5">
+            {LAYERS.map((l) => (
+              <button
+                key={l}
+                type="button"
+                aria-pressed={l === target}
+                onClick={() => setTarget(l)}
+                className={cn(
+                  "h-7 rounded-md border px-2.5 text-[12.5px] transition-colors",
+                  l === target
+                    ? "border-bottle/40 bg-bottle-soft font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground",
+                )}
+              >
+                {labelOf(l)}
+              </button>
+            ))}
+          </div>
+        </Row>
       </Section>
 
-      <Section title="Clones">
-        <Row label="Base">
-          <Mono>{c.base}</Mono>
-        </Row>
-        <Row label="Live in">
-          <Mono>{tildify(c.clone_root)}</Mono>
-        </Row>
-        <Row label="Image size">
-          <Plain>{c.image_size} (sparse, only used blocks cost disk)</Plain>
-        </Row>
-        <Row label="Fetch">
-          <Plain>
-            {c.fetch ? `Before each new clone, at most every ${ago(c.fetch_interval).replace(" ago", "")}` : "Off"}
-          </Plain>
-        </Row>
-        <Row label="Environment">
-          <Plain>{c.exec}</Plain>
-        </Row>
-        {Object.entries(c.env).map(([k, v]) => (
-          <Row key={k} label="Env">
-            <Mono>
-              {k}={v}
-            </Mono>
-          </Row>
-        ))}
-        <Row label="Local files">
-          {cfg.copy.length === 0 ? (
-            <Plain muted>None ({c.copy ? "configured" : "detected"})</Plain>
-          ) : (
-            <div className="flex flex-col gap-0.5">
-              {cfg.copy.map((p) => (
-                <Mono key={p}>{p}</Mono>
-              ))}
-              <span className="text-[11.5px] text-faint">
-                {c.copy ? "configured" : "env files git ignores, detected"}, copied into each clone
-              </span>
-            </div>
+      {sections.map((sec) => (
+        <Section
+          key={sec}
+          title={sec[0].toUpperCase() + sec.slice(1)}
+          subtitle={sec === "steps" ? (c.steps_detected ? "detected from the repo" : "from config") : undefined}
+        >
+          {cfg.fields
+            .filter((x) => x.section === sec)
+            .map((field) => (
+              <FieldRow key={field.key} root={root} field={field} target={target} labelOf={labelOf} />
+            ))}
+          {sec === "clones" && !c.copy && cfg.copy.length > 0 && (
+            <Row label="Detected files">
+              <div className="flex flex-col gap-0.5">
+                {cfg.copy.map((p) => (
+                  <Mono key={p}>{p}</Mono>
+                ))}
+                <span className="text-[11.5px] text-faint">env files git ignores, copied into each clone</span>
+              </div>
+            </Row>
           )}
-        </Row>
-      </Section>
+          {sec === "steps" && <StepList steps={c.steps} />}
+          {sec === "freshness" && f && (
+            <Row label="Now">
+              {f.stale ? (
+                <span className="flex items-center gap-1.5 text-[13px] text-amber">
+                  <TriangleAlert className="size-3.5" />
+                  Stale: {f.reason}
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-[13px] text-sage">
+                  <CircleCheck className="size-3.5" />
+                  Fresh
+                </span>
+              )}
+            </Row>
+          )}
+        </Section>
+      ))}
+    </>
+  );
+}
 
-      <Section title="Steps" subtitle={c.steps_detected ? "detected from the repo" : "from config"}>
-        {c.steps.length === 0 && (
-          <div className="px-4 py-3 text-[13px] text-muted-foreground">
-            No steps: clones get the golden files as is.
-          </div>
+/** One setting: a control for its kind, where its value comes from, and reset. */
+function FieldRow({
+  root,
+  field,
+  target,
+  labelOf,
+}: {
+  root: string;
+  field: FieldState;
+  target: Layer;
+  labelOf: (l: Layer) => string;
+}) {
+  const save = useConfigSet(root);
+  const mine = field.layers[LAYERS.indexOf(target)];
+  const write = (value: string | null) =>
+    save.mutate({ layer: target, key: field.key, value, layerLabel: labelOf(target) });
+  const overridden = mine !== null && field.source !== target;
+  return (
+    <div className="grid grid-cols-[132px_minmax(0,1fr)_auto] items-start gap-3 border-b px-4 py-2.5 last:border-b-0">
+      <span className="pt-1 text-[13px] text-muted-foreground">{field.label}</span>
+      <div className="flex min-w-0 flex-col gap-1">
+        <FieldControl field={field} mine={mine} disabled={save.isPending} onSave={write} />
+        <span className="text-[11.5px] text-faint">{field.help}</span>
+        {overridden && field.source && (
+          <span className="text-[11.5px] text-amber">
+            {labelOf(target)} sets {mine || "an empty value"}, but {labelOf(field.source)} wins
+          </span>
         )}
-        {c.steps.map((s) => (
-          <div key={s.name} className="border-b px-4 py-3 last:border-b-0">
-            <div className="mb-1.5 text-[13px] font-medium">{s.name}</div>
-            <dl className="grid grid-cols-[100px_minmax(0,1fr)] gap-x-3 gap-y-1 text-[12.5px]">
-              {s.warm && (
-                <>
-                  <dt className="text-muted-foreground">warm</dt>
-                  <dd>
-                    <Mono>{s.warm}</Mono>
-                  </dd>
-                </>
-              )}
-              {s.setup && (
-                <>
-                  <dt className="text-muted-foreground">setup</dt>
-                  <dd>
-                    <Mono>{s.setup}</Mono>
-                  </dd>
-                </>
-              )}
-              <dt className="text-muted-foreground">reruns when</dt>
-              <dd className="text-muted-foreground">
-                {s.watch.length ? <Mono className="text-muted-foreground">{s.watch.join(", ")}</Mono> : "always"}
-              </dd>
-            </dl>
-          </div>
-        ))}
-      </Section>
+      </div>
+      <div className="flex items-center gap-1.5 pt-1">
+        <span className="text-[11.5px] text-faint">{field.source ? labelOf(field.source) : "default"}</span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-6"
+          disabled={mine === null || save.isPending}
+          title={mine === null ? `Not set in ${labelOf(target)}` : `Remove from ${labelOf(target)}`}
+          aria-label={`Reset ${field.key}`}
+          onClick={() => write(null)}
+        >
+          <RotateCcw className="size-3.5" />
+        </Button>
+      </div>
+    </div>
+  );
+}
 
-      <Section title="Freshness">
-        <Row label="Stale when">
-          <Plain>
-            A step's watched files change, or after {ago(c.refresh.max_age_secs).replace(" ago", "")} /{" "}
-            {c.refresh.max_behind} commits
-          </Plain>
-        </Row>
-        <Row label="Auto refresh">
-          <Plain>{c.refresh.auto ? "On, when a new clone finds the image stale" : "Off"}</Plain>
-        </Row>
-        {f && (
-          <Row label="Now">
-            {f.stale ? (
-              <span className="flex items-center gap-1.5 text-[13px] text-amber">
-                <TriangleAlert className="size-3.5" />
-                Stale: {f.reason}
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5 text-[13px] text-sage">
-                <CircleCheck className="size-3.5" />
-                Fresh
-              </span>
+/** The widget for a setting's kind. Text-like kinds save on Enter or blur. */
+function FieldControl({
+  field,
+  mine,
+  disabled,
+  onSave,
+}: {
+  field: FieldState;
+  mine: string | null;
+  disabled: boolean;
+  onSave: (v: string) => void;
+}) {
+  const k = field.kind;
+  if (k.type === "bool") {
+    return (
+      <Switch
+        checked={field.effective === "true"}
+        disabled={disabled}
+        onCheckedChange={(v) => onSave(String(v))}
+        aria-label={field.label}
+      />
+    );
+  }
+  if (k.type === "choice") {
+    return (
+      <Select value={field.effective} disabled={disabled} onValueChange={onSave}>
+        <SelectTrigger size="sm" className="h-7 w-40 text-[12.5px]" aria-label={field.label}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {k.options.map((o) => (
+            <SelectItem key={o} value={o} className="text-[12.5px]">
+              {o}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  }
+  // Start from what the target file holds, else the effective value.
+  const start = mine ?? (k.type === "list" && field.source === null ? "" : field.effective);
+  return <TextControl key={start} start={start} field={field} disabled={disabled} onSave={onSave} />;
+}
+
+function TextControl({
+  start,
+  field,
+  disabled,
+  onSave,
+}: {
+  start: string;
+  field: FieldState;
+  disabled: boolean;
+  onSave: (v: string) => void;
+}) {
+  const [draft, setDraft] = useState(start);
+  const commit = () => {
+    if (draft.trim() !== start.trim()) onSave(draft);
+  };
+  return (
+    <Input
+      value={draft}
+      disabled={disabled}
+      aria-label={field.label}
+      placeholder={field.kind.type === "map" ? "NAME=value, …" : field.kind.type === "list" ? "a, b, …" : undefined}
+      className="h-7 max-w-[420px] font-mono text-[12px]"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") commit();
+        if (e.key === "Escape") setDraft(start);
+      }}
+    />
+  );
+}
+
+function StepList({ steps }: { steps: RepoConfig["config"]["steps"] }) {
+  return (
+    <>
+      {steps.length === 0 && (
+        <div className="px-4 py-3 text-[13px] text-muted-foreground">No steps: clones get the golden files as is.</div>
+      )}
+      {steps.map((s) => (
+        <div key={s.name} className="border-b px-4 py-3 last:border-b-0">
+          <div className="mb-1.5 text-[13px] font-medium">{s.name}</div>
+          <dl className="grid grid-cols-[100px_minmax(0,1fr)] gap-x-3 gap-y-1 text-[12.5px]">
+            {s.warm && (
+              <>
+                <dt className="text-muted-foreground">warm</dt>
+                <dd>
+                  <Mono>{s.warm}</Mono>
+                </dd>
+              </>
             )}
-          </Row>
-        )}
-      </Section>
+            {s.setup && (
+              <>
+                <dt className="text-muted-foreground">setup</dt>
+                <dd>
+                  <Mono>{s.setup}</Mono>
+                </dd>
+              </>
+            )}
+            <dt className="text-muted-foreground">reruns when</dt>
+            <dd className="text-muted-foreground">
+              {s.watch.length ? <Mono className="text-muted-foreground">{s.watch.join(", ")}</Mono> : "always"}
+            </dd>
+          </dl>
+        </div>
+      ))}
+      <div className="px-4 py-2.5 text-[11.5px] text-faint">
+        Steps are edited in a config file: [[step]] replaces the detected ones, [[add_step]] adds to them.
+      </div>
     </>
   );
 }

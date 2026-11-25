@@ -10,7 +10,10 @@ import type {
   CloneInfo,
   CloveEvent,
   Discovered,
+  FieldKind,
+  FieldState,
   GoldenStatus,
+  Layer,
   OpRequest,
   Refs,
   RepoConfig,
@@ -27,6 +30,77 @@ const LAYERS = [
   { label: "team", path: (r: MockRepo) => `${r.status.root}/.clove.toml` },
   { label: "you, this repo", path: (r: MockRepo) => `/Users/ada/.config/clove/repos/${r.status.name}.toml` },
 ];
+// Mirrors clove_core::config::FIELDS for the browser mock.
+const FIELDS: [string, string, string, FieldKind, string | null, string][] = [
+  ["base", "base", "clones", { type: "text" }, null, "ref new clones branch from, e.g. origin/main"],
+  ["clone_root", "live in", "clones", { type: "text" }, null, "where clones mount; {repo}, {repo_parent} and ~ expand"],
+  ["image_size", "image size", "clones", { type: "size" }, "300G", "maximum size of each image"],
+  ["fetch", "fetch", "clones", { type: "bool" }, "true", "fetch the base ref before creating a clone"],
+  ["fetch_interval", "fetch at most", "clones", { type: "seconds" }, "5m", "skip that fetch when recent, e.g. 5m"],
+  [
+    "exec",
+    "environment",
+    "clones",
+    { type: "choice", options: ["auto", "direnv", "mise", "none"] },
+    "auto",
+    "wrap step commands in direnv or mise",
+  ],
+  ["env", "env", "clones", { type: "map" }, "", "extra environment: NAME=value, ..."],
+  ["copy", "local files", "clones", { type: "list" }, "detected", "files copied into clones; comma separated"],
+  ["detect", "detect steps", "steps", { type: "bool" }, "true", "detect steps when none are configured"],
+  ["refresh.auto", "auto refresh", "freshness", { type: "bool" }, "true", "refresh when a new clone finds it stale"],
+  ["refresh.max_age", "max age", "freshness", { type: "duration" }, "24h", "stale after this long, e.g. 12h, 2d"],
+  ["refresh.max_behind", "max behind", "freshness", { type: "int" }, "100", "stale this many commits behind"],
+];
+const LAYER_IDS: Layer[] = ["all", "team", "you"];
+const settings = new Map<string, Record<string, string>[]>();
+
+function mockFields(r: MockRepo): FieldState[] {
+  const set = settings.get(r.status.root) ?? [{}, {}, {}];
+  return FIELDS.map(([key, label, section, kind, def, help]) => {
+    const layers = set.map((l) => l[key] ?? null);
+    const at = [2, 1, 0].find((i) => layers[i] !== null);
+    const resolved = key === "base" ? r.status.base : r.status.clone_root;
+    return {
+      key,
+      label,
+      section,
+      kind,
+      help,
+      default: def === null ? "resolved" : { value: def },
+      layers,
+      effective: at === undefined ? (def ?? resolved) : (layers[at] as string),
+      source: at === undefined ? null : LAYER_IDS[at],
+    };
+  });
+}
+
+function mockSet(root: string, layer: Layer, key: string, value: string | null): string {
+  const f = FIELDS.find((x) => x[0] === key);
+  if (!f) throw new Error(`unknown setting "${key}"`);
+  const kind = f[3];
+  const v = value?.trim();
+  if (v !== undefined) {
+    if (kind.type === "choice" && !kind.options.includes(v))
+      throw new Error(`${key}: use one of ${kind.options.join(", ")}`);
+    if (kind.type === "bool" && !["true", "false"].includes(v)) throw new Error(`${key}: use true or false`);
+    if (kind.type === "int" && !/^\d+$/.test(v)) throw new Error(`${key}: use a whole number`);
+    if ((kind.type === "duration" || kind.type === "seconds") && !/^\d+[smhd]?$/.test(v))
+      throw new Error(`${key}: bad duration (use 30m, 12h, 2d)`);
+    if (kind.type === "size" && !/^\d+[KMGTkmgt]$/.test(v)) throw new Error(`${key}: use K, M, G or T, e.g. 300G`);
+  }
+  const set = settings.get(root) ?? [{}, {}, {}];
+  settings.set(root, set);
+  const l = set[LAYER_IDS.indexOf(layer)];
+  if (v === undefined) {
+    if (!(key in l)) return `${key} isn't set there`;
+    delete l[key];
+    return `${key} reset`;
+  }
+  l[key] = v;
+  return `${key} = ${v}`;
+}
+
 const listeners = new Map<string, Set<(p: unknown) => void>>();
 const MB = 1024 * 1024;
 
@@ -374,8 +448,10 @@ const commands: Record<string, (a: Args) => unknown> = {
           }
         : null,
       state_home: "/Users/ada/.clove",
+      fields: mockFields(r),
     };
   },
+  config_set: (a) => mockSet(a.root as string, a.layer as Layer, a.key as string, (a.value as string | null) ?? null),
   edit_config: (a) => {
     for (const r of repos.values())
       for (const l of LAYERS) if (l.path(r) === a.path && !r.layers.includes(l.label)) r.layers.push(l.label);

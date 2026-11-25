@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "./api";
 import { APP_LABELS } from "./prefs";
-import type { AppId } from "./types";
+import type { AppId, Layer } from "./types";
 
 export const keys = {
   repos: ["repos"] as const,
@@ -143,6 +143,18 @@ export function useShellInstall() {
       });
     },
     onError: (e) => toast.error("Could not set up the shell integration", { description: String(e) }),
+  });
+}
+
+/** Writes one setting to one config file (null removes it), then refetches the config. */
+export function useConfigSet(root: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { layer: Layer; key: string; value: string | null; layerLabel: string }) =>
+      api.configSet(root, v.layer, v.key, v.value),
+    onSuccess: (msg, v) => toast.success(msg, { description: `Saved to ${v.layerLabel}` }),
+    onError: (e, v) => toast.error(`Could not save ${v.key}`, { description: String(e) }),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.config(root) }),
   });
 }
 

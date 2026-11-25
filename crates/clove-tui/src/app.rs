@@ -4,6 +4,7 @@
 use crate::fmt;
 use crate::model::*;
 use clove_core::repo::sanitize_name;
+use clove_core::settings::{self, FIELDS, FieldState, Kind, Layer};
 use clove_core::{CloneInfo, Event, NewOptions, RemoveOptions};
 use ratatui::crossterm::event::{
     Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
@@ -30,6 +31,8 @@ pub enum Effect {
     /// Open a config file in $EDITOR, creating it from a template if missing,
     /// then reload.
     EditConfig(PathBuf),
+    /// Write or remove one setting in one config file, then toast the result.
+    SetConfig(ConfigWrite),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1277,8 +1280,9 @@ impl App {
             SettingsAction::Edit(0),
             SettingsAction::Edit(1),
             SettingsAction::Edit(2),
-            SettingsAction::Service,
         ];
+        v.extend((0..FIELDS.len()).map(SettingsAction::Field));
+        v.push(SettingsAction::Service);
         // Nothing to do once this shell has it.
         if !self.integrated {
             v.push(SettingsAction::Shell);
@@ -1286,8 +1290,120 @@ impl App {
         v
     }
 
+    /// A setting's values per layer, from the last load.
+    pub fn field_state(&self, i: usize) -> Option<&FieldState> {
+        let key = FIELDS.get(i)?.key;
+        self.current()?.fields.iter().find(|s| s.field.key == key)
+    }
+
+    /// Writes `value` (None: removes) for setting `i` to the view's target file.
+    fn write_setting(&mut self, v: &SettingsView, i: usize, value: Option<String>) -> Vec<Effect> {
+        let Some(d) = self.current() else {
+            return vec![];
+        };
+        let f = &FIELDS[i];
+        let path = v.target.path(&d.root, &d.status.name);
+        if value.is_some()
+            && let Some(src) = self.field_state(i).and_then(|s| s.source)
+            && src.index() > v.target.index()
+        {
+            self.toast(
+                ToastKind::Warn,
+                format!(
+                    "{} sets {}, which wins over {}",
+                    src.label(),
+                    f.key,
+                    v.target.label()
+                ),
+            );
+        }
+        vec![
+            Effect::SetConfig(ConfigWrite {
+                path,
+                layer: v.target,
+                key: f.key,
+                value,
+            }),
+            Effect::Load,
+        ]
+    }
+
+    /// Enter on a setting: flips a toggle, or opens the value editor on what
+    /// the target file holds (else the effective value).
+    fn settings_field(&mut self, mut v: SettingsView, i: usize) -> (Option<Modal>, Vec<Effect>) {
+        let Some(st) = self.field_state(i).cloned() else {
+            return (Some(Modal::Settings(v)), vec![]);
+        };
+        if st.field.kind == Kind::Bool {
+            let on = st.effective == "true";
+            let fx = self.write_setting(&v, i, Some((!on).to_string()));
+            return (Some(Modal::Settings(v)), fx);
+        }
+        let start = match st.get(v.target) {
+            Some(x) => x.to_string(),
+            None if st.field.kind == Kind::List && st.source.is_none() => String::new(),
+            None => st.effective.clone(),
+        };
+        v.editing = Some(FieldEdit {
+            field: i,
+            input: Input::new(&start),
+        });
+        (Some(Modal::Settings(v)), vec![])
+    }
+
+    fn settings_edit_key(&mut self, mut v: SettingsView, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
+        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        let Some(mut e) = v.editing.take() else {
+            return (Some(Modal::Settings(v)), vec![]);
+        };
+        let f = &FIELDS[e.field];
+        let choices = match f.kind {
+            Kind::Choice { options } => Some(options),
+            _ => None,
+        };
+        match (k.code, choices) {
+            (KeyCode::Esc, _) => return (Some(Modal::Settings(v)), vec![]),
+            (KeyCode::Enter, _) => {
+                if let Err(err) = settings::parse_value(f, &e.input.text) {
+                    self.toast(ToastKind::Err, format!("{err:#}"));
+                    v.editing = Some(e);
+                    return (Some(Modal::Settings(v)), vec![]);
+                }
+                let fx = self.write_setting(&v, e.field, Some(e.input.text.clone()));
+                return (Some(Modal::Settings(v)), fx);
+            }
+            // A choice cycles through its options; nothing to type.
+            (
+                KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') | KeyCode::Up | KeyCode::Down,
+                Some(opts),
+            ) => {
+                let n = opts.len();
+                let at = opts.iter().position(|o| *o == e.input.text).unwrap_or(0);
+                let back = matches!(k.code, KeyCode::Left | KeyCode::Up);
+                e.input
+                    .set(opts[if back { (at + n - 1) % n } else { (at + 1) % n }]);
+            }
+            (_, Some(_)) => {}
+            (KeyCode::Left, None) => e.input.left(),
+            (KeyCode::Right, None) => e.input.right(),
+            (KeyCode::Home, None) => e.input.home(),
+            (KeyCode::End, None) => e.input.end(),
+            (KeyCode::Backspace, None) => e.input.backspace(),
+            (KeyCode::Delete, None) => e.input.delete(),
+            (KeyCode::Char('a'), None) if ctrl => e.input.home(),
+            (KeyCode::Char('e'), None) if ctrl => e.input.end(),
+            (KeyCode::Char('u'), None) if ctrl => e.input.set(""),
+            (KeyCode::Char('w'), None) if ctrl => e.input.delete_word(),
+            (KeyCode::Char(c), None) if !ctrl => e.input.insert(c),
+            _ => {}
+        }
+        v.editing = Some(e);
+        (Some(Modal::Settings(v)), vec![])
+    }
+
     fn settings_act(&mut self, v: SettingsView, a: SettingsAction) -> (Option<Modal>, Vec<Effect>) {
         match a {
+            SettingsAction::Field(i) => self.settings_field(v, i),
             SettingsAction::Edit(i) => {
                 let fx = self
                     .current()
@@ -1312,10 +1428,32 @@ impl App {
     }
 
     fn settings_key(&mut self, mut v: SettingsView, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
+        if v.editing.is_some() {
+            return self.settings_edit_key(v, k);
+        }
         let page = self.settings_height.max(1);
         let actions = self.settings_actions();
         let n = actions.len();
+        let on = actions[v.cursor.min(n - 1)];
         match k.code {
+            KeyCode::Left | KeyCode::Right => {
+                let i = v.target.index() + if k.code == KeyCode::Left { 2 } else { 1 };
+                v.target = Layer::ALL[i % 3];
+            }
+            KeyCode::Char('x') | KeyCode::Delete | KeyCode::Backspace => {
+                if let SettingsAction::Field(i) = on {
+                    let fx = if self.field_state(i).is_some_and(|s| s.get(v.target).is_none()) {
+                        self.toast(
+                            ToastKind::Info,
+                            format!("{} isn't set in {}", FIELDS[i].key, v.target.label()),
+                        );
+                        vec![]
+                    } else {
+                        self.write_setting(&v, i, None)
+                    };
+                    return (Some(Modal::Settings(v)), fx);
+                }
+            }
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('s') | KeyCode::Char(',') => {
                 return (None, vec![]);
             }
@@ -1482,6 +1620,12 @@ impl App {
                         && let Some(i) = actions.iter().position(|x| *x == a)
                     {
                         v.cursor = i;
+                    }
+                    vec![]
+                }
+                Some(Hit::SettingsLayer(l)) => {
+                    if let Some(Modal::Settings(v)) = &mut self.modal {
+                        v.target = l;
                     }
                     vec![]
                 }

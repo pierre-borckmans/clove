@@ -3,6 +3,7 @@
 
 use crate::ops::block;
 use clove_core::doctor::{self, Check};
+use clove_core::settings::{self, FieldState, Layer};
 use clove_core::{CloneInfo, Clove, Config, Freshness, MergeCheck, RepoStatus, Verdict, known_repos};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -283,6 +284,8 @@ pub struct RepoConfig {
     pub freshness: Option<Freshness>,
     /// clove's state folder on this machine.
     pub state_home: PathBuf,
+    /// Every editable setting with its value per layer (see clove_core::settings).
+    pub fields: Vec<FieldState>,
 }
 
 /// The resolved config for the settings page, with where each layer lives.
@@ -300,11 +303,28 @@ pub async fn repo_config(root: PathBuf) -> CmdResult<RepoConfig> {
             })
             .collect();
         Ok(RepoConfig {
+            fields: settings::fields(&c.root, &c.name, &c.config)?,
             config: c.config.clone(),
             layers,
             copy: status.copy,
             freshness: status.freshness,
             state_home: clove_core::state_home(),
+        })
+    })
+    .await
+}
+
+/// Sets one setting in one config file, or removes it when `value` is null.
+/// Returns what to tell the user.
+#[tauri::command]
+pub async fn config_set(root: PathBuf, layer: Layer, key: String, value: Option<String>) -> CmdResult<String> {
+    block(move || {
+        let c = Clove::open(&root)?;
+        let path = layer.path(&c.root, &c.name);
+        Ok(match value {
+            Some(v) => format!("{key} = {}", settings::set(&path, &key, &v)?),
+            None if settings::unset(&path, &key)? => format!("{key} reset"),
+            None => format!("{key} isn't set in {}", layer.label()),
         })
     })
     .await

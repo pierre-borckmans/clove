@@ -58,6 +58,176 @@ pub struct RefreshFile {
     pub max_behind: Option<u32>,
 }
 
+/// How a setting is edited, validated and stored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Kind {
+    Text,
+    Bool,
+    /// Whole seconds in the file; accepts "90", "5m", "2h".
+    Seconds,
+    /// A string like "24h" in the file, checked with [`parse_duration`].
+    Duration,
+    Int,
+    /// "300G" style, binary units K/M/G/T.
+    Size,
+    Choice {
+        options: &'static [&'static str],
+    },
+    /// Comma separated in the UIs, a TOML array in the file.
+    List,
+    /// `NAME=value, ...` in the UIs, a TOML table in the file.
+    Map,
+}
+
+/// The value shown when no layer sets a setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DefaultValue {
+    Value(&'static str),
+    /// Depends on the repo: read from the resolved [`Config`] at the same key.
+    Resolved,
+}
+
+/// One setting of [`FileConfig`]. CLI, TUI and app render and edit settings
+/// from [`FIELDS`] alone, so a new key needs only its field and a descriptor.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Field {
+    /// TOML key, dotted inside tables: `refresh.max_age`.
+    pub key: &'static str,
+    pub label: &'static str,
+    /// Groups settings on screen, in order of first appearance.
+    pub section: &'static str,
+    pub kind: Kind,
+    pub help: &'static str,
+    pub default: DefaultValue,
+}
+
+const fn field(
+    key: &'static str,
+    label: &'static str,
+    section: &'static str,
+    kind: Kind,
+    default: DefaultValue,
+    help: &'static str,
+) -> Field {
+    Field {
+        key,
+        label,
+        section,
+        kind,
+        help,
+        default,
+    }
+}
+
+use DefaultValue::{Resolved, Value as Is};
+
+/// Every [`FileConfig`] key except [`FILE_ONLY`]; a test keeps them in sync.
+pub const FIELDS: &[Field] = &[
+    field(
+        "base",
+        "base",
+        "clones",
+        Kind::Text,
+        Resolved,
+        "ref new clones branch from, e.g. origin/main",
+    ),
+    field(
+        "clone_root",
+        "live in",
+        "clones",
+        Kind::Text,
+        Resolved,
+        "where clones mount; {repo}, {repo_parent} and ~ expand",
+    ),
+    field(
+        "image_size",
+        "image size",
+        "clones",
+        Kind::Size,
+        Is("300G"),
+        "maximum size of each image; sparse, only used blocks cost disk",
+    ),
+    field(
+        "fetch",
+        "fetch",
+        "clones",
+        Kind::Bool,
+        Is("true"),
+        "fetch the base ref before creating a clone",
+    ),
+    field(
+        "fetch_interval",
+        "fetch at most",
+        "clones",
+        Kind::Seconds,
+        Is("5m"),
+        "skip that fetch when the last one is this recent, e.g. 5m",
+    ),
+    field(
+        "exec",
+        "environment",
+        "clones",
+        Kind::Choice {
+            options: &["auto", "direnv", "mise", "none"],
+        },
+        Is("auto"),
+        "wrap step commands in direnv or mise; auto picks from the repo",
+    ),
+    field(
+        "env",
+        "env",
+        "clones",
+        Kind::Map,
+        Is(""),
+        "extra environment for every step and clove run: NAME=value, ...",
+    ),
+    field(
+        "copy",
+        "local files",
+        "clones",
+        Kind::List,
+        Is("detected"),
+        "files only your checkout has, copied into clones; comma separated pathspecs",
+    ),
+    field(
+        "detect",
+        "detect steps",
+        "steps",
+        Kind::Bool,
+        Is("true"),
+        "detect steps from repo files when none are configured",
+    ),
+    field(
+        "refresh.auto",
+        "auto refresh",
+        "freshness",
+        Kind::Bool,
+        Is("true"),
+        "refresh in the background when a new clone finds the image stale",
+    ),
+    field(
+        "refresh.max_age",
+        "max age",
+        "freshness",
+        Kind::Duration,
+        Is("24h"),
+        "stale after this long, e.g. 12h, 2d",
+    ),
+    field(
+        "refresh.max_behind",
+        "max behind",
+        "freshness",
+        Kind::Int,
+        Is("100"),
+        "stale when the base is this many commits past the golden commit",
+    ),
+];
+
+/// [`FileConfig`] keys edited in the file only (lists of tables).
+pub const FILE_ONLY: &[&str] = &["step", "add_step"];
+
 /// Resolved freshness policy.
 #[derive(Debug, Clone, Serialize)]
 pub struct RefreshPolicy {
@@ -212,7 +382,7 @@ pub fn ensure_file(path: &Path) -> Result<()> {
     std::fs::write(path, TEMPLATE).with_context(|| format!("write {}", path.display()))
 }
 
-fn read(path: &Path) -> Result<Option<FileConfig>> {
+pub(crate) fn read(path: &Path) -> Result<Option<FileConfig>> {
     match std::fs::read_to_string(path) {
         Ok(s) => Ok(Some(
             toml::from_str(&s).with_context(|| format!("parse {}", path.display()))?,
@@ -395,6 +565,63 @@ mod layer_tests {
         assert_eq!(names, ["pnpm", "build"], "detected steps plus add_step");
         assert!(c.steps_detected);
         assert_eq!(c.sources.len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+
+    /// Leaf keys of a serialized config; tables recurse unless a field covers
+    /// them whole (maps).
+    fn leaves(t: &toml::Table, prefix: &str, out: &mut Vec<String>) {
+        for (k, v) in t {
+            let key = format!("{prefix}{k}");
+            match v {
+                toml::Value::Table(sub) if !FIELDS.iter().any(|f| f.key == key) => {
+                    leaves(sub, &format!("{key}."), out)
+                }
+                _ => out.push(key),
+            }
+        }
+    }
+
+    #[test]
+    fn every_file_key_has_a_descriptor() {
+        let full = FileConfig {
+            base: Some("b".into()),
+            clone_root: Some("r".into()),
+            image_size: Some("1G".into()),
+            fetch: Some(true),
+            fetch_interval: Some(1),
+            detect: Some(true),
+            exec: Some(Exec::Auto),
+            env: [("A".to_string(), "1".to_string())].into(),
+            copy: Some(vec![".env".into()]),
+            refresh: Some(RefreshFile {
+                auto: Some(true),
+                max_age: Some("1h".into()),
+                max_behind: Some(1),
+            }),
+            steps: vec![Step::default()],
+            add_steps: vec![Step::default()],
+        };
+        let t = toml::Table::try_from(&full).unwrap();
+        let mut keys = vec![];
+        leaves(&t, "", &mut keys);
+        for k in &keys {
+            assert!(
+                FIELDS.iter().any(|f| f.key == k) || FILE_ONLY.contains(&k.as_str()),
+                "FileConfig key {k:?} has no descriptor in FIELDS (or FILE_ONLY)"
+            );
+        }
+        for f in FIELDS {
+            assert!(
+                keys.iter().any(|k| k == f.key),
+                "descriptor {:?} is not a FileConfig key",
+                f.key
+            );
+        }
     }
 }
 
