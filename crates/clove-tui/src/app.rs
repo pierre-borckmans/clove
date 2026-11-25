@@ -99,6 +99,12 @@ pub struct App {
     pub hover: Option<Position>,
     /// The mouse is over something clickable (the pointer shows a hand).
     pub pointer: bool,
+    /// Tooltip regions, filled during draw like `hits`.
+    pub tips: Vec<(Rect, crate::tooltip::Tip)>,
+    /// When the mouse came to rest where it is (tooltips wait for it).
+    pub hover_ms: u64,
+    /// A key or click hid the tooltip until the mouse moves again.
+    pub tip_hidden: bool,
     /// Where `clove` was started: the shell's directory.
     pub start_dir: PathBuf,
     /// The shell integration is there to cd on exit.
@@ -144,6 +150,9 @@ impl App {
             log_height: 10,
             hover: None,
             pointer: false,
+            tips: vec![],
+            hover_ms: 0,
+            tip_hidden: false,
             prs_checked: HashMap::new(),
             start_dir: PathBuf::new(),
             integrated: false,
@@ -352,7 +361,18 @@ impl App {
         if let Some(Modal::Settings(v)) = &mut self.modal {
             moving |= v.scroll.tick();
         }
-        moving || !self.toasts.is_empty() || self.running().next().is_some() || self.loading
+        moving
+            || !self.toasts.is_empty()
+            || self.running().next().is_some()
+            || self.loading
+            || self.tip_pending()
+    }
+
+    /// A tooltip may be about to show: keep redrawing so it appears on time.
+    fn tip_pending(&self) -> bool {
+        self.hover.is_some()
+            && !self.tip_hidden
+            && self.now_ms.saturating_sub(self.hover_ms) <= crate::tooltip::DELAY_MS
     }
 
     /// Jumps every animation to its end (tests, and after a resize).
@@ -763,6 +783,9 @@ impl App {
     // ---- input ---------------------------------------------------------
 
     pub fn on_input(&mut self, ev: TermEvent) -> Vec<Effect> {
+        if matches!(ev, TermEvent::Key(_) | TermEvent::Paste(_)) {
+            self.tip_hidden = true;
+        }
         match ev {
             TermEvent::Key(k) if k.kind != KeyEventKind::Release => self.on_key(k),
             TermEvent::Mouse(m) => self.on_mouse(m),
@@ -1555,6 +1578,9 @@ impl App {
 
     fn on_mouse(&mut self, m: MouseEvent) -> Vec<Effect> {
         let pos = Position::new(m.column, m.row);
+        if !matches!(m.kind, MouseEventKind::Moved | MouseEventKind::Drag(_)) {
+            self.tip_hidden = true;
+        }
         let hit = self
             .hits
             .iter()
@@ -1671,6 +1697,16 @@ impl App {
                 _ => vec![],
             },
             MouseEventKind::Moved | MouseEventKind::Drag(_) => {
+                // Moving within what a showing or pending tooltip is about keeps it.
+                let same_tip = !self.tip_hidden
+                    && self
+                        .hover
+                        .and_then(|h| self.tips.iter().rev().find(|(r, _)| r.contains(h)))
+                        .is_some_and(|(r, _)| r.contains(pos));
+                if self.hover != Some(pos) && !same_tip {
+                    self.hover_ms = self.now_ms;
+                    self.tip_hidden = false;
+                }
                 self.hover = Some(pos);
                 vec![]
             }

@@ -8,6 +8,7 @@ mod app;
 mod fmt;
 mod model;
 mod theme;
+mod tooltip;
 mod ui;
 mod worker;
 
@@ -80,6 +81,7 @@ pub fn run(start_dir: &Path) -> Result<()> {
 
         let timeout = Duration::from_millis(if busy { 40 } else { 250 });
         if event::poll(timeout)? {
+            app.now_ms = start.elapsed().as_millis() as u64;
             loop {
                 let ev = event::read()?;
                 if matches!(ev, event::Event::Resize(..)) {

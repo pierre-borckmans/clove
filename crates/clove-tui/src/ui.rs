@@ -5,6 +5,7 @@ use crate::app::App;
 use crate::fmt::{self, pad, trunc, trunc_left, width};
 use crate::model::*;
 use crate::theme::*;
+use crate::tooltip::{SpanTips, Tip, Tooltip, cut, cut_left};
 use clove_core::CloneInfo;
 use clove_core::doctor::Level;
 use clove_core::settings::{FIELDS, Kind, Layer};
@@ -17,6 +18,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     app.hits.clear();
+    app.tips.clear();
     let area = f.area();
     if area.width < 60 || area.height < 14 {
         let msg = Paragraph::new(vec![
@@ -50,6 +52,36 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_modal(f, app, area, list);
     draw_toasts(f, app, body);
     draw_hover(f, app);
+    draw_tooltip(f, app);
+}
+
+/// The tooltip of whatever the mouse rests on, once it has rested long enough.
+/// Drawn last, over everything.
+fn draw_tooltip(f: &mut Frame, app: &App) {
+    let Some(at) = app.hover else { return };
+    if app.tip_hidden || app.now_ms.saturating_sub(app.hover_ms) < crate::tooltip::DELAY_MS {
+        return;
+    }
+    let Some((_, tip)) = app.tips.iter().rev().find(|(r, _)| r.contains(at)) else {
+        return;
+    };
+    let t = Tooltip::new(tip);
+    let r = t.area(at, f.area());
+    f.render_widget(t, r);
+}
+
+/// Drops the tooltips under `r`: something was drawn over them.
+fn occlude(app: &mut App, r: Rect) {
+    app.tips.retain(|(t, _)| !t.intersects(r));
+}
+
+/// Registers a tooltip for `r` when there is one.
+fn tip(app: &mut App, r: Rect, t: Option<Tip>) {
+    if let Some(t) = t
+        && !r.is_empty()
+    {
+        app.tips.push((r, t));
+    }
 }
 
 /// Highlights whatever a click would act on under the mouse (bold, green text),
@@ -204,16 +236,18 @@ fn draw_header(f: &mut Frame, app: &mut App, area: Rect, tabs: bool) {
     let rw = width(&right) as u16;
     let left_w = inner.width.saturating_sub(rw + 2) as usize;
     let root = fmt::tilde(&repo.root);
-    let name_w = width(&repo.name);
-    put(
-        f,
-        row(inner, 0),
-        Line::from(vec![
-            Span::styled(trunc(&repo.name, left_w), bold()),
-            Span::raw("  "),
-            Span::styled(trunc_left(&root, left_w.saturating_sub(name_w + 2)), muted()),
-        ]),
-    );
+    let (name, name_tip) = cut(&repo.name, left_w);
+    let (path, path_tip) = cut_left(&root, left_w.saturating_sub(width(&name) + 2));
+    let mut tips = SpanTips::default();
+    tips.add(0, 0, name_tip);
+    tips.add(0, 2, path_tip);
+    let line = Line::from(vec![
+        Span::styled(name, bold()),
+        Span::raw("  "),
+        Span::styled(path, muted()),
+    ]);
+    tips.place(std::slice::from_ref(&line), row(inner, 0), 0, &mut app.tips);
+    put(f, row(inner, 0), line);
     if rw > 0 && inner.width > rw {
         put(
             f,
@@ -223,11 +257,14 @@ fn draw_header(f: &mut Frame, app: &mut App, area: Rect, tabs: bool) {
     }
 
     // Row 2: the golden image.
-    let line = golden_line(app, data.as_ref(), inner.width as usize);
+    let (line, tips) = golden_line(app, data.as_ref(), inner.width as usize);
+    tips.place(std::slice::from_ref(&line), row(inner, 1), 0, &mut app.tips);
     put(f, row(inner, 1), line);
 }
 
-fn golden_line<'a>(app: &App, data: Option<&RepoData>, w: usize) -> Line<'a> {
+/// The header's golden-image line, with tooltips for its terse parts.
+fn golden_line<'a>(app: &App, data: Option<&RepoData>, w: usize) -> (Line<'a>, SpanTips) {
+    let mut tips = SpanTips::default();
     let label = Span::styled("golden  ", muted());
     if let Some(j) = app.golden_job() {
         let step = j
@@ -239,7 +276,9 @@ fn golden_line<'a>(app: &App, data: Option<&RepoData>, w: usize) -> Line<'a> {
         } else {
             "refreshing"
         };
-        return Line::from(vec![
+        let (step, step_tip) = cut(&step, w.saturating_sub(45).max(8));
+        tips.add(0, 2, step_tip.map(|t| t.note("l to watch")));
+        let line = Line::from(vec![
             label,
             Span::styled(format!("{} ", spinner(app.now_ms)), fg(BOTTLE)),
             Span::styled(format!("{verb} · {step}"), bold()),
@@ -248,27 +287,36 @@ fn golden_line<'a>(app: &App, data: Option<&RepoData>, w: usize) -> Line<'a> {
                 muted(),
             ),
         ]);
+        return (line, tips);
     }
     if let Some(e) = app.current_error() {
-        return Line::from(vec![
-            label,
-            Span::styled(trunc(&format!("✗ {e}"), w.saturating_sub(8)), fg(RED)),
-        ]);
+        let (shown, t) = cut(&format!("✗ {e}"), w.saturating_sub(8));
+        tips.add(0, 1, t);
+        return (Line::from(vec![label, Span::styled(shown, fg(RED))]), tips);
     }
     let Some(d) = data else {
-        return Line::from(vec![
+        let line = Line::from(vec![
             label,
             Span::styled(format!("{} loading", spinner(app.now_ms)), muted()),
         ]);
+        return (line, tips);
     };
     let Some(g) = &d.status.golden else {
-        return Line::from(vec![
+        let line = Line::from(vec![
             label,
             Span::styled("○ not built yet", fg(AMBER)),
             Span::styled(" · press ", muted()),
             Span::styled("i", key()),
             Span::styled(" to build it", muted()),
         ]);
+        tips.add(
+            0,
+            1,
+            Some(Tip::new(
+                "No golden image: the checkout with deps warmed that every clone copies.",
+            )),
+        );
+        return (line, tips);
     };
     let sep = || Span::styled(" · ", muted());
     let mut spans = vec![
@@ -281,6 +329,19 @@ fn golden_line<'a>(app: &App, data: Option<&RepoData>, w: usize) -> Line<'a> {
         Span::raw(format!("{} old", fmt::age(g.age_secs))),
         sep(),
     ];
+    tips.add(
+        0,
+        2,
+        Some(Tip::new(format!(
+            "Golden image generation {}: new clones copy it.",
+            g.meta.generation
+        ))),
+    );
+    tips.add(
+        0,
+        4,
+        Some(Tip::new(g.meta.commit.clone()).note(format!("the {} commit it was built from", g.meta.base))),
+    );
     // Long form when it fits, else drop the base name.
     let long = w >= 70 + g.meta.base.len();
     let base = if long {
@@ -288,6 +349,17 @@ fn golden_line<'a>(app: &App, data: Option<&RepoData>, w: usize) -> Line<'a> {
     } else {
         String::new()
     };
+    let behind_tip = match g.behind {
+        Some(0) => Tip::new(format!("Up to date with {}.", g.meta.base)),
+        Some(n) => Tip::new(format!(
+            "{} has {n} commit{} the golden image lacks.",
+            g.meta.base,
+            if n == 1 { "" } else { "s" }
+        ))
+        .note("r refreshes it"),
+        None => Tip::new(format!("Unknown: {} could not be compared.", g.meta.base)),
+    };
+    tips.add(0, spans.len(), Some(behind_tip));
     match g.behind {
         Some(0) if long => spans.push(Span::styled(format!("✓ up to date with{base}"), fg(SAGE))),
         Some(0) => spans.push(Span::styled("✓ current", fg(SAGE))),
@@ -295,12 +367,26 @@ fn golden_line<'a>(app: &App, data: Option<&RepoData>, w: usize) -> Line<'a> {
         None => spans.push(Span::styled("? behind", muted())),
     }
     spans.push(sep());
+    tips.add(
+        0,
+        spans.len(),
+        Some(Tip::new(
+            "Size of the golden image on disk; clones share its blocks.",
+        )),
+    );
     spans.push(Span::raw(fmt::bytes(g.image_bytes)));
     if g.meta.dirty {
         spans.push(sep());
+        tips.add(
+            0,
+            spans.len(),
+            Some(Tip::new(
+                "Warm steps left tracked files modified; clones inherit the changes.",
+            )),
+        );
         spans.push(Span::styled("dirty warm", fg(AMBER)));
     }
-    Line::from(spans)
+    (Line::from(spans), tips)
 }
 
 fn draw_tabs(f: &mut Frame, app: &mut App, area: Rect) {
@@ -327,6 +413,9 @@ fn draw_tabs(f: &mut Frame, app: &mut App, area: Rect) {
             let r = Rect::new(x, area.y, w, 1);
             put(f, r, Line::from(Span::styled(l.clone(), style)));
             app.hits.push((r, Hit::Repo(i)));
+            let name = &app.repos[i].name;
+            let t = (width(name) > 18).then(|| Tip::new(name.clone()));
+            tip(app, r, t);
             put(f, Rect::new(x + w, area.y, 1, 1), Line::from(" "));
             x += w + 1;
         }
@@ -394,15 +483,39 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
             Some(s) if s.stale => (format!("{} ●", s.clones), fg(AMBER)),
             Some(s) => (format!("{} ●", s.clones), fg(SAGE)),
         };
+        let state_tip = match &r.summary {
+            _ if busy => Some(Tip::new("An operation is running in this repo.")),
+            None => None,
+            Some(s) if s.generation.is_none() => Some(Tip::new("No golden image yet: i builds it.")),
+            Some(s) => {
+                let clones = format!("{} clone{}", s.clones, if s.clones == 1 { "" } else { "s" });
+                Some(Tip::new(if s.refreshing {
+                    format!("{clones} · golden image refreshing")
+                } else if s.stale {
+                    format!("{clones} · golden image stale: r refreshes it")
+                } else {
+                    format!("{clones} · golden image fresh")
+                }))
+            }
+        };
         let sw = width(&state);
         let name_w = w.saturating_sub(sw + 3);
+        let (name, name_tip) = cut(&r.name, name_w);
+        let name_tip = name_tip.map(|t| t.note(fmt::tilde(&r.root)));
+        tip(
+            app,
+            Rect::new(rr.x + 2, rr.y, width(&name) as u16, 1).intersection(rr),
+            name_tip,
+        );
+        tip(
+            app,
+            Rect::new(rr.x + 3 + name_w as u16, rr.y, sw as u16, 1).intersection(rr),
+            state_tip,
+        );
         let mut spans = vec![
             Span::styled(if current { "▌" } else { " " }, fg(BOTTLE)),
             Span::raw(" "),
-            Span::styled(
-                pad(&trunc(&r.name, name_w), name_w),
-                if current { bold() } else { Style::new() },
-            ),
+            Span::styled(pad(&name, name_w), if current { bold() } else { Style::new() }),
             Span::raw(" "),
         ];
         // The count stays plain; only the dot carries the state colour.
@@ -448,7 +561,19 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         );
         let rw = line_width(&right) as u16;
         if rw > 0 && rw < inner.width {
-            put(f, Rect::new(inner.right() - rw, r.y, rw, 1), right);
+            let rr = Rect::new(inner.right() - rw, r.y, rw, 1);
+            put(f, rr, right);
+            let t = match (k, app.service) {
+                ('g', _) => Some(Tip::new("Clones whose PR is merged: cleanup removes them.")),
+                ('S', Some(true)) => Some(Tip::new(
+                    "Background service on: refreshes stale images when you pull, remounts clones at login.",
+                )),
+                ('S', Some(false)) => {
+                    Some(Tip::new("Background service off.").note("s, then S, turns it on"))
+                }
+                _ => None,
+            };
+            tip(app, rr, t);
         }
         // The service row opens settings, where S toggles it with context.
         let k = if k == 'S' { 's' } else { k };
@@ -696,6 +821,7 @@ fn draw_table(f: &mut Frame, app: &mut App, area: Rect, inner: Rect, clones: &[C
             f.buffer_mut().set_style(r, selected());
         }
         app.hits.push((r, Hit::Row(vi)));
+        row_tips(app, c, &cols, r);
     }
     let track = Rect::new(area.right() - 1, inner.y + 1, 1, h as u16);
     scrollbar(f, track, off, h, len);
@@ -746,6 +872,111 @@ fn clone_row<'a>(app: &App, c: &CloneInfo, cols: &Cols) -> Line<'a> {
         spans.push(Span::styled(trunc_left(&fmt::tilde(&c.path), cols.path), muted()));
     }
     Line::from(spans)
+}
+
+/// Tooltips over a clone row's cells: the full text of cut ones, and what
+/// the dot and the CHANGES badges mean.
+fn row_tips(app: &mut App, c: &CloneInfo, cols: &Cols, r: Rect) {
+    let dot = Rect::new(r.x, r.y, 1, 1).intersection(r);
+    let mut x = r.x + 2;
+    let mut cell = |w: usize| {
+        let c = Rect::new(x, r.y, w as u16, 1).intersection(r);
+        x = x.saturating_add(w as u16 + 2);
+        c
+    };
+    let name = cell(cols.name);
+    let branch = cell(cols.branch);
+    let changes = cell(cols.changes);
+    let _age = cell(cols.age);
+    let size = cell(cols.size);
+    let path = cell(cols.path);
+
+    let dot_tip = match (app.busy(&c.name), c.mounted) {
+        (Some(j), _) => Tip::new(format!("{}…", j.verb())),
+        (None, true) if !c.failed_steps.is_empty() => {
+            Tip::new(format!("Mounted; setup {} failed.", c.failed_steps.join(", ")))
+        }
+        (None, true) => Tip::new("Mounted."),
+        (None, false) => Tip::new("Not mounted: m mounts it."),
+    };
+    tip(app, dot, Some(dot_tip));
+    tip(app, name, cut(&c.name, cols.name).1);
+    if let Some(b) = &c.branch {
+        tip(app, branch, cut(b, cols.branch).1);
+    }
+    let base = app.current().map(|d| d.status.base.clone()).unwrap_or_default();
+    tip(app, changes, changes_tip(app, c, &base));
+    tip(
+        app,
+        size,
+        Some(
+            Tip::new(format!(
+                "{} of its own: what removing it frees.",
+                fmt::bytes(c.own_bytes)
+            ))
+            .note(format!(
+                "the rest of its {} is shared with the golden image",
+                fmt::bytes(c.image_bytes)
+            )),
+        ),
+    );
+    if cols.path > 0 {
+        tip(app, path, cut_left(&fmt::tilde(&c.path), cols.path).1);
+    }
+}
+
+/// What each part of the CHANGES cell says, one per line.
+fn changes_tip(app: &App, c: &CloneInfo, base: &str) -> Option<Tip> {
+    let mut out: Vec<String> = vec![];
+    let pr = app
+        .current()
+        .and_then(|d| d.prs.get(&c.name))
+        .and_then(|m| m.pr.as_ref());
+    if let Some(pr) = pr
+        && pr.state == clove_core::PrState::Merged
+    {
+        out.push(format!("merged: PR #{} is merged; g cleans it up", pr.number));
+    }
+    if app.busy(&c.name).is_some() {
+        // The cell says what runs; nothing to add.
+    } else if let Some(issue) = &c.issue {
+        out.push(format!("{issue}: g finishes removing it"));
+    } else if c.removing_when_free {
+        out.push("removing when free: something still uses it; it goes once nothing does".into());
+    } else if !c.mounted {
+        out.push("unmounted: m mounts it".into());
+    } else {
+        match c.dirty {
+            Some(true) => out.push("dirty: uncommitted changes".into()),
+            Some(false) => out.push("clean: no uncommitted changes".into()),
+            None => {}
+        }
+        if let Some(a) = c.ahead.filter(|a| *a > 0) {
+            out.push(format!(
+                "↑{a}: commit{} not on {base}",
+                if a == 1 { "" } else { "s" }
+            ));
+        }
+        if let Some(b) = c.behind.filter(|b| *b > 0) {
+            out.push(format!(
+                "↓{b}: commit{} on {base} it lacks",
+                if b == 1 { "" } else { "s" }
+            ));
+        }
+    }
+    if let Some(pr) = pr
+        && pr.state == clove_core::PrState::Open
+    {
+        out.push(format!("#{}: open PR", pr.number));
+    }
+    if out.is_empty() {
+        return None;
+    }
+    let mut t = Tip::new(out.join("\n"));
+    if let Some(pr) = pr {
+        t = t.note(pr.title.clone());
+    }
+    Some(t)
 }
 
 /// The CHANGES cell, padded to `w`.
@@ -804,7 +1035,12 @@ fn changes<'a>(app: &App, c: &CloneInfo, w: usize) -> Vec<Span<'a>> {
 
 /// Appends a TIMINGS header and one bar per step, scaled to the slowest; the
 /// slowest bar takes the accent. Returns the step-name column width.
-fn timing_lines(lines: &mut Vec<Line>, timings: &[clove_core::Timing], w: usize) -> usize {
+fn timing_lines(
+    lines: &mut Vec<Line>,
+    tips: &mut SpanTips,
+    timings: &[clove_core::Timing],
+    w: usize,
+) -> usize {
     let total: f64 = timings.iter().map(|t| t.ms).sum();
     let head = "TIMINGS";
     let tot = fmt::secs(total);
@@ -830,8 +1066,10 @@ fn timing_lines(lines: &mut Vec<Line>, timings: &[clove_core::Timing], w: usize)
         } else {
             fg(SAGE)
         };
+        let (name, name_tip) = cut(&t.step, nw);
+        tips.add(lines.len(), 0, name_tip);
         lines.push(Line::from(vec![
-            Span::styled(pad(&t.step, nw), muted()),
+            Span::styled(pad(&name, nw), muted()),
             Span::raw(" "),
             Span::styled(pad(&b, bw), style),
             Span::raw(" "),
@@ -842,11 +1080,11 @@ fn timing_lines(lines: &mut Vec<Line>, timings: &[clove_core::Timing], w: usize)
 }
 
 /// With nothing selected, the detail pane describes the golden image.
-fn draw_golden_detail(f: &mut Frame, app: &App, area: Rect) -> bool {
+fn draw_golden_detail(f: &mut Frame, app: &mut App, area: Rect) -> bool {
     let Some(d) = app.current() else {
         return false;
     };
-    let Some(g) = &d.status.golden else {
+    let Some(g) = d.status.golden.clone() else {
         return false;
     };
     let block = panel(
@@ -857,8 +1095,12 @@ fn draw_golden_detail(f: &mut Frame, app: &App, area: Rect) -> bool {
     f.render_widget(block, area);
     let w = inner.width as usize;
     let vw = w.saturating_sub(8);
+    let mut tips = SpanTips::default();
+    let (base, base_tip) = cut(&g.meta.base, vw);
+    tips.add(0, 1, base_tip);
+    tips.add(1, 1, Some(Tip::new(g.meta.commit.clone())));
     let mut lines = vec![
-        kv("base", vec![Span::styled(trunc(&g.meta.base, vw), fg(PLUM))]),
+        kv("base", vec![Span::styled(base, fg(PLUM))]),
         kv(
             "commit",
             vec![Span::styled(fmt::short_commit(&g.meta.commit), muted())],
@@ -873,17 +1115,20 @@ fn draw_golden_detail(f: &mut Frame, app: &App, area: Rect) -> bool {
         ),
     ];
     if !g.meta.steps.is_empty() {
-        lines.push(kv("warm", vec![Span::raw(trunc(&g.meta.steps.join(", "), vw))]));
+        let (warm, warm_tip) = cut(&g.meta.steps.join(", "), vw);
+        tips.add(lines.len(), 1, warm_tip);
+        lines.push(kv("warm", vec![Span::raw(warm)]));
     }
     if !g.meta.timings.is_empty() {
         lines.push(Line::from(""));
-        timing_lines(&mut lines, &g.meta.timings, w);
+        timing_lines(&mut lines, &mut tips, &g.meta.timings, w);
     }
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
         Span::styled("n", key()),
         Span::styled(" clones it in about a second", muted()),
     ]));
+    tips.place(&lines, inner, 0, &mut app.tips);
     f.render_widget(Paragraph::new(lines), inner);
     true
 }
@@ -903,7 +1148,14 @@ fn draw_detail(f: &mut Frame, app: &mut App, area: Rect) {
         );
         return;
     };
-    let block = panel(vec![Span::styled(c.name.clone(), title())], false);
+    // The title sits between the corners and its padding.
+    let (name, name_tip) = cut(&c.name, area.width.saturating_sub(6) as usize);
+    tip(
+        app,
+        Rect::new(area.x + 2, area.y, width(&name) as u16, 1).intersection(area),
+        name_tip,
+    );
+    let block = panel(vec![Span::styled(name, title())], false);
     let inner = block.inner(area).inner(Margin::new(2, 1));
     f.render_widget(block, area);
     let w = inner.width as usize;
@@ -911,8 +1163,13 @@ fn draw_detail(f: &mut Frame, app: &mut App, area: Rect) {
     let sep = || Span::styled(" · ", muted());
 
     let mut lines = vec![];
+    let mut tips = SpanTips::default();
     let mut branch = match &c.branch {
-        Some(b) => vec![Span::styled(trunc(b, vw), fg(PLUM))],
+        Some(b) => {
+            let (shown, t) = cut(b, vw);
+            tips.add(0, 1, t);
+            vec![Span::styled(shown, fg(PLUM))]
+        }
         None => vec![Span::styled("detached", muted())],
     };
     if c.mounted {
@@ -925,6 +1182,7 @@ fn draw_detail(f: &mut Frame, app: &mut App, area: Rect) {
     }
     lines.push(kv("branch", branch));
     if let Some(h) = &c.head {
+        tips.add(lines.len(), 1, Some(Tip::new(h.clone())));
         lines.push(kv("head", vec![Span::styled(fmt::short_commit(h), muted())]));
     }
     let mut status = if let Some(j) = app.busy(&c.name) {
@@ -955,32 +1213,44 @@ fn draw_detail(f: &mut Frame, app: &mut App, area: Rect) {
         && g.meta.generation > c.golden_generation
     {
         golden.push(sep());
+        tips.add(
+            lines.len(),
+            golden.len() + 1,
+            Some(Tip::new(format!(
+                "Made from golden gen {}; new clones start from gen {}.",
+                c.golden_generation, g.meta.generation
+            ))),
+        );
         golden.push(Span::styled(
             format!("golden now {}", g.meta.generation),
             fg(AMBER),
         ));
     }
     lines.push(kv("from", golden));
-    lines.push(kv("path", vec![Span::raw(trunc_left(&fmt::tilde(&c.path), vw))]));
+    let (path, path_tip) = cut_left(&fmt::tilde(&c.path), vw);
+    tips.add(lines.len(), 1, path_tip);
+    lines.push(kv("path", vec![Span::raw(path)]));
 
     if !c.timings.is_empty() || !c.failed_steps.is_empty() {
         lines.push(Line::from(""));
-        let nw = timing_lines(&mut lines, &c.timings, w);
+        let nw = timing_lines(&mut lines, &mut tips, &c.timings, w);
         for s in &c.failed_steps {
+            let (step, step_tip) = cut(&format!("setup {s}"), nw);
+            tips.add(lines.len(), 1, step_tip);
             lines.push(Line::from(vec![
                 Span::styled("✗ ", fg(RED)),
-                Span::styled(pad(&format!("setup {s}"), nw), fg(RED)),
+                Span::styled(pad(&step, nw), fg(RED)),
                 Span::styled(" failed", fg(RED)),
             ]));
             if let Some(d) = app.current() {
                 let log = d.status.state.join("logs").join(format!("{}-{s}.log", c.name));
-                lines.push(Line::from(Span::styled(
-                    format!("  {}", trunc_left(&fmt::tilde(&log), w.saturating_sub(2))),
-                    muted(),
-                )));
+                let (shown, t) = cut_left(&fmt::tilde(&log), w.saturating_sub(2));
+                tips.add(lines.len(), 1, t);
+                lines.push(Line::from(vec![Span::raw("  "), Span::styled(shown, muted())]));
             }
         }
     }
+    tips.place(&lines, inner, 0, &mut app.tips);
     f.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -1138,9 +1408,22 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
             Line::from(s)
         }
     };
-    let sw = (line_width(&status) as u16).min(area.width / 2);
+    let full = line_width(&status) as u16;
+    let sw = full.min(area.width / 2);
     if sw > 0 {
-        put(f, Rect::new(area.right() - sw, area.y, sw, 1), status.clone());
+        let r = Rect::new(area.right() - sw, area.y, sw, 1);
+        put(f, r, status.clone());
+        let t = (!running.is_empty()).then(|| {
+            let jobs: Vec<String> = running
+                .iter()
+                .map(|j| match j.current_step() {
+                    Some(s) => format!("{} · {}", j.title(), s.name),
+                    None => j.title(),
+                })
+                .collect();
+            Tip::new(jobs.join("\n")).note("l watches the last one")
+        });
+        tip(app, r, t);
     }
 
     let mut list = hints(app);
@@ -1188,8 +1471,33 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
             KeyModifiers::NONE
         };
         app.hits.push((r, Hit::Key(code, mods)));
+        tip(app, r, hint_tip(k, label).map(Tip::new));
         x += w + 2;
     }
+}
+
+/// The longer story of a footer hint, where the label is terse.
+fn hint_tip(k: &str, label: &str) -> Option<&'static str> {
+    Some(match (k, label) {
+        ("⏎", "cd") => "cd into the clone and quit (mounts it first)",
+        ("n", "new") => "new clone on a branch, from the golden image",
+        ("d", "remove") => "remove the clone (asks first)",
+        ("m", "mount") => "mount the clone's disk image",
+        ("u", "unmount") => "unmount the clone; its files stay in the image",
+        ("r", "refresh") => "refresh the golden image to the latest base",
+        ("o", "open") => "open the clone in $EDITOR",
+        ("/", "filter") => "filter clones by name or branch",
+        ("i", "init") => "build the golden image: a checkout of the base with deps warmed",
+        ("tab", "repo") => "next repository (1-9 jumps, [ ] steps)",
+        ("s", "settings") => "settings, config files, service, shell integration",
+        ("g", "cleanup") => "remove clones whose PR is merged, and leftovers",
+        ("D", "doctor") => "check the setup: disk images, git, steps, golden image",
+        ("?", "help") => "every key",
+        ("end", "follow") => "follow the output as it comes",
+        ("x", "reset") => "drop this setting from the chosen file",
+        ("←→", "save to") => "which config file edits go to",
+        _ => return None,
+    })
 }
 
 // ---- toasts ------------------------------------------------------------
@@ -1208,8 +1516,9 @@ fn draw_toasts(f: &mut Frame, app: &mut App, body: Rect) {
             ToastKind::Warn => ("!", AMBER),
             ToastKind::Err => ("✗", RED),
         };
-        let lines = fmt::wrap(&t.text, maxw.saturating_sub(6));
-        let lines: Vec<String> = lines.into_iter().take(3).collect();
+        let all = fmt::wrap(&t.text, maxw.saturating_sub(6));
+        let cut_off = all.len() > 3 || all.iter().any(|l| l.ends_with('…'));
+        let lines: Vec<String> = all.into_iter().take(3).collect();
         let tw = lines.iter().map(|l| width(l)).max().unwrap_or(0) + 6;
         let h = lines.len() as u16 + 2;
         if bottom < body.y + h {
@@ -1217,6 +1526,12 @@ fn draw_toasts(f: &mut Frame, app: &mut App, body: Rect) {
         }
         let r = Rect::new(body.right() - tw as u16 - 2, bottom - h, tw as u16, h);
         f.render_widget(Clear, r);
+        occlude(app, r);
+        tip(
+            app,
+            r,
+            cut_off.then(|| Tip::new(t.text.clone()).note("click dismisses")),
+        );
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(fg(color));
@@ -1247,6 +1562,13 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect, list: Rect) {
     let Some(modal) = app.modal.clone() else {
         return;
     };
+    // Centered modals cover everything but the footer.
+    if !matches!(modal, Modal::New(_)) {
+        occlude(
+            app,
+            Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1)),
+        );
+    }
     match modal {
         Modal::New(form) => draw_new(f, app, list, &form),
         Modal::Help => draw_help(f, app, area),
@@ -1299,6 +1621,7 @@ fn draw_new(f: &mut Frame, app: &mut App, list: Rect, form: &NewForm) {
     }
     let r = Rect::new(list.x + 1, list.bottom() - 1 - h, list.width - 2, h);
     f.render_widget(Clear, r);
+    occlude(app, r);
     let block = panel(vec![Span::styled("new clone", title())], true);
     let inner = block.inner(r).inner(Margin::new(1, 0));
     f.render_widget(block, r);
@@ -1321,10 +1644,13 @@ fn draw_new(f: &mut Frame, app: &mut App, list: Rect, form: &NewForm) {
         let shown = if input.text.is_empty() && i == 0 {
             Span::styled(trunc("(generated)", tw), muted())
         } else {
-            Span::styled(
-                trunc_left(&input.text, tw),
-                if focus { bold() } else { Style::new() },
-            )
+            let (s, t) = cut_left(&input.text, tw);
+            tip(
+                app,
+                Rect::new(fr.x + pw, fr.y, width(&s) as u16, 1).intersection(*fr),
+                t,
+            );
+            Span::styled(s, if focus { bold() } else { Style::new() })
         };
         put(f, *fr, Line::from(vec![Span::styled(prefix, lstyle), shown]));
         app.hits.push((*fr, Hit::Field(i)));
@@ -1335,12 +1661,18 @@ fn draw_new(f: &mut Frame, app: &mut App, list: Rect, form: &NewForm) {
         }
     }
     let (preview, err) = app.new_preview(form);
+    let pr = row(inner, 1);
     let pl = match err {
-        Some(e) => Line::from(Span::styled(format!("✗ {e}"), fg(RED))),
-        None => Line::from(vec![
-            Span::styled("→ ", fg(BOTTLE)),
-            Span::styled(trunc(&preview, inner.width as usize - 2), muted()),
-        ]),
+        Some(e) => {
+            let (s, t) = cut(&format!("✗ {e}"), inner.width as usize);
+            tip(app, pr, t);
+            Line::from(Span::styled(s, fg(RED)))
+        }
+        None => {
+            let (s, t) = cut(&preview, (inner.width as usize).saturating_sub(2));
+            tip(app, pr, t);
+            Line::from(vec![Span::styled("→ ", fg(BOTTLE)), Span::styled(s, muted())])
+        }
     };
     put(f, row(inner, 1), pl);
 
@@ -1361,6 +1693,7 @@ fn draw_new(f: &mut Frame, app: &mut App, list: Rect, form: &NewForm) {
     let x = (field.x.saturating_sub(2)).min(list.right().saturating_sub(sw + 1));
     let sr = Rect::new(x, r.y - sh, sw, sh);
     f.render_widget(Clear, sr);
+    occlude(app, sr);
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(border());
@@ -1370,7 +1703,8 @@ fn draw_new(f: &mut Frame, app: &mut App, list: Rect, form: &NewForm) {
         let rr = row(si, i as u16);
         let tag = ref_tag(app, s, form.focus);
         let nw = (si.width as usize).saturating_sub(tagw + 1);
-        let shown = trunc(s, nw);
+        let (shown, t) = cut(s, nw);
+        tip(app, Rect::new(rr.x, rr.y, nw as u16, 1).intersection(rr), t);
         let mut spans = highlight(&shown, &q);
         spans.push(Span::raw(" ".repeat(nw.saturating_sub(width(&shown)) + 1)));
         spans.push(Span::styled(format!("{tag:>tagw$}"), muted()));
@@ -1482,16 +1816,27 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
     let w: u16 = 62;
     let iw = (w - 6) as usize;
     let mut lines = vec![];
-    let mut head = vec![Span::styled(r.name.clone(), bold())];
+    let mut tips = SpanTips::default();
+    let bw = r.branch.as_deref().map(width).unwrap_or(0);
+    let name_room = if bw > 0 {
+        iw.saturating_sub(5 + bw.min(iw / 2))
+    } else {
+        iw
+    };
+    let (name, name_tip) = cut(&r.name, name_room);
+    tips.add(0, 0, name_tip);
+    let name_w = width(&name);
+    let mut head = vec![Span::styled(name, bold())];
     if let Some(b) = &r.branch {
+        let (b, t) = cut(b, iw.saturating_sub(name_w + 5));
+        tips.add(0, 2, t);
         head.push(Span::styled("  on ", muted()));
-        head.push(Span::styled(b.clone(), fg(PLUM)));
+        head.push(Span::styled(b, fg(PLUM)));
     }
     lines.push(Line::from(head));
-    lines.push(Line::from(Span::styled(
-        trunc_left(&fmt::tilde(&r.path), iw),
-        muted(),
-    )));
+    let (path, path_tip) = cut_left(&fmt::tilde(&r.path), iw);
+    tips.add(1, 0, path_tip);
+    lines.push(Line::from(Span::styled(path, muted())));
     lines.push(Line::from(""));
     match (r.mounted, r.dirty) {
         (true, Some(true)) => lines.push(Line::from(Span::styled(
@@ -1512,6 +1857,8 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
             if a == 1 { "" } else { "s" },
             r.base
         );
+        let (s, t) = cut(&s, iw);
+        tips.add(lines.len(), 0, t);
         lines.push(Line::from(Span::styled(
             s,
             if r.delete_branch { fg(AMBER) } else { muted() },
@@ -1545,11 +1892,13 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
     if let Some(b) = &r.branch {
         toggles.push((lines.len(), RemoveItem::DeleteBranch));
         let (cursor, mark, st) = check(RemoveItem::DeleteBranch, r.delete_branch);
+        let (b, t) = cut(b, iw.saturating_sub(30));
+        tips.add(lines.len(), 3, t);
         lines.push(Line::from(vec![
             cursor,
             mark,
             Span::styled("also delete branch ", st),
-            Span::styled(trunc(b, iw.saturating_sub(30)), fg(PLUM)),
+            Span::styled(b, fg(PLUM)),
         ]));
     }
     toggles.push((lines.len(), RemoveItem::Force));
@@ -1578,9 +1927,10 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
     open_modal(f, &mut app.hits, area, rect);
     let block = modal_block(vec![
         Span::styled("remove ", title()),
-        Span::styled(r.name.clone(), bold()),
+        Span::styled(trunc(&r.name, (w - 14) as usize), bold()),
     ]);
     let inner = block.inner(rect);
+    tips.place(&lines, inner, 0, &mut app.tips);
     f.render_widget(Paragraph::new(lines).block(block), rect);
     for (i, item) in toggles {
         app.hits.push((row(inner, i as u16), Hit::RemoveRow(item)));
@@ -1602,6 +1952,7 @@ fn draw_gc(f: &mut Frame, app: &mut App, area: Rect, g: &GcView) {
     let iw = w.saturating_sub(6) as usize;
     let mut apply_line = None;
     let mut lines = vec![];
+    let mut tips = SpanTips::default();
     let section = |s: &str| {
         Line::from(Span::styled(
             s.to_uppercase(),
@@ -1649,11 +2000,15 @@ fn draw_gc(f: &mut Frame, app: &mut App, area: Rect, g: &GcView) {
                     m.reason.clone()
                 };
                 let room = iw.saturating_sub(nw + 4 + width(&size));
+                let (name, name_tip) = cut(&m.clone, nw);
+                let (why, why_tip) = cut(&why, room);
+                tips.add(lines.len(), 1, name_tip);
+                tips.add(lines.len(), 3, why_tip);
                 lines.push(Line::from(vec![
                     Span::styled(icon, st),
-                    Span::styled(pad(&trunc(&m.clone, nw), nw), bold()),
+                    Span::styled(pad(&name, nw), bold()),
                     Span::raw("  "),
-                    Span::styled(pad(&trunc(&why, room), room), st),
+                    Span::styled(pad(&why, room), st),
                     Span::styled(size, muted()),
                 ]));
             }
@@ -1677,10 +2032,9 @@ fn draw_gc(f: &mut Frame, app: &mut App, area: Rect, g: &GcView) {
                 } else {
                     ("· ", muted())
                 };
-                lines.push(Line::from(vec![
-                    Span::styled(icon, st),
-                    Span::raw(trunc(act, iw - 2)),
-                ]));
+                let (act, t) = cut(act, iw.saturating_sub(2));
+                tips.add(lines.len(), 1, t);
+                lines.push(Line::from(vec![Span::styled(icon, st), Span::raw(act)]));
             }
             lines.push(Line::from(""));
             if g.running {
@@ -1717,6 +2071,7 @@ fn draw_gc(f: &mut Frame, app: &mut App, area: Rect, g: &GcView) {
     open_modal(f, &mut app.hits, area, rect);
     let block = modal_block(vec![Span::styled("cleanup", title())]);
     let inner = block.inner(rect);
+    tips.place(&lines, inner, 0, &mut app.tips);
     f.render_widget(Paragraph::new(lines).block(block), rect);
     if let Some((y, x, b1w, b2w)) = apply_line {
         let by = inner.y + y;
@@ -1739,6 +2094,7 @@ struct SettingsLayout {
     chips: Vec<(usize, u16, u16, Layer)>,
     /// Text cursor of the open editor: line, column.
     cursor: Option<(usize, u16)>,
+    tips: SpanTips,
 }
 
 /// Resolved config for the current repo, where each part comes from, and the
@@ -1750,6 +2106,7 @@ fn settings_lines(app: &App, iw: usize) -> SettingsLayout {
         rows: vec![],
         chips: vec![],
         cursor: None,
+        tips: SpanTips::default(),
     };
     let Some(d) = app.current() else {
         out.lines.push(Line::from(Span::styled("loading", muted())));
@@ -1792,6 +2149,7 @@ fn settings_lines(app: &App, iw: usize) -> SettingsLayout {
         Line::from(s)
     };
     let l = &mut out.lines;
+    let tips = &mut out.tips;
     l.push(Line::from(vec![
         Span::styled(st.name.clone(), bold()),
         Span::raw("  "),
@@ -1809,7 +2167,9 @@ fn settings_lines(app: &App, iw: usize) -> SettingsLayout {
         .min(iw.saturating_sub(kw + 14));
     for (i, (label, path)) in layers.into_iter().enumerate() {
         let exists = path.exists();
-        let p = pad(&trunc_left(&fmt::tilde(&path), pw), pw);
+        let (p, t) = cut_left(&fmt::tilde(&path), pw);
+        let p = pad(&p, pw);
+        tips.add(l.len(), 2, t);
         out.rows.push((l.len(), SettingsAction::Edit(i)));
         l.push(kva(
             SettingsAction::Edit(i),
@@ -1883,7 +2243,11 @@ fn settings_lines(app: &App, iw: usize) -> SettingsLayout {
                     Span::styled(pad("○ off", col), muted())
                 }),
                 (None, _) if fs.effective.is_empty() => v.push(Span::styled(pad("none", col), muted())),
-                (None, _) => v.push(Span::raw(pad(&trunc(&fs.effective, vw), col))),
+                (None, _) => {
+                    let (s, t) = cut(&fs.effective, vw);
+                    tips.add(l.len(), 2, t);
+                    v.push(Span::raw(pad(&s, col)));
+                }
             }
             if editing.is_some() {
                 v.push(Span::styled(format!("  → {}", view.target.label()), fg(BOTTLE)));
@@ -1893,6 +2257,14 @@ fn settings_lines(app: &App, iw: usize) -> SettingsLayout {
                 if let Some(mine) = fs.get(view.target)
                     && fs.source != Some(view.target)
                 {
+                    tips.add(
+                        l.len(),
+                        2 + v.len(),
+                        Some(Tip::new(format!(
+                            "{} sets {mine}, but {from} wins.",
+                            view.target.label()
+                        ))),
+                    );
                     v.push(Span::styled(
                         format!("  ({}: {}, overridden)", view.target.label(), trunc(mine, 16)),
                         fg(AMBER),
@@ -1902,25 +2274,23 @@ fn settings_lines(app: &App, iw: usize) -> SettingsLayout {
             out.rows.push((l.len(), a));
             l.push(kva(a, f.label, v));
             if cur == Some(a) {
-                l.push(Line::from(Span::styled(
-                    format!("  {}{}", " ".repeat(kw), trunc(f.help, iw.saturating_sub(kw + 2))),
-                    muted().add_modifier(Modifier::ITALIC),
-                )));
+                let (help, t) = cut(f.help, iw.saturating_sub(kw + 2));
+                tips.add(l.len(), 1, t);
+                l.push(Line::from(vec![
+                    Span::raw(format!("  {}", " ".repeat(kw))),
+                    Span::styled(help, muted().add_modifier(Modifier::ITALIC)),
+                ]));
             }
         }
         // Read-only context that is not a setting.
         match sec {
             "clones" if c.copy.is_none() && !st.copy.is_empty() => {
-                l.push(kv(
-                    "",
-                    vec![Span::styled(
-                        trunc(
-                            &format!("detected: {}", st.copy.join(", ")),
-                            iw.saturating_sub(kw + 2),
-                        ),
-                        muted(),
-                    )],
-                ));
+                let (s, t) = cut(
+                    &format!("detected: {}", st.copy.join(", ")),
+                    iw.saturating_sub(kw + 2),
+                );
+                tips.add(l.len(), 1, t);
+                l.push(kv("", vec![Span::styled(s, muted())]));
             }
             "steps" => {
                 l.push(kv(
@@ -1937,33 +2307,35 @@ fn settings_lines(app: &App, iw: usize) -> SettingsLayout {
                         Span::styled(step.name.clone(), bold()),
                     ]));
                     if let Some(w) = &step.warm {
-                        l.push(kv("  warm", vec![Span::raw(trunc(w, cmd_w))]));
+                        let (s, t) = cut(w, cmd_w);
+                        tips.add(l.len(), 1, t);
+                        l.push(kv("  warm", vec![Span::raw(s)]));
                     }
                     if let Some(s) = &step.setup {
-                        l.push(kv("  setup", vec![Span::raw(trunc(s, cmd_w))]));
+                        let (s, t) = cut(s, cmd_w);
+                        tips.add(l.len(), 1, t);
+                        l.push(kv("  setup", vec![Span::raw(s)]));
                     }
-                    l.push(kv(
-                        "  reruns when",
-                        vec![Span::styled(
-                            if step.watch.is_empty() {
-                                "always".to_string()
-                            } else {
-                                trunc(&step.watch.join(", "), cmd_w)
-                            },
-                            muted(),
-                        )],
-                    ));
+                    let (watch, t) = if step.watch.is_empty() {
+                        ("always".to_string(), None)
+                    } else {
+                        cut(&step.watch.join(", "), cmd_w)
+                    };
+                    tips.add(l.len(), 1, t);
+                    l.push(kv("  reruns when", vec![Span::styled(watch, muted())]));
                 }
             }
             "freshness" => {
                 if let Some(fr) = &st.freshness {
-                    l.push(kv(
-                        "now",
-                        vec![match &fr.reason {
-                            Some(r) => Span::styled(format!("stale: {r}"), fg(AMBER)),
-                            None => Span::styled("fresh", fg(SAGE)),
-                        }],
-                    ));
+                    let span = match &fr.reason {
+                        Some(r) => {
+                            let (s, t) = cut(&format!("stale: {r}"), iw.saturating_sub(kw + 2));
+                            tips.add(l.len(), 1, t);
+                            Span::styled(s, fg(AMBER))
+                        }
+                        None => Span::styled("fresh", fg(SAGE)),
+                    };
+                    l.push(kv("now", vec![span]));
                 }
             }
             _ => {}
@@ -2026,6 +2398,7 @@ fn draw_settings(f: &mut Frame, app: &mut App, area: Rect, v: SettingsView) {
         rows,
         chips,
         cursor,
+        tips,
     } = settings_lines(app, iw);
     let h = (lines.len() as u16 + 4).min(area.height.saturating_sub(2));
     let rect = centered(area, w, h);
@@ -2053,6 +2426,7 @@ fn draw_settings(f: &mut Frame, app: &mut App, area: Rect, v: SettingsView) {
     if let Some(Modal::Settings(sv)) = &mut app.modal {
         sv.scroll = scroll;
     }
+    tips.place(&lines, inner, off, &mut app.tips);
     let visible: Vec<Line> = lines.into_iter().skip(off).take(view).collect();
     f.render_widget(Paragraph::new(visible), inner);
     app.hits.push((rect, Hit::ScrollSettings));
@@ -2088,6 +2462,7 @@ fn draw_doctor(f: &mut Frame, app: &mut App, area: Rect, d: DoctorView) {
     let w = 84.min(area.width.saturating_sub(4));
     let iw = w.saturating_sub(6) as usize;
     let mut lines: Vec<Line> = vec![];
+    let mut tips = SpanTips::default();
     match (&d.checks, &d.error) {
         (_, Some(e)) => lines.push(Line::from(Span::styled(format!("✗ {e}"), fg(RED)))),
         (None, None) => lines.push(Line::from(Span::styled(
@@ -2110,7 +2485,9 @@ fn draw_doctor(f: &mut Frame, app: &mut App, area: Rect, d: DoctorView) {
                             format!("{icon} "),
                             fg(color).add_modifier(Modifier::BOLD),
                         ));
-                        s.push(Span::styled(pad(&c.name, nw), bold()));
+                        let (name, t) = cut(&c.name, nw);
+                        tips.add(lines.len(), 1, t);
+                        s.push(Span::styled(pad(&name, nw), bold()));
                     } else {
                         s.push(Span::raw(" ".repeat(nw + 2)));
                     }
@@ -2119,10 +2496,12 @@ fn draw_doctor(f: &mut Frame, app: &mut App, area: Rect, d: DoctorView) {
                     lines.push(Line::from(s));
                 }
                 if let Some(fix) = &c.fix {
+                    let (s, t) = cut(fix, iw.saturating_sub(nw + 7));
+                    tips.add(lines.len(), 2, t);
                     lines.push(Line::from(vec![
                         Span::raw(" ".repeat(nw + 3)),
                         Span::styled("fix ", muted()),
-                        Span::styled(trunc(fix, iw.saturating_sub(nw + 7)), key()),
+                        Span::styled(s, key()),
                     ]));
                 }
             }
@@ -2156,6 +2535,7 @@ fn draw_doctor(f: &mut Frame, app: &mut App, area: Rect, d: DoctorView) {
     if let Some(Modal::Doctor(dv)) = &mut app.modal {
         dv.scroll = scroll;
     }
+    tips.place(&lines, inner, off, &mut app.tips);
     let visible: Vec<Line> = lines.into_iter().skip(off).take(view).collect();
     f.render_widget(Paragraph::new(visible), inner);
     app.hits.push((rect, Hit::ScrollDoctor));
@@ -2168,7 +2548,9 @@ fn draw_doctor(f: &mut Frame, app: &mut App, area: Rect, d: DoctorView) {
     );
 }
 
-fn step_line<'a>(s: &StepRow, now_ms: u64, w: usize) -> Line<'a> {
+/// One step of a job, its name and detail cut to `w`; tips for both go on
+/// line `li` of `tips`.
+fn step_line<'a>(s: &StepRow, now_ms: u64, w: usize, li: usize, tips: &mut SpanTips) -> Line<'a> {
     let (icon, istyle, nstyle, right) = match &s.state {
         StepState::Running { since_ms } => (
             spinner(now_ms).to_string(),
@@ -2182,12 +2564,17 @@ fn step_line<'a>(s: &StepRow, now_ms: u64, w: usize) -> Line<'a> {
     };
     // A skipped step keeps its name; its reason gives way instead.
     let (name, right) = if matches!(s.state, StepState::Skipped { .. }) {
-        let name = trunc(&s.name, w.saturating_sub(6).max(4));
+        let (name, t) = cut(&s.name, w.saturating_sub(6).max(4));
+        tips.add(li, 1, t);
         let room = w.saturating_sub(2 + width(&name) + 2);
-        (name, trunc(&right, room))
+        let (right, t) = cut(&right, room);
+        tips.add(li, 3, t.map(|t| t.note(format!("{} skipped", s.name))));
+        (name, right)
     } else {
         let nw = w.saturating_sub(width(&right) + 3).max(4);
-        (trunc(&s.name, nw), right)
+        let (name, t) = cut(&s.name, nw);
+        tips.add(li, 1, t);
+        (name, right)
     };
     let fill = w.saturating_sub(2 + width(&name) + width(&right)).max(1);
     Line::from(vec![
@@ -2256,7 +2643,13 @@ fn draw_job(f: &mut Frame, app: &mut App, area: Rect, id: u64) {
 
     // Steps, newest at the bottom; keep the tail when they overflow.
     let sw = steps_area.width as usize;
-    let mut lines: Vec<Line> = job.steps.iter().map(|s| step_line(s, app.now_ms, sw)).collect();
+    let mut tips = SpanTips::default();
+    let mut lines: Vec<Line> = job
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| step_line(s, app.now_ms, sw, i, &mut tips))
+        .collect();
     if lines.is_empty() && job.running() {
         lines.push(Line::from(Span::styled(
             format!("{} starting", spinner(app.now_ms)),
@@ -2291,6 +2684,14 @@ fn draw_job(f: &mut Frame, app: &mut App, area: Rect, id: u64) {
     }
     let last = shown.len().saturating_sub(1) as u16;
     let n = shown.len();
+    // `shown` starts at step `skip`: shift the tips to match.
+    let mut shifted = SpanTips::default();
+    for (li, si, t) in tips.0 {
+        if li >= skip {
+            shifted.add(li - skip, si, Some(t));
+        }
+    }
+    shifted.place(&shown, steps_area, 0, &mut app.tips);
     f.render_widget(Paragraph::new(shown), steps_area);
     if matches!(job.result, Some(Ok(_))) && job.path.is_some() && n > 0 {
         app.hits.push((
@@ -2350,9 +2751,11 @@ fn draw_job(f: &mut Frame, app: &mut App, area: Rect, id: u64) {
         .unwrap_or(0)
         .min(12);
     let tw = (li.width as usize).saturating_sub(if pw > 0 { pw + 3 } else { 0 });
+    let mut tips = SpanTips::default();
     let lines: Vec<Line> = job.log[off..(off + view).min(len)]
         .iter()
-        .map(|l| {
+        .enumerate()
+        .map(|(i, l)| {
             let mut s = vec![];
             if pw > 0 {
                 let tag = l.step.as_deref().map(step_tag).unwrap_or("");
@@ -2364,10 +2767,17 @@ fn draw_job(f: &mut Frame, app: &mut App, area: Rect, id: u64) {
                 LogKind::Warn => fg(AMBER),
                 LogKind::Info => muted(),
             };
-            s.push(Span::styled(trunc(&l.text, tw), style));
+            let (text, t) = cut(&l.text, tw);
+            let t = t.map(|t| match &l.step {
+                Some(step) => t.note(step.clone()),
+                None => t,
+            });
+            tips.add(i, s.len(), t);
+            s.push(Span::styled(text, style));
             Line::from(s)
         })
         .collect();
+    tips.place(&lines, li, 0, &mut app.tips);
     f.render_widget(Paragraph::new(lines), li);
     scrollbar(
         f,

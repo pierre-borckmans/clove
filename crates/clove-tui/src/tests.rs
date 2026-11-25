@@ -1379,3 +1379,139 @@ fn reload_requested_mid_load_runs_after_it() {
     });
     assert!(app.needs_reload());
 }
+
+// ---- tooltips ----------------------------------------------------------
+
+fn moved(app: &mut App, x: u16, y: u16) {
+    app.on_input(TermEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    }));
+}
+
+const LONG: &str = "pierre-onboarding-flow-with-a-long-name";
+
+fn long_app() -> App {
+    let mut cs = clones();
+    cs.push(clone(LONG, Some("pierre/onboarding-flow-v3"), true));
+    app_with(true, cs)
+}
+
+#[test]
+fn tooltip_shows_a_cut_name_after_the_delay() {
+    let mut app = long_app();
+    let (s, _) = render(&mut app, 120, 24);
+    assert!(!s.contains(LONG), "the name is cut in the list:\n{s}");
+    let (x, y) = find(&s, "pierre-onboarding-flow-wi");
+    moved(&mut app, x + 3, y);
+    assert!(app.animate(), "keeps redrawing while a tooltip is pending");
+    let (s, _) = render(&mut app, 120, 24);
+    assert!(!s.contains(LONG), "not at once:\n{s}");
+    app.now_ms += crate::tooltip::DELAY_MS / 2;
+    let (s, _) = render(&mut app, 120, 24);
+    assert!(!s.contains(LONG), "not before the delay:\n{s}");
+    app.now_ms += crate::tooltip::DELAY_MS / 2 + 1;
+    let (s, buf) = render(&mut app, 120, 24);
+    let (tx, ty) = find(&s, LONG);
+    // Below-right of the mouse, in a bottle-bordered box.
+    assert_eq!(ty, y + 2, "{s}");
+    assert!(tx > x + 3, "{s}");
+    assert_eq!(buf[(tx - 2, ty - 1)].symbol(), "╭");
+    assert_eq!(buf[(tx - 2, ty - 1)].fg, theme::BOTTLE);
+    assert!(!app.animate(), "shown: no more redraws needed");
+    // Moving within the name keeps it; moving off hides it.
+    moved(&mut app, x + 4, y);
+    assert!(render(&mut app, 120, 24).0.contains(LONG));
+    moved(&mut app, 60, 20);
+    assert!(!render(&mut app, 120, 24).0.contains(LONG));
+}
+
+#[test]
+fn no_tooltip_on_text_that_fits() {
+    let mut app = long_app();
+    let (s, _) = render(&mut app, 120, 24);
+    let (x, y) = find(&s, "fix-race");
+    moved(&mut app, x + 2, y);
+    app.now_ms += 2 * crate::tooltip::DELAY_MS;
+    let (after, _) = render(&mut app, 120, 24);
+    assert_eq!(s, after);
+}
+
+#[test]
+fn badges_explain_themselves() {
+    let mut app = long_app();
+    let (s, _) = render(&mut app, 120, 24);
+    // The status dot of an unmounted clone.
+    let (x, y) = find(&s, "○ spike-cache");
+    moved(&mut app, x, y);
+    app.now_ms += crate::tooltip::DELAY_MS;
+    let (s2, _) = render(&mut app, 120, 24);
+    assert!(s2.contains("Not mounted: m mounts it."), "{s2}");
+    // A footer hint.
+    let (x, y) = find(&s, "g cleanup  ?");
+    moved(&mut app, x, y);
+    app.now_ms += crate::tooltip::DELAY_MS;
+    let (s3, _) = render(&mut app, 120, 24);
+    assert!(s3.contains("remove clones whose PR is merged"), "{s3}");
+}
+
+#[test]
+fn tooltip_stays_on_screen_at_the_edges() {
+    let mut app = long_app();
+    let (s, _) = render(&mut app, 120, 24);
+    // The PATH column ends at the right edge; the long clone's path is cut.
+    let (_, y) = find(&s, "pierre-onboarding-flow-wi");
+    let x = 116;
+    moved(&mut app, x, y);
+    app.now_ms += crate::tooltip::DELAY_MS;
+    let (s, buf) = render(&mut app, 120, 24);
+    let (tx, ty) = find(&s, "/work/app.clove/");
+    assert_eq!(ty, y + 2, "still below:\n{s}");
+    assert!(tx < x, "slid left of the mouse:\n{s}");
+    let right = (0..120)
+        .rev()
+        .find(|&cx| buf[(cx, ty - 1)].symbol() == "╮")
+        .unwrap();
+    assert!(right < 120 && right > tx, "{s}");
+
+    // The bottom row (footer): above the mouse, the hint left uncovered.
+    let (x, y) = find(&s, "? help");
+    assert_eq!(y, 23);
+    moved(&mut app, x + 2, y);
+    app.now_ms += crate::tooltip::DELAY_MS;
+    let (s, _) = render(&mut app, 120, 24);
+    let (_, ty) = find(&s, "every key");
+    assert_eq!(ty, 21, "the tooltip ends just above:\n{s}");
+    assert_eq!(find(&s, "? help"), (x, y), "{s}");
+}
+
+#[test]
+fn a_key_or_click_hides_the_tooltip() {
+    let mut app = long_app();
+    let (s, _) = render(&mut app, 120, 24);
+    let (x, y) = find(&s, "pierre-onboarding-flow-wi");
+    moved(&mut app, x + 3, y);
+    app.now_ms += crate::tooltip::DELAY_MS;
+    assert!(render(&mut app, 120, 24).0.contains(LONG));
+    key(&mut app, KeyCode::Char('x'));
+    assert!(!render(&mut app, 120, 24).0.contains(LONG), "a key hides it");
+    // Coming back shows it again after the delay.
+    moved(&mut app, x + 4, y);
+    app.now_ms += crate::tooltip::DELAY_MS;
+    assert!(render(&mut app, 120, 24).0.contains(LONG));
+    click(&mut app, x + 4, y);
+    assert!(!render(&mut app, 120, 24).0.contains(LONG), "a click hides it");
+}
+
+#[test]
+fn modals_hide_the_tooltips_behind_them() {
+    let mut app = long_app();
+    let (s, _) = render(&mut app, 120, 24);
+    let (x, y) = find(&s, "pierre-onboarding-flow-wi");
+    key(&mut app, KeyCode::Char('?'));
+    moved(&mut app, x + 3, y);
+    app.now_ms += crate::tooltip::DELAY_MS;
+    assert!(!render(&mut app, 120, 24).0.contains(LONG));
+}
