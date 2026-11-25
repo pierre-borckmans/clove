@@ -97,6 +97,11 @@ export type OtherWorktree = {
   pr: Pr | null;
   /** Why clove won't remove or adopt it. */
   blocker: string | null;
+  /** `git status --short` lines when dirty (at most a dozen) and their total. */
+  changes?: string[];
+  changes_total?: number;
+  /** Only a lock and/or uncommitted changes block it: both can be overridden. */
+  can_force?: boolean;
 };
 
 export type CheckLevel = "ok" | "warn" | "fail";
@@ -152,7 +157,7 @@ export type OpRequest =
       detach?: boolean;
     }
   | { kind: "remove"; root: string; name: string; force?: boolean; delete_branch?: boolean }
-  | { kind: "remove_worktree"; root: string; path: string; delete_branch?: boolean }
+  | { kind: "remove_worktree"; root: string; path: string; delete_branch?: boolean; force?: boolean; unlock?: boolean }
   | { kind: "adopt"; root: string; path: string; name?: string | null }
   | { kind: "deinit"; root: string };
 

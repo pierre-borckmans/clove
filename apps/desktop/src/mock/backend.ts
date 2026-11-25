@@ -231,11 +231,12 @@ async function runOp(id: string, op: OpRequest): Promise<unknown> {
       const r = get(op.root);
       const w = r.worktrees.find((x) => x.path === op.path);
       if (!w) throw new Error(`${op.path} is not a plain git worktree of ${r.status.name}`);
-      if (w.blocker) {
+      const overridden = w.can_force && (!w.locked || op.unlock) && (w.dirty !== true || op.force);
+      if (w.blocker && !overridden) {
         await sleep(120);
         throw new Error(w.blocker);
       }
-      await play(id, [{ step: "git worktree remove", ms: 260 }]);
+      await play(id, [{ step: op.force ? "git worktree remove --force" : "git worktree remove", ms: 260 }]);
       r.worktrees = r.worktrees.filter((x) => x.path !== op.path);
       if (op.delete_branch && w.branch) r.refs = r.refs.filter((x) => !(x.kind === "local" && x.name === w.branch));
       return null;

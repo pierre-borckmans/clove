@@ -1,7 +1,8 @@
 //! Plain git worktrees: ones clove did not make (made before clove, by an
 //! agent's `git worktree add`, by another tool). clove lists them, removes
 //! merged ones with plain `git worktree remove`, and can turn one into a clone.
-//! It never forces anything on them: locked, dirty or detached work stays.
+//! Locked worktrees and commits on no branch always stay; uncommitted changes
+//! go only when asked (`--force`), after they're listed.
 
 use crate::events::{Event, Reporter};
 use crate::git;
@@ -29,6 +30,12 @@ pub struct OtherWorktree {
     pub missing: bool,
     /// None when not computed or the folder is missing.
     pub dirty: Option<bool>,
+    /// `git status --short` lines when dirty, at most [`MAX_CHANGES`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changes: Vec<String>,
+    /// How many changed paths there are in all (may exceed `changes`).
+    #[serde(default)]
+    pub changes_total: usize,
     /// Detached only: commits on no branch, tag or remote, which removing
     /// the worktree would orphan.
     pub detached_commits: Option<u32>,
@@ -37,32 +44,50 @@ pub struct OtherWorktree {
     /// Why clove won't remove or adopt it (see [`OtherWorktree::blocker`]).
     /// Only filled with `status`.
     pub blocker: Option<String>,
+    /// Only uncommitted changes block it: `--force` may discard them (see
+    /// [`OtherWorktree::forceable`]). Only filled with `status`.
+    #[serde(default)]
+    pub can_force: bool,
 }
 
+/// Changed paths kept per worktree, to show what removing it would discard.
+pub const MAX_CHANGES: usize = 12;
+
 impl OtherWorktree {
-    /// Why removing (or adopting) it could lose something, if it could.
+    /// Why making it a clone could lose something, or can't work.
     pub fn blocker(&self) -> Option<String> {
-        if self.locked {
+        if self.missing {
+            return Some(format!("{} is gone from disk", self.name));
+        }
+        self.removal_blocker(false, false)
+    }
+
+    /// Something stands in the way of removing it, but only things the user
+    /// may override: a lock (`unlock`) and uncommitted changes (`discard`).
+    /// Commits on no branch never are.
+    pub fn forceable(&self) -> bool {
+        self.removal_blocker(false, false).is_some() && self.removal_blocker(true, true).is_none()
+    }
+
+    /// Why removing it could lose something, unless `discard` (uncommitted
+    /// changes may go) and `unlock` (its lock may be lifted). A missing folder
+    /// is no reason: removing then only drops git's record of it.
+    pub fn removal_blocker(&self, discard: bool, unlock: bool) -> Option<String> {
+        if self.locked && !unlock {
             let why = self
                 .lock_reason
                 .as_deref()
                 .map(|r| format!(" ({r})"))
                 .unwrap_or_default();
-            return Some(format!(
-                "{} is locked{why}; `git worktree unlock` it first if it's really done",
-                self.name
-            ));
+            return Some(format!("{} is locked{why}", self.name));
         }
-        if self.missing {
-            return Some(format!(
-                "{} is gone from disk; `git worktree prune` drops its registration",
-                self.name
-            ));
-        }
-        match self.dirty {
-            Some(true) => return Some(format!("{} has uncommitted changes", self.name)),
-            None => return Some(format!("couldn't check {} for uncommitted changes", self.name)),
-            Some(false) => {}
+        if !self.missing {
+            match self.dirty {
+                Some(true) if discard => {}
+                Some(true) => return Some(format!("{} has uncommitted changes", self.name)),
+                None => return Some(format!("couldn't check {} for uncommitted changes", self.name)),
+                Some(false) => {}
+            }
         }
         if let Some(n) = self.detached_commits.filter(|n| *n > 0) {
             return Some(format!(
@@ -178,6 +203,9 @@ impl Clove {
                     prunable: e.prunable,
                     missing,
                     dirty: None,
+                    changes: vec![],
+                    changes_total: 0,
+                    can_force: false,
                     detached_commits: None,
                     pr,
                     blocker: None,
@@ -189,7 +217,13 @@ impl Clove {
             std::thread::scope(|s| {
                 for w in list.iter_mut().filter(|w| !w.missing) {
                     s.spawn(move || {
-                        w.dirty = git::is_dirty(&w.path).ok();
+                        let st = git::out(&w.path, &["status", "--short", "--untracked-files=normal"]);
+                        w.dirty = st.as_ref().ok().map(|s| !s.trim().is_empty());
+                        if let Ok(s) = st {
+                            let lines: Vec<&str> = s.lines().filter(|l| !l.trim().is_empty()).collect();
+                            w.changes_total = lines.len();
+                            w.changes = lines.iter().take(MAX_CHANGES).map(|l| l.to_string()).collect();
+                        }
                         if w.branch.is_none() {
                             w.detached_commits = git::out(
                                 &w.path,
@@ -206,12 +240,14 @@ impl Clove {
                             .ok()
                             .and_then(|n| n.parse().ok());
                         }
-                        w.blocker = w.blocker();
+                        w.blocker = w.removal_blocker(false, false);
+                        w.can_force = w.forceable();
                     });
                 }
             });
             for w in list.iter_mut().filter(|w| w.missing) {
-                w.blocker = w.blocker();
+                w.blocker = w.removal_blocker(false, false);
+                w.can_force = w.forceable();
             }
         }
         Ok(list)
@@ -247,26 +283,48 @@ impl Clove {
         }
     }
 
-    /// Removes a plain worktree with `git worktree remove` (never `--force`).
-    /// Refuses locked, dirty, missing, and detached-with-orphan-commits
-    /// worktrees. The branch goes only on `delete_branch`, by the same rule
-    /// as clones: `-D` when merged, else `-d`.
+    /// Removes a plain worktree with `git worktree remove`. Refuses detached
+    /// ones with orphan commits; locked ones unless `unlock` (the lock goes
+    /// back if removal fails); dirty ones unless `force` (`--force`, which
+    /// discards their changes). A missing folder just loses its record. The
+    /// branch goes only on `delete_branch`, by the same rule as clones: `-D`
+    /// when merged, else `-d`.
     pub fn remove_worktree(&self, path: &Path, opts: &RemoveOptions, r: &dyn Reporter) -> Result<()> {
-        if opts.force {
-            bail!(
-                "clove never force-removes a plain git worktree; use `git worktree remove --force` yourself"
-            );
-        }
         let w = self
             .other_worktrees(true)?
             .into_iter()
             .find(|w| w.path == path)
             .with_context(|| format!("{} is not a plain git worktree of {}", path.display(), self.name))?;
-        if let Some(why) = w.blocker() {
-            bail!("{why}");
+        if let Some(why) = w.removal_blocker(opts.force, opts.unlock) {
+            let how = match (w.locked && !opts.unlock, w.dirty == Some(true) && !opts.force) {
+                _ if !w.forceable() => "",
+                (true, true) => "; --unlock --force lifts the lock and discards the changes",
+                (true, false) => "; --unlock lifts the lock",
+                _ => "; --force discards them",
+            };
+            bail!("{why}{how}");
         }
-        git::run_ok(&self.root, &["worktree", "remove", &w.path.to_string_lossy()])
-            .with_context(|| format!("git worktree remove {}", w.path.display()))?;
+        let p = w.path.to_string_lossy().to_string();
+        if w.locked {
+            git::run_ok(&self.root, &["worktree", "unlock", &p]).context("git worktree unlock")?;
+        }
+        let mut args = vec!["worktree", "remove"];
+        if opts.force && w.dirty == Some(true) {
+            args.push("--force");
+        }
+        args.push(&p);
+        if let Err(e) = git::run_ok(&self.root, &args) {
+            if w.locked {
+                // Put the lock back as it was.
+                let mut lock = vec!["worktree", "lock"];
+                if let Some(r) = &w.lock_reason {
+                    lock.extend(["--reason", r.as_str()]);
+                }
+                lock.push(&p);
+                let _ = git::run_ok(&self.root, &lock);
+            }
+            return Err(e).with_context(|| format!("git {}", args.join(" ")));
+        }
         if opts.delete_branch
             && let Some(b) = &w.branch
         {
@@ -293,6 +351,7 @@ impl Clove {
             force: false,
             delete_branch: true,
             branch_merged: true,
+            unlock: false,
         };
         let (mut removed, mut kept) = (vec![], vec![]);
         for c in checks.iter().filter(|c| c.verdict == Verdict::Prune) {
@@ -569,13 +628,56 @@ mod tests {
 
         // Not a plain worktree: the main checkout.
         assert!(r.clove.remove_worktree(&r.dir, &opts, &Silent).is_err());
+        assert!(dirty.exists() && locked.exists() && det.exists());
+
+        // Forced: the dirty one goes (its changes listed first); locked and
+        // orphan commits still don't.
         let force = RemoveOptions {
             force: true,
             ..Default::default()
         };
-        let clean = r.add("clean", &["-b", "c"]);
-        assert!(r.clove.remove_worktree(&clean, &force, &Silent).is_err());
-        assert!(dirty.exists() && locked.exists() && det.exists() && clean.exists());
+        let w = r.clove.other_worktrees(true).unwrap();
+        let d = w.iter().find(|w| w.path == dirty).unwrap();
+        assert!(d.forceable());
+        assert_eq!(d.changes_total, 1);
+        assert!(d.changes[0].ends_with("a.txt"), "{:?}", d.changes);
+        let e = r.clove.remove_worktree(&dirty, &opts, &Silent).unwrap_err();
+        assert!(format!("{e:#}").contains("--force discards them"), "{e:#}");
+        r.clove.remove_worktree(&dirty, &force, &Silent).unwrap();
+        assert!(!dirty.exists());
+        assert!(r.clove.remove_worktree(&locked, &force, &Silent).is_err());
+        assert!(r.clove.remove_worktree(&det, &force, &Silent).is_err());
+        assert!(locked.exists() && det.exists());
+        let e = r.clove.remove_worktree(&locked, &force, &Silent).unwrap_err();
+        assert!(format!("{e:#}").contains("--unlock"), "{e:#}");
+
+        // Unlocked on request; orphan commits still stop it.
+        let unlock = RemoveOptions {
+            unlock: true,
+            ..Default::default()
+        };
+        r.clove.remove_worktree(&locked, &unlock, &Silent).unwrap();
+        assert!(!locked.exists());
+        assert!(r.clove.remove_worktree(&det, &unlock, &Silent).is_err());
+
+        // Locked with its folder gone: unlocking drops git's record of it.
+        let gone = r.add("gone", &["-b", "g"]);
+        git(
+            &r.dir,
+            &["worktree", "lock", "--reason", "deploy", gone.to_str().unwrap()],
+        );
+        std::fs::remove_dir_all(&gone).unwrap();
+        let w = r.clove.other_worktrees(true).unwrap();
+        let g = w.iter().find(|w| w.path == gone).unwrap();
+        assert!(g.missing && g.locked && g.forceable(), "{g:?}");
+        r.clove.remove_worktree(&gone, &unlock, &Silent).unwrap();
+        assert!(
+            !r.clove
+                .other_worktrees(false)
+                .unwrap()
+                .iter()
+                .any(|w| w.path == gone)
+        );
     }
 
     #[test]

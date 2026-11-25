@@ -269,6 +269,9 @@ export function seed(): Map<string, MockRepo> {
         dirty: true,
         pr: { number: 1446, state: "open", head_oid: "5a6b7c8d9e0f", title: "", url: "" },
         blocker: "mono-agent-search has uncommitted changes",
+        changes: [" M packages/search/src/index.ts", "?? packages/search/notes.md"],
+        changes_total: 2,
+        can_force: true,
       }),
       worktree({
         name: "mono-deploy",
@@ -276,7 +279,8 @@ export function seed(): Map<string, MockRepo> {
         locked: true,
         lock_reason: "deploy runner",
         detached_commits: 0,
-        blocker: "mono-deploy is locked (deploy runner); `git worktree unlock` it first if it's really done",
+        blocker: "mono-deploy is locked (deploy runner)",
+        can_force: true,
       }),
     ],
     prs: [

@@ -1104,6 +1104,7 @@ impl App {
                 return;
             }
             let base = self.current().map(|d| d.status.base.clone()).unwrap_or_default();
+            let forceable = w.forceable();
             self.modal = Some(Modal::Remove(RemoveForm {
                 inside: self.start_dir.starts_with(&w.path),
                 name: w.name,
@@ -1117,7 +1118,13 @@ impl App {
                 force: false,
                 focus: 0,
                 worktree: true,
+                forceable,
+                locked: w.locked,
+                lock_reason: w.lock_reason,
+                unlock: false,
                 blocker: w.blocker,
+                changes: w.changes,
+                changes_total: w.changes_total,
             }));
             if let Some(Modal::Remove(f)) = &mut self.modal {
                 f.focus_on(RemoveItem::Remove);
@@ -1146,6 +1153,12 @@ impl App {
             inside,
             worktree: false,
             blocker: None,
+            forceable: false,
+            locked: false,
+            lock_reason: None,
+            unlock: false,
+            changes: vec![],
+            changes_total: 0,
         }));
         if let Some(Modal::Remove(f)) = &mut self.modal {
             f.focus_on(RemoveItem::Remove);
@@ -1480,8 +1493,14 @@ impl App {
                 if f.focused() == RemoveItem::Cancel && k.code != KeyCode::Char('y') {
                     return (None, vec![]);
                 }
-                if let Some(b) = f.blocker.clone().filter(|_| f.worktree) {
-                    self.toast(ToastKind::Err, b);
+                if f.blocked() {
+                    let b = f.blocker.clone().unwrap_or_default();
+                    let hint = if f.forceable {
+                        "; tick \"discard these changes\" to remove it anyway"
+                    } else {
+                        ""
+                    };
+                    self.toast(ToastKind::Err, format!("{b}{hint}"));
                     return (Some(Modal::Remove(f)), vec![]);
                 }
                 if f.inside {
@@ -1504,6 +1523,9 @@ impl App {
                     if f.force {
                         args.push("--force".into());
                     }
+                    if f.unlock {
+                        args.push("--unlock".into());
+                    }
                     args.push(if f.worktree {
                         f.path.to_string_lossy().to_string()
                     } else {
@@ -1517,6 +1539,8 @@ impl App {
                         path: f.path.clone(),
                         name: f.name.clone(),
                         delete_branch: f.delete_branch,
+                        force: f.force && f.forceable,
+                        unlock: f.unlock && f.forceable,
                     };
                     return (None, self.spawn(task, After::Nothing));
                 }
@@ -1526,6 +1550,7 @@ impl App {
                         force: f.force,
                         delete_branch: f.delete_branch,
                         branch_merged: false,
+                        unlock: false,
                     },
                 };
                 return (None, self.spawn(task, After::Nothing));

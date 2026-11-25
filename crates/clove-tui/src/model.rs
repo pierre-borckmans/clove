@@ -69,6 +69,10 @@ pub enum Task {
         path: PathBuf,
         name: String,
         delete_branch: bool,
+        /// `git worktree remove --force`: discards uncommitted changes.
+        force: bool,
+        /// Lift its `git worktree lock` first.
+        unlock: bool,
     },
     /// Turn a plain worktree into a clone on its branch.
     Adopt {
@@ -481,24 +485,47 @@ pub struct RemoveForm {
     pub worktree: bool,
     /// Why a plain worktree can't go (locked, dirty, ...), if it can't.
     pub blocker: Option<String>,
+    /// A plain worktree blocked only by things the user may override: a lock
+    /// (`unlock`) and uncommitted changes (`force`).
+    pub forceable: bool,
+    /// A plain worktree's `git worktree lock`, and its reason.
+    pub locked: bool,
+    pub lock_reason: Option<String>,
+    /// Lift that lock to remove it.
+    pub unlock: bool,
+    /// Its `git status --short` lines (at most a dozen) and how many there are.
+    pub changes: Vec<String>,
+    pub changes_total: usize,
 }
 
 /// The focusable rows of the remove dialog, top to bottom.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoveItem {
     DeleteBranch,
+    Unlock,
     Force,
     Remove,
     Cancel,
 }
 
 impl RemoveForm {
+    /// The remove button can't act: a plain worktree with a blocker that
+    /// force doesn't lift (or force not ticked).
+    pub fn blocked(&self) -> bool {
+        let overridden =
+            self.forceable && (!self.locked || self.unlock) && (self.dirty != Some(true) || self.force);
+        self.worktree && self.blocker.is_some() && !overridden
+    }
+
     pub fn items(&self) -> Vec<RemoveItem> {
         let mut v = vec![];
         if self.branch.is_some() {
             v.push(RemoveItem::DeleteBranch);
         }
-        if !self.worktree {
+        if self.worktree && self.forceable && self.locked {
+            v.push(RemoveItem::Unlock);
+        }
+        if !self.worktree || (self.forceable && self.dirty == Some(true)) {
             v.push(RemoveItem::Force);
         }
         v.extend([RemoveItem::Remove, RemoveItem::Cancel]);
@@ -521,6 +548,7 @@ impl RemoveForm {
         match item {
             RemoveItem::DeleteBranch => self.delete_branch = !self.delete_branch,
             RemoveItem::Force => self.force = !self.force,
+            RemoveItem::Unlock => self.unlock = !self.unlock,
             _ => return false,
         }
         true

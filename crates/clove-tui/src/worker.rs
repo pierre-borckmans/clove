@@ -195,10 +195,16 @@ fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Res
             }
         },
         Task::RemoveWorktree {
-            path, delete_branch, ..
+            path,
+            delete_branch,
+            force,
+            unlock,
+            ..
         } => {
             let opts = clove_core::RemoveOptions {
                 delete_branch,
+                force,
+                unlock,
                 ..Default::default()
             };
             c.remove_worktree(&path, &opts, r)

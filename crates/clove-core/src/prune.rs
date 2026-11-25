@@ -120,6 +120,7 @@ impl Clove {
             force: false,
             delete_branch: true,
             branch_merged: true,
+            unlock: false,
         };
         for m in out.checks.iter().filter(|m| m.verdict == Verdict::Prune) {
             match self.remove(&m.clone, &opts, r) {

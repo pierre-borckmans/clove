@@ -88,7 +88,8 @@ enum Cmd {
     },
     /// Remove clones: unmount, delete the image and the git registration.
     /// A plain git worktree (path or folder name) goes with `git worktree
-    /// remove`, never forced: locked, dirty or detached work stays.
+    /// remove`; with uncommitted changes only when --force (they're listed).
+    /// Locked ones and commits on no branch always stay.
     #[command(visible_alias = "rm")]
     Remove(RemoveArgs),
     /// Change directory to a clone (needs shell integration). No argument: the main checkout.
@@ -328,6 +329,10 @@ struct RemoveArgs {
     /// Also delete the branch.
     #[arg(short = 'D', long)]
     delete_branch: bool,
+    /// Plain git worktrees: lift a `git worktree lock` to remove it (the
+    /// lock goes back if removal fails).
+    #[arg(long)]
+    unlock: bool,
 }
 
 fn main() {
@@ -540,7 +545,25 @@ fn run(cli: Cli) -> Result<()> {
                     force: a.force,
                     delete_branch: a.delete_branch,
                     branch_merged: false,
+                    unlock: a.unlock,
                 };
+                if !cli.json && w.locked && a.unlock {
+                    let why = w.lock_reason.as_deref().unwrap_or("no reason given");
+                    eprintln!("  {}", paint(DIM, format!("unlocking (locked: {why})")));
+                }
+                if !cli.json && w.dirty == Some(true) && !w.changes.is_empty() {
+                    let verb = if a.force { "discarding" } else { "uncommitted" };
+                    eprintln!("  {}", paint(DIM, format!("{verb}:")));
+                    for l in &w.changes {
+                        eprintln!("    {}", paint(DIM, l));
+                    }
+                    if w.changes_total > w.changes.len() {
+                        eprintln!(
+                            "    {}",
+                            paint(DIM, format!("and {} more", w.changes_total - w.changes.len()))
+                        );
+                    }
+                }
                 c.remove_worktree(&w.path, &opts, r)?;
                 if std::env::current_dir().is_ok_and(|d| d.starts_with(&w.path)) {
                     shell::request_cd(&c.root);
@@ -581,6 +604,7 @@ fn run(cli: Cli) -> Result<()> {
                         force: a.force,
                         delete_branch: a.delete_branch,
                         branch_merged: false,
+                        unlock: false,
                     },
                     r,
                 )?;
@@ -1629,6 +1653,7 @@ fn cmd_prune(cli: &Cli, apply: bool, r: &dyn clove_core::Reporter) -> Result<()>
                     force: false,
                     delete_branch: true,
                     branch_merged: true,
+                    unlock: false,
                 },
                 r,
             );
@@ -2060,6 +2085,7 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
                     force: false,
                     delete_branch: true,
                     branch_merged: false,
+                    unlock: false,
                 },
                 &TermReporter::new(false),
             )?;

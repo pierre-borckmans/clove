@@ -1808,7 +1808,10 @@ fn hints(app: &App) -> Vec<Hint> {
         ],
         Some(Modal::Remove(f)) => {
             let mut v = vec![("↑↓", "move", Down)];
-            if matches!(f.focused(), RemoveItem::DeleteBranch | RemoveItem::Force) {
+            if matches!(
+                f.focused(),
+                RemoveItem::DeleteBranch | RemoveItem::Unlock | RemoveItem::Force
+            ) {
                 v.push(("space", "toggle", Char(' ')));
             }
             v.push(if f.focused() == RemoveItem::Cancel {
@@ -2149,6 +2152,11 @@ pub(crate) fn key_hit(c: char) -> Hit {
     Hit::Key(KeyCode::Char(c), KeyModifiers::NONE)
 }
 
+/// A button that can't act right now: muted, no fill, even when focused.
+pub(crate) fn button_off<'a>(label: &str) -> Span<'a> {
+    Span::styled(format!(" {label} "), muted().add_modifier(Modifier::DIM))
+}
+
 pub(crate) fn button<'a>(label: &str, focused: bool, danger: bool) -> Span<'a> {
     let s = format!(" {label} ");
     if focused {
@@ -2400,10 +2408,63 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
     lines.push(Line::from(""));
     if r.worktree {
         lines.push(Line::from(Span::styled(
-            "plain git worktree: `git worktree remove`, never forced",
+            "plain git worktree: removed with `git worktree remove`",
             muted(),
         )));
+        let gone = || {
+            Line::from(Span::styled(
+                "· its folder is gone: removing drops git's record of it",
+                muted(),
+            ))
+        };
         match &r.blocker {
+            Some(_) if r.forceable => {
+                if r.locked {
+                    let why = r.lock_reason.as_deref().unwrap_or("no reason given");
+                    for l in fmt::wrap(&format!("! locked: {why}"), iw) {
+                        lines.push(Line::from(Span::styled(
+                            l,
+                            fg(AMBER).add_modifier(Modifier::BOLD),
+                        )));
+                    }
+                }
+                if !r.mounted {
+                    lines.push(gone());
+                }
+            }
+            _ => {}
+        }
+        match &r.blocker {
+            Some(_) if r.forceable && r.dirty != Some(true) => {}
+            Some(_) if r.forceable => {
+                let n = r.changes_total;
+                let count = if n == 0 {
+                    "uncommitted changes".to_string()
+                } else {
+                    format!("{n} uncommitted change{}", if n == 1 { "" } else { "s" })
+                };
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "! {count}{}{}",
+                        if r.force { ", discarded on remove" } else { "" },
+                        if n == 0 { "" } else { ":" }
+                    ),
+                    fg(AMBER).add_modifier(Modifier::BOLD),
+                )));
+                let shown = r.changes.len().min(6);
+                for c in &r.changes[..shown] {
+                    lines.push(Line::from(Span::styled(
+                        format!("  {}", trunc(c, iw.saturating_sub(2))),
+                        muted(),
+                    )));
+                }
+                if n > shown {
+                    lines.push(Line::from(Span::styled(
+                        format!("  and {} more", n - shown),
+                        muted(),
+                    )));
+                }
+            }
             Some(b) => {
                 for l in fmt::wrap(&format!("✗ {b}"), iw) {
                     lines.push(Line::from(Span::styled(
@@ -2412,6 +2473,7 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
                     )));
                 }
             }
+            None if !r.mounted => lines.push(gone()),
             None => lines.push(Line::from(Span::styled("✓ working tree is clean", fg(SAGE)))),
         }
     } else {
@@ -2482,19 +2544,33 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
             Span::styled(b, fg(PLUM)),
         ]));
     }
-    if !r.worktree {
-        toggles.push((lines.len(), RemoveItem::Force));
-        let (cursor, mark, st) = check(RemoveItem::Force, r.force);
+    if r.worktree && r.forceable && r.locked {
+        toggles.push((lines.len(), RemoveItem::Unlock));
+        let (cursor, mark, st) = check(RemoveItem::Unlock, r.unlock);
         lines.push(Line::from(vec![
             cursor,
             mark,
-            Span::styled("force: discard changes, eject if busy", st),
+            Span::styled("unlock it (git worktree unlock)", st),
         ]));
+    }
+    if !r.worktree || (r.forceable && r.dirty == Some(true)) {
+        toggles.push((lines.len(), RemoveItem::Force));
+        let (cursor, mark, st) = check(RemoveItem::Force, r.force);
+        let label = if r.worktree {
+            "discard these changes (git worktree remove --force)"
+        } else {
+            "force: discard changes, eject if busy"
+        };
+        lines.push(Line::from(vec![cursor, mark, Span::styled(label, st)]));
     }
     lines.push(Line::from(""));
     let danger = r.force && r.dirty == Some(true);
     let confirm = if danger { "discard & remove" } else { "remove" };
-    let b1 = button(confirm, focused == RemoveItem::Remove, danger);
+    let b1 = if r.blocked() {
+        button_off(confirm)
+    } else {
+        button(confirm, focused == RemoveItem::Remove, danger)
+    };
     let b2 = button("cancel", focused == RemoveItem::Cancel, false);
     let (b1w, b2w) = (width(&b1.content) as u16, width(&b2.content) as u16);
     let bw = (b1w + 2 + b2w) as usize;

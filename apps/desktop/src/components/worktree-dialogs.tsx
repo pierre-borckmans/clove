@@ -24,14 +24,42 @@ function Blocker({ text }: { text: string }) {
   );
 }
 
-/** Removes a plain git worktree with `git worktree remove`, never forced. */
+/** What removing would discard: the worktree's `git status --short` lines. */
+function Changes({ lines, total }: { lines: string[]; total: number }) {
+  const shown = lines.slice(0, 8);
+  return (
+    <div className="rounded-lg border px-3 py-2">
+      <div className="mb-1 text-[12px] text-muted-foreground">
+        {total} uncommitted change{total === 1 ? "" : "s"}
+      </div>
+      <pre className="selectable max-h-40 overflow-auto font-mono text-[12px] leading-relaxed">
+        {shown.join("\n")}
+        {total > shown.length ? `\nand ${total - shown.length} more` : ""}
+      </pre>
+    </div>
+  );
+}
+
+/**
+ * Removes a plain git worktree with `git worktree remove`. One whose only
+ * problem is uncommitted changes can go with force, after they're listed.
+ */
 export function RemoveWorktreeDialog() {
   const { removeWorktree } = useUi();
   const [deleteBranch, setDeleteBranch] = useState(false);
+  const [force, setForce] = useState(false);
+  const [unlock, setUnlock] = useState(false);
   const w = removeWorktree?.worktree;
+  const needsDiscard = !!w?.can_force && w.dirty === true;
+  const needsUnlock = !!w?.can_force && w.locked;
+  const blocked = !!w?.blocker && !(w.can_force && (!w.locked || unlock) && (w.dirty !== true || force));
 
   useEffect(() => {
-    if (removeWorktree) setDeleteBranch(false);
+    if (removeWorktree) {
+      setDeleteBranch(false);
+      setForce(false);
+      setUnlock(false);
+    }
   }, [removeWorktree]);
 
   return (
@@ -43,14 +71,49 @@ export function RemoveWorktreeDialog() {
           </AlertDialogTitle>
           <AlertDialogDescription className="text-[13px] leading-relaxed">
             A plain git worktree at <span className="font-mono text-[12px]">{w ? tildify(w.path) : ""}</span>. clove
-            runs <span className="font-mono text-[12px]">git worktree remove</span> without force, so locked or modified
-            worktrees stay. Commits on the branch stay in the repository.
+            runs <span className="font-mono text-[12px]">git worktree remove</span>. Locked worktrees and commits on no
+            branch always stay; uncommitted changes go only if you choose to discard them. Commits on the branch stay in
+            the repository.
           </AlertDialogDescription>
         </AlertDialogHeader>
 
-        {w?.blocker && <Blocker text={w.blocker} />}
+        {w?.blocker && !w.can_force && <Blocker text={w.blocker} />}
 
-        {w?.branch && !w.blocker && (
+        {needsUnlock && (
+          <label className="flex items-center justify-between gap-4 rounded-lg border border-amber/30 px-3 py-2.5">
+            <span className="text-[13px]">
+              Unlock it
+              <span className="block text-[12px] text-muted-foreground">
+                Locked: {w?.lock_reason ?? "no reason given"}. Runs{" "}
+                <span className="font-mono">git worktree unlock</span>; the lock goes back if removal fails.
+              </span>
+            </span>
+            <Switch checked={unlock} onCheckedChange={setUnlock} />
+          </label>
+        )}
+
+        {w?.missing && (
+          <div className="text-[12.5px] text-muted-foreground">
+            Its folder is gone: removing drops git's record of it.
+          </div>
+        )}
+
+        {needsDiscard && (
+          <>
+            <Changes lines={w.changes ?? []} total={w.changes_total ?? w.changes?.length ?? 0} />
+            <label className="flex items-center justify-between gap-4 rounded-lg border border-amber/30 px-3 py-2.5">
+              <span className="text-[13px]">
+                Discard these changes
+                <span className="block text-[12px] text-muted-foreground">
+                  Runs <span className="font-mono">git worktree remove --force</span>. They can't be recovered.
+                </span>
+              </span>
+              <Switch checked={force} onCheckedChange={setForce} />
+            </label>
+          </>
+        )}
+
+        {w?.branch && !blocked && (
           <label className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5">
             <span className="text-[13px]">
               Also delete branch <span className="font-mono text-[12.5px]">{w.branch}</span>
@@ -65,7 +128,7 @@ export function RemoveWorktreeDialog() {
         <AlertDialogFooter>
           <AlertDialogCancel className="h-8 text-[13px]">Cancel</AlertDialogCancel>
           <AlertDialogAction
-            disabled={!!w?.blocker}
+            disabled={blocked}
             className="h-8 bg-destructive text-[13px] text-white hover:bg-destructive/90"
             onClick={() => {
               if (!removeWorktree) return;
@@ -74,10 +137,12 @@ export function RemoveWorktreeDialog() {
                 root: removeWorktree.root,
                 path: removeWorktree.worktree.path,
                 delete_branch: deleteBranch,
+                force: force && needsDiscard,
+                unlock: unlock && needsUnlock,
               });
             }}
           >
-            Remove worktree
+            {force && needsDiscard ? "Discard & remove" : "Remove worktree"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

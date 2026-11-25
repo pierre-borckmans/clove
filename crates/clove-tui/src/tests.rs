@@ -1529,6 +1529,9 @@ fn worktree(name: &str, branch: Option<&str>) -> clove_core::OtherWorktree {
         prunable: None,
         missing: false,
         dirty: Some(false),
+        changes: vec![],
+        changes_total: 0,
+        can_force: false,
         detached_commits: branch.is_none().then_some(0),
         pr: None,
         blocker: None,
@@ -1610,7 +1613,7 @@ fn removing_a_worktree_never_forces() {
     assert!(f.worktree);
     assert!(!f.items().contains(&RemoveItem::Force));
     let (s, _) = render(&mut app, 120, 28);
-    assert!(s.contains("never forced"), "{s}");
+    assert!(s.contains("git worktree remove"), "{s}");
     // Up from the remove button reaches "also delete branch".
     key(&mut app, KeyCode::Up);
     key(&mut app, KeyCode::Char(' '));
@@ -1631,7 +1634,8 @@ fn removing_a_worktree_never_forces() {
     assert_eq!(app.selected_worktree().unwrap().name, "app-agent");
     key(&mut app, KeyCode::Char('d'));
     let (s, _) = render(&mut app, 120, 28);
-    assert!(s.contains("locked (agent busy)"), "{s}");
+    assert!(s.contains("locked: agent busy"), "{s}");
+    assert!(s.contains("[ ] unlock it"), "{s}");
     let jobs = app.jobs.len();
     assert!(key(&mut app, KeyCode::Enter).is_empty());
     assert_eq!(app.jobs.len(), jobs);
@@ -1966,4 +1970,79 @@ fn any_cut_text_gets_its_full_text_as_a_tooltip() {
     let (s, _) = render(&mut app, 140, 30);
     assert!(s.contains("held while railway"), "{s}");
     assert!(s.contains("staging cluster"), "{s}");
+}
+
+#[test]
+fn a_dirty_worktree_lists_its_changes_and_can_be_discarded() {
+    let mut app = app();
+    let mut w = worktree("audit-cache", None);
+    w.detached_commits = Some(0);
+    w.dirty = Some(true);
+    w.changes = vec!["?? node_modules".into()];
+    w.changes_total = 1;
+    w.blocker = w.blocker();
+    let root = PathBuf::from("/work/app");
+    let mut d = app.data.get(&root).unwrap().clone();
+    d.worktrees = vec![w];
+    app.apply_data(d);
+    key(&mut app, KeyCode::End);
+    key(&mut app, KeyCode::Char('d'));
+    let (s, _) = render(&mut app, 120, 30);
+    assert!(s.contains("1 uncommitted change:"), "{s}");
+    assert!(s.contains("?? node_modules"), "{s}");
+    assert!(s.contains("[ ] discard these changes"), "{s}");
+    // Remove without ticking it: refused, with the way out in the toast.
+    let fx = key(&mut app, KeyCode::Enter);
+    assert!(fx.is_empty());
+    assert!(matches!(app.modal, Some(Modal::Remove(_))));
+    assert!(app.toasts.last().unwrap().text.contains("discard these changes"));
+    // Tick it (Up from the button reaches the toggle), then remove.
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Char(' '));
+    let (s, _) = render(&mut app, 120, 30);
+    assert!(s.contains("[x] discard these changes"), "{s}");
+    assert!(s.contains("discard & remove"), "{s}");
+    key(&mut app, KeyCode::Down);
+    let fx = key(&mut app, KeyCode::Enter);
+    assert!(matches!(&fx[..], [Effect::Spawn { .. }]), "{fx:?}");
+    match &app.jobs.last().unwrap().task {
+        Task::RemoveWorktree { force, .. } => assert!(*force),
+        t => panic!("{t:?}"),
+    }
+}
+
+#[test]
+fn a_locked_worktree_can_be_unlocked_and_removed() {
+    let mut app = app();
+    let mut w = worktree("vmc-deploy", None);
+    w.locked = true;
+    w.lock_reason = Some("vmc-runner deploy checkout".into());
+    w.missing = true;
+    w.dirty = None;
+    w.detached_commits = None;
+    w.blocker = w.removal_blocker(false, false);
+    w.can_force = w.forceable();
+    assert!(w.can_force, "a lock alone can be lifted");
+    let root = PathBuf::from("/work/app");
+    let mut d = app.data.get(&root).unwrap().clone();
+    d.worktrees = vec![w];
+    app.apply_data(d);
+    key(&mut app, KeyCode::End);
+    key(&mut app, KeyCode::Char('d'));
+    let (s, _) = render(&mut app, 120, 30);
+    assert!(s.contains("! locked: vmc-runner deploy checkout"), "{s}");
+    assert!(s.contains("its folder is gone"), "{s}");
+    assert!(s.contains("[ ] unlock it"), "{s}");
+    assert!(!s.contains("discard these changes"), "nothing to discard: {s}");
+    // Refused until unlock is ticked.
+    assert!(key(&mut app, KeyCode::Enter).is_empty());
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Char(' '));
+    key(&mut app, KeyCode::Down);
+    let fx = key(&mut app, KeyCode::Enter);
+    assert!(matches!(&fx[..], [Effect::Spawn { .. }]), "{fx:?}");
+    match &app.jobs.last().unwrap().task {
+        Task::RemoveWorktree { unlock, force, .. } => assert!(*unlock && !*force),
+        t => panic!("{t:?}"),
+    }
 }

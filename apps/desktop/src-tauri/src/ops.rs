@@ -52,6 +52,12 @@ pub enum OpRequest {
         path: PathBuf,
         #[serde(default)]
         delete_branch: bool,
+        /// Discard uncommitted changes (`git worktree remove --force`).
+        #[serde(default)]
+        force: bool,
+        /// Lift its `git worktree lock` first.
+        #[serde(default)]
+        unlock: bool,
     },
     /// Turn a plain worktree into a clone on its branch.
     Adopt {
@@ -180,6 +186,7 @@ pub fn run(op: &OpRequest, r: &dyn clove_core::Reporter) -> anyhow::Result<serde
                 force: *force,
                 delete_branch: *delete_branch,
                 branch_merged: false,
+                unlock: false,
             };
             let c = Clove::open(root)?;
             match c.remove_or_defer(name, &opts, r)? {
@@ -204,9 +211,13 @@ pub fn run(op: &OpRequest, r: &dyn clove_core::Reporter) -> anyhow::Result<serde
             root,
             path,
             delete_branch,
+            force,
+            unlock,
         } => {
             let opts = RemoveOptions {
                 delete_branch: *delete_branch,
+                force: *force,
+                unlock: *unlock,
                 ..Default::default()
             };
             Clove::open(root)?.remove_worktree(path, &opts, r)?;

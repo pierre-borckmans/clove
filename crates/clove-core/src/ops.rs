@@ -103,6 +103,8 @@ pub struct RemoveOptions {
     /// The caller proved nothing on the branch is missing from the base (a
     /// squash-merged PR), so `-D` is safe where `-d` would refuse.
     pub branch_merged: bool,
+    /// Plain worktrees only: lift a `git worktree lock` to remove it.
+    pub unlock: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1146,6 +1148,7 @@ impl Clove {
                 force: false,
                 delete_branch: opts["delete_branch"].as_bool().unwrap_or(false),
                 branch_merged: opts["branch_merged"].as_bool().unwrap_or(false),
+                unlock: false,
             };
             let attached = self
                 .store()

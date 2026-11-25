@@ -232,6 +232,7 @@ fn full_lifecycle() {
             force: false,
             delete_branch: true,
             branch_merged: false,
+            unlock: false,
         },
         &Silent,
     )
@@ -266,6 +267,7 @@ fn full_lifecycle() {
             force: false,
             delete_branch: true,
             branch_merged: false,
+            unlock: false,
         },
         &Silent,
     )
@@ -422,6 +424,7 @@ fn full_lifecycle() {
             force: true,
             delete_branch: true,
             branch_merged: false,
+            unlock: false,
         },
         &Silent,
     )
