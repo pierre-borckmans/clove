@@ -44,6 +44,10 @@ const direnv: Step = {
   env: {},
 };
 
+// What clove-core really sends for a step that always runs: no watch, no env,
+// no wrap (defaults are left out). Keeps the mock honest about that shape.
+const miseTrust = { name: "mise-trust", setup: "mise trust --quiet --yes ." } as unknown as Step;
+
 function check(
   clone: string,
   branch: string | null,
@@ -132,7 +136,7 @@ export function seed(): Map<string, MockRepo> {
           { step: "unmount", ms: 610 },
         ],
       }),
-      steps: [pnpm, cargo, direnv],
+      steps: [miseTrust, pnpm, cargo, direnv],
       steps_detected: false,
     },
     clones: [

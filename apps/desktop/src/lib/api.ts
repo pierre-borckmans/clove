@@ -12,11 +12,22 @@ import type {
   RepoStatus,
   RepoSummary,
   ShellStatus,
+  Step,
 } from "./types";
+
+/**
+ * clove-core leaves a step's defaults out of its JSON (an empty `watch` or
+ * `env`, `wrap = true`) so `.clove.toml` stays short. Put them back here, once,
+ * so screens can trust the type.
+ */
+export function normStep(s: Partial<Step> & { name: string }): Step {
+  return { ...s, watch: s.watch ?? [], env: s.env ?? {}, wrap: s.wrap ?? true };
+}
 
 export const api = {
   repos: () => invoke<RepoSummary[]>("repos"),
-  status: (root: string) => invoke<RepoStatus>("repo_status", { root }),
+  status: (root: string) =>
+    invoke<RepoStatus>("repo_status", { root }).then((s) => ({ ...s, steps: s.steps.map(normStep) })),
   clones: (root: string, status: boolean) => invoke<CloneInfo[]>("clones", { root, status }),
   refs: (root: string) => invoke<Refs>("refs", { root }),
   doctorMachine: () => invoke<Check[]>("doctor_machine"),
@@ -28,7 +39,11 @@ export const api = {
   installedApps: () => invoke<AppId[]>("installed_apps"),
   openIn: (path: string, app: AppId) => invoke<void>("open_in", { path, app }),
   copy: (text: string) => invoke<void>("copy_text", { text }),
-  repoConfig: (root: string) => invoke<RepoConfig>("repo_config", { root }),
+  repoConfig: (root: string) =>
+    invoke<RepoConfig>("repo_config", { root }).then((r) => ({
+      ...r,
+      config: { ...r.config, steps: r.config.steps.map(normStep) },
+    })),
   editConfig: (path: string) => invoke<void>("edit_config", { path }),
   serviceStatus: () => invoke<boolean>("service_status"),
   serviceSet: (install: boolean) => invoke<boolean>("service_set", { install }),

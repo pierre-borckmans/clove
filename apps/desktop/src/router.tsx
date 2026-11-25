@@ -1,5 +1,6 @@
 import { createHashHistory, createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell";
+import { Crash } from "@/components/crash";
 import { CleanupPage } from "@/routes/cleanup";
 import { DoctorPage } from "@/routes/doctor";
 import { HomePage } from "@/routes/home";
@@ -30,7 +31,12 @@ const routeTree = rootRoute.addChildren([
 ]);
 
 // Hash history: the bundled app is one index.html, so deep links must not hit the asset server.
-export const router = createRouter({ routeTree, history: createHashHistory(), defaultPreload: false });
+export const router = createRouter({
+  routeTree,
+  history: createHashHistory(),
+  defaultPreload: false,
+  defaultErrorComponent: Crash,
+});
 
 declare module "@tanstack/react-router" {
   interface Register {
