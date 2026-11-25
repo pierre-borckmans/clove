@@ -1,6 +1,6 @@
 // Realistic state for the browser build: three repos on a dev laptop.
 
-import type { Check, CloneInfo, GoldenStatus, RepoStatus, Step } from "@/lib/types";
+import type { Check, CloneInfo, GoldenStatus, MergeCheck, RepoStatus, Step } from "@/lib/types";
 
 const now = () => Math.floor(Date.now() / 1000);
 const MB = 1024 * 1024;
@@ -10,6 +10,12 @@ export type MockRepo = {
   status: Omit<RepoStatus, "clones" | "mounted">;
   clones: CloneInfo[];
   gc: string[];
+  /** Last PR check per clone. */
+  prs: MergeCheck[];
+  /** Why the golden image is stale, or null when fresh. */
+  stale: string | null;
+  /** Config files that exist (by layer label). */
+  layers: string[];
   refs: { name: string; kind: "local" | "remote" | "tag"; age: number; subject: string }[];
 };
 
@@ -37,6 +43,25 @@ const direnv: Step = {
   wrap: false,
   env: {},
 };
+
+function check(
+  clone: string,
+  branch: string | null,
+  verdict: MergeCheck["verdict"],
+  reason: string,
+  pr: { number: number; state: "open" | "merged" | "closed" } | null,
+  ownMb: number,
+): MergeCheck {
+  return {
+    clone,
+    branch,
+    head: "8f3c2a1e9b7d",
+    pr: pr && { ...pr, head_oid: "8f3c2a1e9b7d", title: "", url: `https://github.com/ada/mono/pull/${pr.number}` },
+    verdict,
+    reason,
+    own_bytes: ownMb * MB,
+  };
+}
 
 function golden(p: Partial<GoldenStatus> & Pick<GoldenStatus, "generation" | "commit">): GoldenStatus {
   const age = p.age_secs ?? 3 * 3600;
@@ -187,6 +212,21 @@ export function seed(): Map<string, MockRepo> {
       }),
     ],
     gc: ["remove old golden gen-13", "remove empty mount point /Users/ada/src/mono.clove/spike-wasm"],
+    prs: [
+      check("chore-bump-vite", "chore/bump-vite", "prune", "PR #1428 merged", { number: 1428, state: "merged" }, 22),
+      check("fix-cache-stampede", "fix/cache-stampede", "keep", "PR #1441 open", { number: 1441, state: "open" }, 96),
+      check(
+        "feat-billing-v2",
+        "feat/billing-v2",
+        "review",
+        "PR #1402 merged, but 2 commits after it",
+        { number: 1402, state: "merged" },
+        412,
+      ),
+      check("release-2.14", "release/2.14", "keep", "no PR", null, 160),
+    ],
+    stale: "pnpm inputs changed in 2 commits",
+    layers: ["you, this repo"],
     refs: [
       { name: "main", kind: "local", age: 3600, subject: "Merge pull request #1440 from feat/ledger-export" },
       { name: "origin/main", kind: "remote", age: 1800, subject: "fix(api): retry idempotent writes on 503" },
@@ -260,6 +300,9 @@ export function seed(): Map<string, MockRepo> {
       }),
     ],
     gc: [],
+    prs: [],
+    stale: null,
+    layers: ["team"],
     refs: [
       { name: "main", kind: "local", age: 3000, subject: "feat: clove core and CLI" },
       { name: "desktop", kind: "local", age: 2400, subject: "feat(desktop): tray popover" },
@@ -298,6 +341,9 @@ export function seed(): Map<string, MockRepo> {
     },
     clones: [],
     gc: [],
+    prs: [],
+    stale: null,
+    layers: [],
     refs: [
       { name: "main", kind: "local", age: 800_000, subject: "content: pricing page copy" },
       { name: "origin/main", kind: "remote", age: 80_000, subject: "fix: og image size" },

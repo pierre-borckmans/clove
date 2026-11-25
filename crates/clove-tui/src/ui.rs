@@ -32,7 +32,18 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     let [header, body, footer] =
         Layout::vertical([Constraint::Length(4), Constraint::Min(5), Constraint::Length(1)]).areas(area);
-    draw_header(f, app, header);
+    // Wide terminals get a sidebar with every repo and the global tools;
+    // narrow ones keep the repo tabs in the header.
+    let sidebar = area.width >= SIDEBAR_MIN_WIDTH;
+    draw_header(f, app, header, !sidebar);
+    let body = if sidebar {
+        let [side, main] =
+            Layout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Fill(1)]).areas(body);
+        draw_sidebar(f, app, side);
+        main
+    } else {
+        body
+    };
     let list = draw_body(f, app, body);
     draw_footer(f, app, footer);
     draw_modal(f, app, area, list);
@@ -111,7 +122,7 @@ fn kv<'a>(label: &'a str, value: Vec<Span<'a>>) -> Line<'a> {
 
 // ---- header ------------------------------------------------------------
 
-fn draw_header(f: &mut Frame, app: &mut App, area: Rect) {
+fn draw_header(f: &mut Frame, app: &mut App, area: Rect, tabs: bool) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(border())
@@ -125,11 +136,13 @@ fn draw_header(f: &mut Frame, app: &mut App, area: Rect) {
         ));
     let inner = block.inner(area).inner(Margin::new(1, 0));
     f.render_widget(block, area);
-    draw_tabs(
-        f,
-        app,
-        Rect::new(area.x + 12, area.y, area.width.saturating_sub(14), 1),
-    );
+    if tabs {
+        draw_tabs(
+            f,
+            app,
+            Rect::new(area.x + 12, area.y, area.width.saturating_sub(14), 1),
+        );
+    }
 
     let Some(repo) = app.repo().cloned() else {
         put(
@@ -297,6 +310,119 @@ fn draw_tabs(f: &mut Frame, app: &mut App, area: Rect) {
             put(f, r, Line::from(Span::styled(s, fg(BOTTLE))));
             app.hits.push((r, Hit::Key(KeyCode::Tab, KeyModifiers::NONE)));
         }
+    }
+}
+
+// ---- sidebar -----------------------------------------------------------
+
+pub const SIDEBAR_MIN_WIDTH: u16 = 100;
+const SIDEBAR_WIDTH: u16 = 22;
+
+/// Every repo with its clone count and golden state, then the global tools.
+fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
+    let block = panel(vec![Span::styled("repos", title())], false);
+    let inner = block.inner(area).inner(Margin::new(1, 0));
+    f.render_widget(block, area);
+    if inner.height < 4 {
+        return;
+    }
+    let tools: Vec<(char, &str, Line)> = {
+        let prunable = app.current().map_or(0, |d| d.summary.prunable);
+        let svc = match app.service {
+            Some(true) => Span::styled("● on", fg(SAGE)),
+            Some(false) => Span::styled("○ off", muted()),
+            None => Span::styled("", muted()),
+        };
+        vec![
+            ('s', "settings", Line::from("")),
+            (
+                'g',
+                "cleanup",
+                Line::from(if prunable > 0 {
+                    Span::styled(format!("{prunable} merged"), fg(SAGE))
+                } else {
+                    Span::raw("")
+                }),
+            ),
+            ('D', "doctor", Line::from("")),
+            ('S', "service", Line::from(svc)),
+        ]
+    };
+    let tools_h = tools.len() as u16 + 1;
+    let list_h = inner.height.saturating_sub(tools_h);
+    let w = inner.width as usize;
+    let repos = app.repos.clone();
+    for (i, r) in repos.iter().enumerate().take(list_h as usize) {
+        let rr = row(inner, i as u16);
+        let current = i == app.repo_idx;
+        let busy = app.running().any(|j| j.repo == r.root);
+        let (state, state_style) = match &r.summary {
+            _ if busy => (spinner(app.now_ms).to_string(), fg(BOTTLE)),
+            None => (String::new(), muted()),
+            Some(s) if s.generation.is_none() => ("set up".into(), fg(AMBER)),
+            Some(s) if s.refreshing => (format!("{} {}", spinner(app.now_ms), s.clones), fg(BOTTLE)),
+            Some(s) if s.stale => (format!("{} ●", s.clones), fg(AMBER)),
+            Some(s) => (format!("{} ●", s.clones), fg(SAGE)),
+        };
+        let sw = width(&state);
+        let name_w = w.saturating_sub(sw + 3);
+        let mut spans = vec![
+            Span::styled(if current { "▌" } else { " " }, fg(BOTTLE)),
+            Span::raw(" "),
+            Span::styled(
+                pad(&trunc(&r.name, name_w), name_w),
+                if current { bold() } else { Style::new() },
+            ),
+            Span::raw(" "),
+        ];
+        // The count stays plain; only the dot carries the state colour.
+        match state.rsplit_once(' ') {
+            Some((n, dot)) if dot == "●" => {
+                spans.push(Span::styled(format!("{n} "), muted()));
+                spans.push(Span::styled(dot.to_string(), state_style));
+            }
+            _ => spans.push(Span::styled(state, state_style)),
+        }
+        put(f, rr, Line::from(spans));
+        if current {
+            f.buffer_mut()
+                .set_style(rr, Style::new().add_modifier(Modifier::BOLD));
+        }
+        app.hits.push((rr, Hit::Repo(i)));
+    }
+    if repos.len() > list_h as usize {
+        put(
+            f,
+            row(inner, list_h.saturating_sub(1)),
+            Line::from(Span::styled(
+                format!("  +{} more · tab", repos.len() - list_h as usize + 1),
+                muted(),
+            )),
+        );
+    }
+    let top = inner.y + inner.height - tools.len() as u16;
+    put(
+        f,
+        Rect::new(inner.x, top - 1, inner.width, 1),
+        Line::from(Span::styled("─".repeat(w), border())),
+    );
+    for (i, (k, label, right)) in tools.into_iter().enumerate() {
+        let r = Rect::new(inner.x, top + i as u16, inner.width, 1);
+        put(
+            f,
+            r,
+            Line::from(vec![
+                Span::styled(format!("{k} "), key()),
+                Span::styled(label.to_string(), muted()),
+            ]),
+        );
+        let rw = line_width(&right) as u16;
+        if rw > 0 && rw < inner.width {
+            put(f, Rect::new(inner.right() - rw, r.y, rw, 1), right);
+        }
+        // The service row opens settings, where S toggles it with context.
+        let k = if k == 'S' { 's' } else { k };
+        app.hits.push((r, key_hit(k)));
     }
 }
 
@@ -614,6 +740,18 @@ fn changes<'a>(app: &App, c: &CloneInfo, w: usize) -> Vec<Span<'a>> {
             parts.push((s.into(), muted()));
         }
     }
+    // The last PR check: a merged clone says so first, an open PR goes last.
+    if let Some(pr) = app
+        .current()
+        .and_then(|d| d.prs.get(&c.name))
+        .and_then(|m| m.pr.as_ref())
+    {
+        match pr.state {
+            clove_core::PrState::Merged => parts.insert(0, ("merged".into(), fg(SAGE))),
+            clove_core::PrState::Open => parts.push((format!("#{}", pr.number), muted())),
+            clove_core::PrState::Closed => {}
+        }
+    }
     let mut out = vec![];
     let mut used = 0;
     for (i, (s, st)) in parts.into_iter().enumerate() {
@@ -852,13 +990,29 @@ fn hints(app: &App) -> Vec<Hint> {
         }
         Some(Modal::Gc(g)) => {
             let mut v = vec![];
-            if !g.applied && g.actions.as_ref().is_some_and(|a| !a.is_empty()) {
-                v.push(("a", "apply", Char('a')));
+            if !g.applied && g.result.as_ref().is_some_and(crate::app::cleanup_has_work) {
+                v.push(("a", "remove", Char('a')));
             }
             v.push(("esc", "close", Esc));
             v
         }
         Some(Modal::Doctor(_)) => vec![("↑↓", "scroll", Down), ("esc", "close", Esc)],
+        Some(Modal::Settings(_)) => vec![
+            ("e", "edit (you)", Char('e')),
+            ("t", "edit (team)", Char('t')),
+            ("E", "edit (all repos)", Char('E')),
+            ("i", "shell integration", Char('i')),
+            (
+                "S",
+                if app.service == Some(true) {
+                    "service off"
+                } else {
+                    "service on"
+                },
+                Char('S'),
+            ),
+            ("esc", "close", Esc),
+        ],
         Some(Modal::Help) => vec![("esc", "close", Esc)],
         None if app.filtering => vec![("⏎", "keep", Enter), ("esc", "clear", Esc), ("↑↓", "move", Down)],
         None => {
@@ -890,7 +1044,11 @@ fn hints(app: &App) -> Vec<Hint> {
             if app.repos.len() > 1 {
                 v.push(("tab", "repo", Tab));
             }
-            v.extend([("g", "gc", Char('g')), ("D", "doctor", Char('D'))]);
+            v.extend([
+                ("s", "settings", Char('s')),
+                ("g", "cleanup", Char('g')),
+                ("D", "doctor", Char('D')),
+            ]);
             v
         }
     }
@@ -1040,6 +1198,7 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect, list: Rect) {
         Modal::Remove(r) => draw_remove(f, app, area, &r),
         Modal::Gc(g) => draw_gc(f, app, area, &g),
         Modal::Doctor(d) => draw_doctor(f, app, area, d),
+        Modal::Settings(v) => draw_settings(f, app, area, v),
         Modal::Job(id) => draw_job(f, app, area, id),
     }
 }
@@ -1228,7 +1387,8 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
             "anywhere",
             &[
                 ("tab [ ] 1-9", "switch repository"),
-                ("g", "find leftovers (gc)"),
+                ("s", "settings, service"),
+                ("g", "cleanup: merged clones, leftovers"),
                 ("D", "doctor"),
                 ("ctrl-r", "reload now"),
                 ("q esc", "quit"),
@@ -1365,25 +1525,81 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
 }
 
 fn draw_gc(f: &mut Frame, app: &mut App, area: Rect, g: &GcView) {
-    let w: u16 = 70;
-    let iw = (w - 6) as usize;
+    use clove_core::Verdict;
+    let w: u16 = 76.min(area.width.saturating_sub(4));
+    let iw = w.saturating_sub(6) as usize;
     let mut apply_line = None;
     let mut lines = vec![];
-    match (&g.actions, &g.error) {
+    let section = |s: &str| {
+        Line::from(Span::styled(
+            s.to_uppercase(),
+            muted().add_modifier(Modifier::BOLD),
+        ))
+    };
+    match (&g.result, &g.error) {
         (_, Some(e)) => {
             for l in fmt::wrap(&format!("✗ {e}"), iw) {
                 lines.push(Line::from(Span::styled(l, fg(RED))));
             }
         }
         (None, None) => lines.push(Line::from(Span::styled(
-            format!("{} scanning for leftovers", spinner(app.now_ms)),
+            format!(
+                "{} asking GitHub about PRs, scanning for leftovers",
+                spinner(app.now_ms)
+            ),
             muted(),
         ))),
-        (Some(a), None) if a.is_empty() => {
-            lines.push(Line::from(Span::styled("✓ nothing to clean", fg(SAGE))))
-        }
-        (Some(a), None) => {
-            for act in a {
+        (Some(c), None) => {
+            if let Some(warn) = &c.warning {
+                for l in fmt::wrap(&format!("! {warn}"), iw) {
+                    lines.push(Line::from(Span::styled(l, fg(AMBER))));
+                }
+                lines.push(Line::from(""));
+            }
+            let shown: Vec<_> = c.checks.iter().filter(|m| m.verdict != Verdict::Keep).collect();
+            let kept = c.checks.len() - shown.len();
+            lines.push(section("merged clones"));
+            if shown.is_empty() {
+                lines.push(Line::from(Span::styled("  none", muted())));
+            }
+            let nw = shown.iter().map(|m| width(&m.clone)).max().unwrap_or(4).min(24);
+            for m in &shown {
+                let gone = c.removed.contains(&m.clone);
+                let (icon, st) = match m.verdict {
+                    _ if gone => ("✓ ", fg(SAGE)),
+                    Verdict::Prune => ("✓ ", fg(SAGE)),
+                    _ => ("! ", fg(AMBER)),
+                };
+                let size = fmt::bytes(m.own_bytes);
+                let why = if gone {
+                    "removed".to_string()
+                } else {
+                    m.reason.clone()
+                };
+                let room = iw.saturating_sub(nw + 4 + width(&size));
+                lines.push(Line::from(vec![
+                    Span::styled(icon, st),
+                    Span::styled(pad(&trunc(&m.clone, nw), nw), bold()),
+                    Span::raw("  "),
+                    Span::styled(pad(&trunc(&why, room), room), st),
+                    Span::styled(size, muted()),
+                ]));
+            }
+            if kept > 0 {
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "  {kept} other clone{} kept: open PR, no PR, or not merged",
+                        if kept == 1 { "" } else { "s" }
+                    ),
+                    muted(),
+                )));
+            }
+            lines.push(Line::from(""));
+            lines.push(section("leftovers"));
+            if c.leftovers.is_empty() {
+                lines.push(Line::from(Span::styled("  none", muted())));
+            }
+            for act in &c.leftovers {
                 let (icon, st) = if g.applied {
                     ("✓ ", fg(SAGE))
                 } else {
@@ -1401,26 +1617,264 @@ fn draw_gc(f: &mut Frame, app: &mut App, area: Rect, g: &GcView) {
                     fg(BOTTLE),
                 )));
             } else if g.applied {
-                lines.push(Line::from(Span::styled("cleaned", fg(SAGE))));
-            } else {
+                lines.push(Line::from(Span::styled("done", fg(SAGE))));
+            } else if crate::app::cleanup_has_work(c) {
                 apply_line = Some(lines.len() as u16);
                 lines.push(Line::from(vec![
                     Span::styled("press ", muted()),
                     Span::styled("a", key()),
-                    Span::styled(" to remove them", muted()),
+                    Span::styled(
+                        " to remove the ✓ clones (and their branches) and the leftovers",
+                        muted(),
+                    ),
                 ]));
+            } else {
+                lines.push(Line::from(Span::styled("✓ nothing to clean", fg(SAGE))));
             }
         }
     }
     let h = (lines.len() as u16 + 4).min(area.height.saturating_sub(2));
     let rect = centered(area, w, h);
     open_modal(f, &mut app.hits, area, rect);
-    let block = modal_block(vec![Span::styled("leftovers", title())]);
+    let block = modal_block(vec![Span::styled("cleanup", title())]);
     let inner = block.inner(rect);
     f.render_widget(Paragraph::new(lines).block(block), rect);
     if let Some(y) = apply_line {
         app.hits.push((row(inner, y), key_hit('a')));
     }
+}
+
+/// Resolved config for the current repo, where each part comes from, and the
+/// machine-wide pieces: service, shell integration, state folder.
+fn settings_lines(app: &App, iw: usize) -> Vec<Line<'static>> {
+    let Some(d) = app.current() else {
+        return vec![Line::from(Span::styled("loading", muted()))];
+    };
+    let c = &d.config;
+    let st = &d.status;
+    let section = |s: &str| {
+        Line::from(Span::styled(
+            s.to_uppercase(),
+            muted().add_modifier(Modifier::BOLD),
+        ))
+    };
+    let kw = 15;
+    let kv = |k: &str, v: Vec<Span<'static>>| {
+        let mut s = vec![Span::styled(format!("  {}", pad(k, kw)), muted())];
+        s.extend(v);
+        Line::from(s)
+    };
+    let mut l = vec![];
+    l.push(Line::from(vec![
+        Span::styled(st.name.clone(), bold()),
+        Span::raw("  "),
+        Span::styled(fmt::tilde(&st.root), muted()),
+    ]));
+    l.push(Line::from(""));
+
+    l.push(section("config files · later ones win"));
+    let layers = clove_core::config::layer_paths(&st.root, &st.name);
+    let pw = layers
+        .iter()
+        .map(|(_, p)| width(&fmt::tilde(p)))
+        .max()
+        .unwrap_or(0)
+        .min(iw.saturating_sub(kw + 14));
+    for ((label, path), k) in layers.into_iter().zip(['E', 't', 'e']) {
+        let exists = path.exists();
+        let p = pad(&trunc_left(&fmt::tilde(&path), pw), pw);
+        l.push(kv(
+            label,
+            vec![
+                Span::styled(p, if exists { Style::new() } else { muted() }),
+                Span::styled(if exists { "        " } else { "  (none)" }, muted()),
+                Span::raw("  "),
+                Span::styled(k.to_string(), key()),
+            ],
+        ));
+    }
+    l.push(Line::from(""));
+
+    l.push(section("clones"));
+    l.push(kv("base", vec![Span::raw(c.base.clone())]));
+    l.push(kv("live in", vec![Span::raw(fmt::tilde(&c.clone_root))]));
+    l.push(kv(
+        "image size",
+        vec![Span::raw(format!("{} (sparse)", c.image_size))],
+    ));
+    l.push(kv(
+        "fetch",
+        vec![Span::raw(if c.fetch {
+            format!(
+                "before each new clone, at most every {}",
+                fmt::age(c.fetch_interval)
+            )
+        } else {
+            "off".into()
+        })],
+    ));
+    l.push(kv(
+        "environment",
+        vec![Span::raw(format!("{:?}", c.exec).to_lowercase())],
+    ));
+    for (k, v) in &c.env {
+        l.push(kv(
+            "env",
+            vec![Span::raw(trunc(&format!("{k}={v}"), iw.saturating_sub(kw + 2)))],
+        ));
+    }
+    let copy_src = if c.copy.is_some() {
+        "configured"
+    } else {
+        "detected"
+    };
+    if st.copy.is_empty() {
+        l.push(kv(
+            "copied in",
+            vec![Span::styled(format!("nothing ({copy_src})"), muted())],
+        ));
+    }
+    for (i, p) in st.copy.iter().enumerate() {
+        let mut v = vec![Span::raw(trunc(p, iw.saturating_sub(kw + 16)))];
+        if i == 0 {
+            v.push(Span::styled(format!("  {copy_src}"), muted()));
+        }
+        l.push(kv(if i == 0 { "copied in" } else { "" }, v));
+    }
+    l.push(Line::from(""));
+
+    l.push(section(if c.steps_detected {
+        "steps · detected from the repo"
+    } else {
+        "steps · from config"
+    }));
+    let cmd_w = iw.saturating_sub(kw + 8);
+    for step in &c.steps {
+        l.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(step.name.clone(), bold()),
+        ]));
+        if let Some(w) = &step.warm {
+            l.push(kv("  warm", vec![Span::raw(trunc(w, cmd_w))]));
+        }
+        if let Some(s) = &step.setup {
+            l.push(kv("  setup", vec![Span::raw(trunc(s, cmd_w))]));
+        }
+        l.push(kv(
+            "  reruns when",
+            vec![Span::styled(
+                if step.watch.is_empty() {
+                    "always".to_string()
+                } else {
+                    trunc(&step.watch.join(", "), cmd_w)
+                },
+                muted(),
+            )],
+        ));
+    }
+    l.push(Line::from(""));
+
+    l.push(section("freshness"));
+    l.push(kv(
+        "stale when",
+        vec![Span::raw(format!(
+            "a step's watched files change, or after {} / {} commits",
+            fmt::age(c.refresh.max_age_secs),
+            c.refresh.max_behind
+        ))],
+    ));
+    l.push(kv(
+        "auto refresh",
+        vec![Span::raw(if c.refresh.auto {
+            "on, when a new clone finds it stale"
+        } else {
+            "off"
+        })],
+    ));
+    if let Some(fr) = &st.freshness {
+        l.push(kv(
+            "now",
+            vec![match &fr.reason {
+                Some(r) => Span::styled(format!("stale: {r}"), fg(AMBER)),
+                None => Span::styled("fresh", fg(SAGE)),
+            }],
+        ));
+    }
+    l.push(Line::from(""));
+
+    l.push(section("this machine"));
+    l.push(kv(
+        "service",
+        vec![
+            match app.service {
+                Some(true) => Span::styled("● on   ", fg(SAGE)),
+                _ => Span::styled("○ off  ", muted()),
+            },
+            Span::styled(
+                "refreshes stale images when you pull, remounts clones at login  ",
+                muted(),
+            ),
+            Span::styled("S", key()),
+        ],
+    ));
+    let active = std::env::var_os("CLOVE_CD_FILE").is_some();
+    let in_rc = clove_core::shellrc::detect().is_some_and(clove_core::shellrc::installed);
+    l.push(kv(
+        "shell",
+        if active {
+            vec![
+                Span::styled("● on", fg(SAGE)),
+                Span::styled("   Enter cds into a clone", muted()),
+            ]
+        } else if in_rc {
+            vec![
+                Span::styled("◐ installed", fg(AMBER)),
+                Span::styled("   open a new terminal so Enter can cd", muted()),
+            ]
+        } else {
+            vec![
+                Span::styled("○ off  ", muted()),
+                Span::styled("i", key()),
+                Span::styled(" installs it so Enter can cd into a clone", muted()),
+            ]
+        },
+    ));
+    l.push(kv(
+        "state",
+        vec![Span::raw(fmt::tilde(&clove_core::state_home()))],
+    ));
+    l
+}
+
+fn draw_settings(f: &mut Frame, app: &mut App, area: Rect, v: SettingsView) {
+    let w = 92.min(area.width.saturating_sub(4));
+    let iw = w.saturating_sub(6) as usize;
+    let lines = settings_lines(app, iw);
+    let h = (lines.len() as u16 + 4).min(area.height.saturating_sub(2));
+    let rect = centered(area, w, h);
+    open_modal(f, &mut app.hits, area, rect);
+    let block = modal_block(vec![Span::styled("settings", title())]);
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let view = inner.height as usize;
+    app.settings_height = view;
+    let len = lines.len();
+    let mut scroll = v.scroll;
+    scroll.clamp(view, len);
+    let off = scroll.offset().min(len.saturating_sub(view));
+    if let Some(Modal::Settings(sv)) = &mut app.modal {
+        sv.scroll = scroll;
+    }
+    let visible: Vec<Line> = lines.into_iter().skip(off).take(view).collect();
+    f.render_widget(Paragraph::new(visible), inner);
+    app.hits.push((rect, Hit::ScrollSettings));
+    scrollbar(
+        f,
+        Rect::new(rect.right() - 1, inner.y, 1, inner.height),
+        off,
+        view,
+        len,
+    );
 }
 
 fn draw_doctor(f: &mut Frame, app: &mut App, area: Rect, d: DoctorView) {

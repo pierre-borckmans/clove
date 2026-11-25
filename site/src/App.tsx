@@ -433,6 +433,8 @@ function Cli() {
       "clove prune",
       "Remove clones whose PR is merged, squash merges included, and their branches.",
     ],
+    ["clove repos", "Every repo clove manages: clones, golden image state, merged clones."],
+    ["clove config --edit", "Open your settings for this repo; --edit team for .clove.toml."],
     ["clove gc", "Find leftovers from interrupted runs."],
     ["clove mount --all-repos", "Remount everything after a reboot."],
     ["clove new --fetch", "Fetch the base even if it was fetched in the last 5 minutes."],
@@ -463,9 +465,11 @@ function Cli() {
         </h3>
         <Prose className="mt-3 mb-6 text-[1rem]">
           <p>
-            Everything above, in one screen: clones with their branch and changes, the golden image,
-            and per-step timings for the selected clone. <code>clove new</code> and{" "}
-            <code>clove refresh</code> show their steps live, and it works with the mouse.
+            Everything above, in one screen: every repo in a sidebar, clones with their branch and
+            changes, the golden image, and per-step timings for the selected clone. Settings and
+            cleanup of merged clones are one key away. <code>clove new</code> and{" "}
+            <code>clove refresh</code> show their steps live, and it works with the mouse. The Mac
+            app has the same features.
           </p>
         </Prose>
         <TuiScreen />
@@ -478,9 +482,9 @@ function Cli() {
             <code>clove rm</code> step out of the clone it removes, and adds completions for
             branches and clones.
           </p>
-          <CopyCommand cmd={'eval "$(clove shell-init zsh)"'} className="mt-4" />
+          <CopyCommand cmd="clove shell-init --install" className="mt-4" />
           <p className="mt-2 text-[0.9rem] text-muted!">
-            bash works the same way. For fish, pipe it to <code>source</code>.
+            It adds one line to your zsh, bash or fish config. Open a new terminal after.
           </p>
         </div>
         <div className="min-w-0">

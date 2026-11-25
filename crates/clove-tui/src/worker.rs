@@ -21,6 +21,7 @@ pub fn discover(start: &Path) -> (Vec<RepoTab>, usize, Option<String>) {
                         RepoTab {
                             name: c.name.clone(),
                             root: c.root.clone(),
+                            summary: None,
                         },
                     );
                     0
@@ -47,6 +48,7 @@ pub fn repo_tabs() -> Vec<RepoTab> {
     known_repos()
         .into_iter()
         .map(|r| RepoTab {
+            summary: Clove::open(&r.root).ok().map(|c| c.summary()),
             name: r.name,
             root: r.root,
         })
@@ -59,16 +61,24 @@ pub fn load(tx: Sender<Msg>, root: PathBuf) {
             let c = Clove::open(&root).map_err(|e| format!("{e:#}"))?;
             let status = c.status().map_err(|e| format!("{e:#}"))?;
             let clones = c.list(true).map_err(|e| format!("{e:#}"))?;
+            let prs = c
+                .prune_cache()
+                .map(|p| p.checks.into_iter().map(|m| (m.clone.clone(), m)).collect())
+                .unwrap_or_default();
             Ok(Box::new(RepoData {
                 root: root.clone(),
+                summary: c.summary(),
                 status,
                 clones,
+                config: c.config.clone(),
+                prs,
             }))
         });
         let _ = tx.send(Msg::Loaded {
             root,
             data,
             repos: repo_tabs(),
+            service: clove_core::service::installed().iter().all(|(_, on)| *on),
         });
     });
 }
@@ -130,6 +140,20 @@ pub fn run_task(tx: Sender<Msg>, id: u64, root: Option<PathBuf>, task: Task) {
 
 fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Result<Outcome, String> {
     let e = |e: anyhow::Error| format!("{e:#}");
+    if let Task::Service { install } = task {
+        let res = if install {
+            clove_core::service::install(clove_core::service::DEFAULT_EVERY).map(|_| ())
+        } else {
+            clove_core::service::uninstall().map(|_| ())
+        };
+        return res.map(|_| Outcome::Service(install)).map_err(e);
+    }
+    if let Task::ShellInstall = task {
+        let sh = clove_core::shellrc::detect().ok_or("can't tell your shell from $SHELL")?;
+        return clove_core::shellrc::install(sh)
+            .map(|(p, changed)| Outcome::ShellInstalled(p, changed))
+            .map_err(e);
+    }
     if let Task::Doctor = task {
         let mut checks = clove_core::doctor::machine();
         if let Some(root) = root
@@ -148,9 +172,38 @@ fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Res
         Task::Remove { name, opts } => c.remove(&name, &opts, r).map(|_| Outcome::Removed).map_err(e),
         Task::Mount { name } => c.mount(&name).map(Outcome::Mounted).map_err(e),
         Task::Unmount { name } => c.unmount(&name, false).map(|_| Outcome::Unmounted).map_err(e),
-        Task::Gc { apply } => c.gc(apply).map(Outcome::Gc).map_err(e),
-        Task::Doctor => unreachable!("handled above"),
+        Task::Gc { apply } => cleanup(&c, apply, r).map(Outcome::Gc).map_err(e),
+        Task::Doctor | Task::Service { .. } | Task::ShellInstall => unreachable!("handled above"),
     }
+}
+
+/// Leftovers from interrupted runs plus clones whose PR is merged. Applying
+/// removes both; a merged clone that can't go (busy, say) becomes a warning.
+fn cleanup(c: &Clove, apply: bool, r: &dyn clove_core::Reporter) -> anyhow::Result<Cleanup> {
+    let leftovers = c.gc(apply)?;
+    let (checks, warning) = c.merge_checks(true)?;
+    let mut removed = vec![];
+    if apply {
+        for m in checks.iter().filter(|m| m.verdict == clove_core::Verdict::Prune) {
+            let opts = clove_core::RemoveOptions {
+                force: false,
+                delete_branch: true,
+                branch_merged: true,
+            };
+            match c.remove(&m.clone, &opts, r) {
+                Ok(()) => removed.push(m.clone.clone()),
+                Err(err) => r.event(Event::Warn {
+                    message: format!("kept {}: {err:#}", m.clone),
+                }),
+            }
+        }
+    }
+    Ok(Cleanup {
+        leftovers,
+        checks,
+        warning,
+        removed,
+    })
 }
 
 /// Turns a panic in a worker into an error message instead of a dead thread.

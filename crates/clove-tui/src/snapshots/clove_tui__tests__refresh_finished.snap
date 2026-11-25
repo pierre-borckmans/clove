@@ -2,17 +2,17 @@
 source: crates/clove-tui/src/tests.rs
 expression: s
 ---
-╭ clove ──────────────────────────────────────────────────────────────────────  app   mono   web  ─╮
+╭ clove ───────────────────────────────────────────────────────────────────────────────────────────╮
 │ app  /work/app                                                              5 clones · 4 mounted │
 │ go╭ ✓ refresh golden image  app · 4.2s ──────────────────────────────────────────────────────╮   │
 ╰───│                                                                                          │───╯
-╭ cl│  ✓ fetch                                                                          412ms  │───╮
-│   │  ✓ clone image                                                                      7ms  │   │
-│ ● │  ✓ mount                                                                          640ms  │pp │
-│ ● │  ✓ checkout                                                                       233ms  │pp │
-│ ○ │  ✓ warm deps                                                                       4.2s  │pp │
-│ ● │                                                                                          │pp │
-│ ● │  golden gen 4 at 0badc0ffee in 4.2s                                                      │pp │
+╭ re│  ✓ fetch                                                                          412ms  │───╮
+│ ▌ │  ✓ clone image                                                                      7ms  │   │
+│   │  ✓ mount                                                                          640ms  │   │
+│   │  ✓ checkout                                                                       233ms  │   │
+│   │  ✓ warm deps                                                                       4.2s  │   │
+│   │                                                                                          │   │
+│   │  golden gen 4 at 0badc0ffee in 4.2s                                                      │   │
 │   │                                                                                          │   │
 │   │  ╭ output 41 ─────────────────────────────────────────────────────────────────────────╮  │   │
 │   │  │ deps │ Progress: resolved 1221 reused 1155, downloaded 0                           │  │   │
@@ -21,10 +21,10 @@ expression: s
 │   │  │ deps │ Progress: resolved 1332 reused 1260, downloaded 0                           │  │   │
 │   │  │ deps │ Progress: resolved 1369 reused 1295, downloaded 0                           │  │   │
 │   │  │ deps │ Progress: resolved 1406 reused 1330, downloaded 0                           │  │   │
-│   │  │ deps │ Progress: resolved 1443 reused 1365, downloaded 0                           │  │   │
-│   │  │      │ finished in 4.2s                                                            ┃  │   │
-│   │  ╰────────────────────────────────────────────────────────────────────────────────────╯  │   │
-│   │                                                                                          │   │
-│   ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+│ ──│  │ deps │ Progress: resolved 1443 reused 1365, downloaded 0                           │  │   │
+│ s │  │      │ finished in 4.2s                                                            ┃  │   │
+│ g │  ╰────────────────────────────────────────────────────────────────────────────────────╯  │   │
+│ D │                                                                                          │   │
+│ S ╰──────────────────────────────────────────────────────────────────────────────────────────╯   │
+╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯
  ↑↓ scroll  end follow  esc hide

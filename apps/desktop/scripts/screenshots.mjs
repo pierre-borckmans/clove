@@ -68,7 +68,13 @@ const shots = {
   },
   cleanup: async (p) => {
     await p.goto(`${base}/?theme=${p.theme}#/cleanup`);
-    await p.waitForSelector("text=Clean up");
+    await p.waitForSelector('text="Merged clones"');
+    await wait(400);
+  },
+  settings: async (p) => {
+    await shots.repo(p);
+    await p.getByRole("link", { name: /^Settings/ }).click();
+    await p.waitForSelector("text=~/.config/clove/repos/mono.toml");
     await wait(400);
   },
   "add-repo": async (p) => {

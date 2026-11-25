@@ -23,6 +23,10 @@ export function AppShell() {
     setUi({ newClone: { root: current?.root ?? repos?.[0]?.root ?? null }, palette: false }),
   );
   useHotkey({ key: "o", meta: true }, () => setUi({ addRepo: true, palette: false }));
+  useHotkey({ key: ",", meta: true }, () => {
+    setUi({ palette: false });
+    void navigate({ to: "/settings", search: current ? { repo: current.id } : {} });
+  });
   // The webview would reload on ⌘R; refetch instead.
   useHotkey({ key: "r", meta: true }, () => window.dispatchEvent(new Event("clove:refetch")));
   useEffect(() => {

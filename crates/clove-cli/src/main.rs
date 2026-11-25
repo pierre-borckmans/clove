@@ -1,7 +1,6 @@
 mod brand;
 mod complete;
 mod render;
-mod service;
 mod shell;
 
 use anstream::{eprint, eprintln, println};
@@ -21,6 +20,7 @@ Getting started:
   clove ls                   list clones
   clove rm feat/login        unmount and delete it
   clove prune                remove clones whose PR is merged
+  clove repos                every repo clove manages
   clove ui                   all of the above, interactively
 
 Shell integration (cd into new clones, completions):
@@ -139,12 +139,18 @@ enum Cmd {
         #[arg(long)]
         apply: bool,
     },
-    /// Show the resolved config, or write it to .clove.toml.
+    /// Show the resolved config and where it comes from, or edit one layer.
     Config {
         /// Write .clove.toml with the current steps so the team can share them.
         #[arg(long)]
         write: bool,
+        /// Open a config file in $EDITOR, creating it if missing: you (this repo,
+        /// only you), team (.clove.toml) or all (every repo, only you).
+        #[arg(long, value_enum, num_args = 0..=1, default_missing_value = "you")]
+        edit: Option<Layer>,
     },
+    /// Every repo clove manages: clones, golden image state, merged clones.
+    Repos,
     /// Delete the golden image and clove's state for this repo.
     Deinit,
     /// Background agents: remount clones at login, keep golden images fresh.
@@ -157,8 +163,15 @@ enum Cmd {
         #[command(subcommand)]
         action: HookAction,
     },
-    /// Print shell integration: `eval "$(clove shell-init zsh)"`.
-    ShellInit { shell: shell::Shell },
+    /// Shell integration (cd into clones, completions). `--install` adds it to
+    /// your rc file; without it, prints the code for `eval "$(clove shell-init zsh)"`.
+    ShellInit {
+        /// Default: your $SHELL.
+        shell: Option<shell::Shell>,
+        /// Add the line to ~/.zshrc, ~/.bashrc or fish's config.fish.
+        #[arg(long)]
+        install: bool,
+    },
     /// Interactive terminal UI.
     Ui,
 }
@@ -529,8 +542,22 @@ fn run(cli: Cli) -> Result<()> {
                 eprintln!("\nrun {} to remove them", paint(BOLD, "clove gc --apply"));
             }
         }
-        Cmd::Config { write } => {
+        Cmd::Repos => cmd_repos(&cli)?,
+        Cmd::Config { write, edit } => {
             let c = repo(&cli)?;
+            if let Some(layer) = edit {
+                let paths = clove_core::config::layer_paths(&c.root, &c.name);
+                let path = &paths[*layer as usize].1;
+                clove_core::config::ensure_file(path)?;
+                edit_file(path)?;
+                // Parse it back so a typo shows now, not at the next `clove new`.
+                Clove::open(&c.root).with_context(|| format!("{} has a problem", tilde(path)))?;
+                eprintln!("{} {}", paint(GREEN, "✓"), tilde(path));
+                if layer_is_team(*layer) {
+                    eprintln!("{}", paint(DIM, "commit .clove.toml to share it with the team"));
+                }
+                return Ok(());
+            }
             if *write {
                 let path = c.root.join(clove_core::config::REPO_FILE);
                 if path.exists() {
@@ -541,27 +568,53 @@ fn run(cli: Cli) -> Result<()> {
             } else if cli.json {
                 return emit(&c.config);
             } else {
+                // Where settings come from, then the resolved result as TOML.
+                eprintln!("{}", paint(DIM, "config files, later ones win:"));
+                let layers = clove_core::config::layer_paths(&c.root, &c.name);
+                let pw = layers
+                    .iter()
+                    .map(|(_, p)| tilde(p).chars().count())
+                    .max()
+                    .unwrap_or(0);
+                for ((label, path), flag) in layers.iter().zip(["--edit all", "--edit team", "--edit"]) {
+                    let mark = if path.exists() {
+                        paint(GREEN, "●")
+                    } else {
+                        paint(DIM, "○")
+                    };
+                    eprintln!(
+                        "  {mark} {:<15} {:<pw$}  {}",
+                        label,
+                        tilde(path),
+                        paint(DIM, format!("clove config {flag}"))
+                    );
+                }
+                let svc = clove_core::service::installed().iter().all(|(_, on)| *on);
+                let shell = std::env::var_os("CLOVE_CD_FILE").is_some();
+                eprintln!(
+                    "{}",
+                    paint(
+                        DIM,
+                        format!(
+                            "service {} · shell integration {} · state {}\n",
+                            if svc { "on" } else { "off (clove service install)" },
+                            if shell {
+                                "on"
+                            } else {
+                                "off (clove shell-init --install)"
+                            },
+                            tilde(&clove_core::state_home())
+                        )
+                    )
+                );
                 print!("{}", c.config.to_repo_toml());
-                if !c.config.sources.is_empty() {
+                if c.config.steps_detected {
                     eprintln!(
                         "{}",
                         paint(
                             DIM,
-                            format!(
-                                "# from {}",
-                                c.config
-                                    .sources
-                                    .iter()
-                                    .map(|p| tilde(p))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            )
+                            "# steps detected; `clove config --write` saves them to .clove.toml"
                         )
-                    );
-                } else {
-                    eprintln!(
-                        "{}",
-                        paint(DIM, "# detected; `clove config --write` saves it to .clove.toml")
                     );
                 }
             }
@@ -569,7 +622,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Deinit => {
             let c = repo(&cli)?;
             c.deinit(r)?;
-            service::sync()?;
+            clove_core::service::sync()?;
             if cli.json {
                 return emit(&serde_json::json!({ "deinit": c.name }));
             }
@@ -577,7 +630,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Service { action } => match action {
             ServiceAction::Install { every } => {
                 let secs = clove_core::config::parse_duration(every)?.max(300);
-                for p in service::install(secs)? {
+                for p in clove_core::service::install(secs)? {
                     eprintln!("{} {}", paint(GREEN, "✓"), tilde(&p));
                 }
                 eprintln!(
@@ -586,12 +639,12 @@ fn run(cli: Cli) -> Result<()> {
                 );
             }
             ServiceAction::Uninstall => {
-                for p in service::uninstall()? {
+                for p in clove_core::service::uninstall()? {
                     eprintln!("{} removed {}", paint(GREEN, "✓"), tilde(&p));
                 }
             }
             ServiceAction::Status => {
-                let st = service::installed();
+                let st = clove_core::service::installed();
                 if cli.json {
                     return emit(&st);
                 }
@@ -606,7 +659,22 @@ fn run(cli: Cli) -> Result<()> {
             }
         },
         Cmd::Hook { action } => cmd_hook(action)?,
-        Cmd::ShellInit { shell } => print!("{}", shell::init(*shell)),
+        Cmd::ShellInit { shell: sh, install } => {
+            let sh = sh
+                .or_else(shell::detect)
+                .context("can't tell your shell from $SHELL; pass zsh, bash or fish")?;
+            if *install {
+                let (path, changed) = shell::install(sh)?;
+                if changed {
+                    eprintln!("{} added to {}", paint(GREEN, "✓"), tilde(&path));
+                    eprintln!("open a new terminal (or `source {}`) to use it", tilde(&path));
+                } else {
+                    eprintln!("{} already in {}", paint(GREEN, "✓"), tilde(&path));
+                }
+            } else {
+                print!("{}", shell::init(sh));
+            }
+        }
         Cmd::Ui => {
             let dir = match &cli.dir {
                 Some(d) => d.clone(),
@@ -622,25 +690,34 @@ fn run(cli: Cli) -> Result<()> {
 /// the background service. Asks only in an interactive terminal, so scripts and
 /// agents get a hint instead of a prompt.
 fn after_init() -> Result<()> {
-    if std::env::var_os("CLOVE_CD_FILE").is_none() {
-        let sh = std::env::var("SHELL").unwrap_or_default();
-        let line = match sh.rsplit('/').next() {
-            Some("fish") => "clove shell-init fish | source".to_string(),
-            Some(s @ ("bash" | "zsh")) => format!("eval \"$(clove shell-init {s})\""),
-            _ => "eval \"$(clove shell-init zsh)\"".to_string(),
-        };
-        eprintln!(
-            "{} add {} to your shell rc so `clove new` and `clove cd` can change directory",
-            paint(DIM, "·"),
-            paint(BOLD, &line)
-        );
+    let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    if !shell::active() {
+        match shell::detect() {
+            Some(sh) if interactive => {
+                eprint!(
+                    "\nLet clove cd into new clones? Adds `{}` to {}. [Y/n] ",
+                    shell::rc_line(sh),
+                    tilde(&shell::rc_path(sh))
+                );
+                if ask_yes()? {
+                    let (path, _) = shell::install(sh)?;
+                    eprintln!(
+                        "{} added; open a new terminal (or `source {}`)",
+                        paint(GREEN, "✓"),
+                        tilde(&path)
+                    );
+                } else {
+                    eprintln!("{} skipped; `clove shell-init --install` later", paint(DIM, "·"));
+                }
+            }
+            _ => eprintln!("{} {}", paint(DIM, "·"), shell::HINT),
+        }
     }
-    if service::installed().iter().all(|(_, on)| *on) {
+    if clove_core::service::installed().iter().all(|(_, on)| *on) {
         // Add this repo's FETCH_HEAD to the watch list.
-        service::sync()?;
+        clove_core::service::sync()?;
         return Ok(());
     }
-    let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
     if !interactive {
         eprintln!(
             "{} run {} to refresh stale golden images when you pull and remount clones at login",
@@ -654,11 +731,8 @@ fn after_init() -> Result<()> {
          one refreshes a stale image when you fetch or pull (and every 4h), one remounts \
          clones at login. [Y/n] "
     );
-    let mut answer = String::new();
-    // End of input (Ctrl-D, a closed pipe) counts as no; only Enter takes the default.
-    let read = std::io::stdin().read_line(&mut answer)?;
-    if read > 0 && matches!(answer.trim().to_ascii_lowercase().as_str(), "" | "y" | "yes") {
-        for p in service::install(service::DEFAULT_EVERY)? {
+    if ask_yes()? {
+        for p in clove_core::service::install(clove_core::service::DEFAULT_EVERY)? {
             eprintln!("{} {}", paint(GREEN, "✓"), tilde(&p));
         }
     } else {
@@ -669,6 +743,14 @@ fn after_init() -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Reads a [Y/n] answer. End of input (Ctrl-D, a closed pipe) counts as no;
+/// only Enter takes the default.
+fn ask_yes() -> Result<bool> {
+    let mut answer = String::new();
+    let read = std::io::stdin().read_line(&mut answer)?;
+    Ok(read > 0 && matches!(answer.trim().to_ascii_lowercase().as_str(), "" | "y" | "yes"))
 }
 
 fn print_plan(c: &Clove) {
@@ -804,7 +886,7 @@ fn hint_shell_init() {
         "{}",
         paint(
             DIM,
-            "tip: eval \"$(clove shell-init zsh)\" lets clove cd for you and enables completions"
+            "tip: run `clove shell-init --install` so clove can cd for you (and complete names)"
         )
     );
 }
@@ -1022,6 +1104,104 @@ fn cmd_prune(cli: &Cli, apply: bool, r: &dyn clove_core::Reporter) -> Result<()>
     if cli.json {
         return emit(&serde_json::json!({ "checks": checks, "warning": warning, "removed": removed }));
     }
+    Ok(())
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum Layer {
+    /// ~/.config/clove/config.toml: every repo, only you.
+    All = 0,
+    /// .clove.toml in the repo: shared with the team.
+    Team = 1,
+    /// ~/.config/clove/repos/<repo>.toml: this repo, only you.
+    You = 2,
+}
+
+fn layer_is_team(l: Layer) -> bool {
+    matches!(l, Layer::Team)
+}
+
+/// Opens a file in $VISUAL/$EDITOR, or the default text editor on macOS.
+fn edit_file(path: &std::path::Path) -> Result<()> {
+    let editor = ["VISUAL", "EDITOR"]
+        .iter()
+        .filter_map(|v| std::env::var(v).ok())
+        .find(|v| !v.trim().is_empty());
+    let status = match editor {
+        // $EDITOR may carry flags ("code -w"), so let the shell split it.
+        Some(ed) => std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{ed} \"$1\""))
+            .arg("sh")
+            .arg(path)
+            .status()?,
+        None if cfg!(target_os = "macos") => {
+            std::process::Command::new("open").arg("-t").arg(path).status()?
+        }
+        None => bail!("set $EDITOR, or edit {} yourself", path.display()),
+    };
+    if !status.success() {
+        bail!("editor exited with {status}");
+    }
+    Ok(())
+}
+
+fn cmd_repos(cli: &Cli) -> Result<()> {
+    let repos: Vec<(clove_core::RepoRecord, Option<clove_core::RepoSummary>)> = clove_core::known_repos()
+        .into_iter()
+        .map(|r| {
+            let s = Clove::open(&r.root).ok().map(|c| c.summary());
+            (r, s)
+        })
+        .collect();
+    if cli.json {
+        let out: Vec<_> = repos
+            .iter()
+            .map(|(r, s)| serde_json::json!({ "name": r.name, "root": r.root, "summary": s }))
+            .collect();
+        return emit(&out);
+    }
+    if repos.is_empty() {
+        eprintln!("no repos yet. {} in one", paint(BOLD, "clove init"));
+        return Ok(());
+    }
+    let here = Clove::discover(&std::env::current_dir().unwrap_or_default())
+        .ok()
+        .map(|c| c.root);
+    let mut t = Table::new(&["", "REPO", "CLONES", "GOLDEN", "MERGED", "PATH"]);
+    for (r, s) in &repos {
+        let dot = if here.as_ref() == Some(&r.root) {
+            styled(CYAN, "@")
+        } else {
+            styled(DIM, " ")
+        };
+        let (clones, golden, merged) = match s {
+            None => (styled(DIM, "-"), styled(RED, "can't open"), styled(DIM, "-")),
+            Some(s) => (
+                cell(format!("{} ({} mounted)", s.clones, s.mounted)),
+                match (s.generation, s.refreshing, s.stale) {
+                    (None, _, _) => styled(YELLOW, "not built"),
+                    (Some(g), true, _) => styled(CYAN, format!("gen {g} · refreshing")),
+                    (Some(g), _, true) => styled(YELLOW, format!("gen {g} · stale")),
+                    (Some(g), _, _) => styled(GREEN, format!("gen {g} · fresh")),
+                },
+                if s.prunable > 0 {
+                    styled(GREEN, s.prunable.to_string())
+                } else {
+                    styled(DIM, "-")
+                },
+            ),
+        };
+        t.row(vec![
+            dot,
+            styled(BOLD, r.name.clone()),
+            clones,
+            golden,
+            merged,
+            styled(DIM, tilde(&r.root)),
+        ]);
+    }
+    t.print();
     Ok(())
 }
 

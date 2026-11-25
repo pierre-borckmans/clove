@@ -2,33 +2,33 @@
 source: crates/clove-tui/src/tests.rs
 expression: s
 ---
-╭ clove ──────────────────────────────────────────────────────────────────────────────────────────  app   mono   web  ─╮
+╭ clove ───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ app  /work/app                                                                      1 running · 5 clones · 4 mounted │
 │ go╭ ⠧ refresh golden image  app · 4.2s ──────────────────────────────────────────────────────────────────────────╮   │
 ╰───│                                                                                                              │───╯
-╭ cl│  ✓ fetch                          412ms  ╭ output 40 ─────────────────────────────────────────────────────╮  │───╮
-│   │  ✓ clone image                      7ms  │ deps │ Progress: resolved 740 reused 700, downloaded 0         │  │   │
-│ ● │  ✓ mount                          640ms  │ deps │ Progress: resolved 777 reused 735, downloaded 0         │  │   │
-│ ● │  ✓ checkout                       233ms  │ deps │ Progress: resolved 814 reused 770, downloaded 0         │  │   │
-│ ○ │  ⠧ warm deps                       4.2s  │ deps │ Progress: resolved 851 reused 805, downloaded 0         │  │   │
-│ ● │                                          │ deps │ Progress: resolved 888 reused 840, downloaded 0         │  │   │
-│ ● │                                          │ deps │ Progress: resolved 925 reused 875, downloaded 0         │  │   │
+╭ re│  ✓ fetch                          412ms  ╭ output 40 ─────────────────────────────────────────────────────╮  │───╮
+│ ▌ │  ✓ clone image                      7ms  │ deps │ Progress: resolved 740 reused 700, downloaded 0         │  │   │
+│   │  ✓ mount                          640ms  │ deps │ Progress: resolved 777 reused 735, downloaded 0         │  │pp │
+│   │  ✓ checkout                       233ms  │ deps │ Progress: resolved 814 reused 770, downloaded 0         │  │pp │
+│   │  ⠧ warm deps                       4.2s  │ deps │ Progress: resolved 851 reused 805, downloaded 0         │  │pp │
+│   │                                          │ deps │ Progress: resolved 888 reused 840, downloaded 0         │  │pp │
+│   │                                          │ deps │ Progress: resolved 925 reused 875, downloaded 0         │  │pp │
 │   │                                          │ deps │ Progress: resolved 962 reused 910, downloaded 0         │  │   │
-│   │                                          │ deps │ Progress: resolved 999 reused 945, downloaded 0         │  │s  │
-│   │                                          │ deps │ Progress: resolved 1036 reused 980, downloaded 0        │  │s  │
-│   │                                          │ deps │ Progress: resolved 1073 reused 1015, downloaded 0       │  │s  │
-│   │                                          │ deps │ Progress: resolved 1110 reused 1050, downloaded 0       ┃  │s  │
-│   │                                          │ deps │ Progress: resolved 1147 reused 1085, downloaded 0       ┃  │s  │
-│   │                                          │ deps │ Progress: resolved 1184 reused 1120, downloaded 0       ┃  │s  │
+│   │                                          │ deps │ Progress: resolved 999 reused 945, downloaded 0         │  │   │
+│   │                                          │ deps │ Progress: resolved 1036 reused 980, downloaded 0        │  │   │
+│   │                                          │ deps │ Progress: resolved 1073 reused 1015, downloaded 0       │  │   │
+│   │                                          │ deps │ Progress: resolved 1110 reused 1050, downloaded 0       ┃  │   │
+│   │                                          │ deps │ Progress: resolved 1147 reused 1085, downloaded 0       ┃  │   │
+│   │                                          │ deps │ Progress: resolved 1184 reused 1120, downloaded 0       ┃  │   │
 │   │                                          │ deps │ Progress: resolved 1221 reused 1155, downloaded 0       ┃  │   │
 │   │                                          │ deps │ Progress: resolved 1258 reused 1190, downloaded 0       ┃  │   │
 │   │                                          │ deps │ Progress: resolved 1295 reused 1225, downloaded 0       ┃  │   │
 │   │                                          │ deps │ Progress: resolved 1332 reused 1260, downloaded 0       ┃  │   │
 │   │                                          │ deps │ Progress: resolved 1369 reused 1295, downloaded 0       ┃  │   │
-│   │                                          │ deps │ Progress: resolved 1406 reused 1330, downloaded 0       ┃  │   │
-│   │                                          │ deps │ Progress: resolved 1443 reused 1365, downloaded 0       ┃  │   │
-│   │                                          ╰────────────────────────────────────────────────────────────────╯  │   │
-│   │                                                                                                              │   │
-│   ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯   │
-╰──────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
+│ ──│                                          │ deps │ Progress: resolved 1406 reused 1330, downloaded 0       ┃  │   │
+│ s │                                          │ deps │ Progress: resolved 1443 reused 1365, downloaded 0       ┃  │   │
+│ g │                                          ╰────────────────────────────────────────────────────────────────╯  │   │
+│ D │                                                                                                              │   │
+│ S ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────╯   │
+╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────────────╯
  ↑↓ scroll  end follow  esc hide                                                     ⠧ refresh golden image · warm deps

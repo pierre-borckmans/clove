@@ -2,31 +2,31 @@
 source: crates/clove-tui/src/tests.rs
 expression: s
 ---
-╭ clove ──────────────────────────────────────────────────────────────────────────────────────────  app   mono   web  ─╮
+╭ clove ───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ app  /work/app                                                                                  5 clones · 4 mounted │
 │ golden  ● gen 3 · a1b2c3d4e5 · 2h old · ↓4 behind origin/main · 1.3G                                                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭ clones 5 ────────────────────────────────────────────────────────────╮╭ feat-login ──────────────────────────────────╮
-│   NAME              BRANCH               CHANGES       AGE    SIZE   ││                                              │
-│ ● feat-login        feat/login           dirty ↑2       5m     14M   ││  branch  feat/login  ↑2                      │
-│ ● fix-race          fix/rac╭ remove feat-login ─────────────────────────────────────────╮5b                          │
-│ ○ spike-cache       spike/c│                                                            │d · dirty · 14M             │
-│ ● pierre-onboardi…  pierre/│  feat-login  on feat/login                                 │5m old                      │
-│ ● detached          detache│  /work/app.clove/feat-login/app                            │p.clove/feat-login/app      │
-│                            │                                                            │                            │
-│                            │  ! uncommitted changes will be discarded                   │                      3.2s  │
-│                            │  ! 2 commits not on origin/main                            │                       6ms  │
-│                            │                                                            │██▋                  612ms  │
-│                            │  [x] also delete branch feat/login  b                      │                     288ms  │
-│                            │  [x] force: discard changes, eject if busy  f              │                     141ms  │
-│                            │                                                            │███████████████████   2.1s  │
-│                            │                               discard & remove    cancel   │                            │
-│                            │                                                            │                            │
-│                            ╰────────────────────────────────────────────────────────────╯                            │
-│                                                                      ││                                              │
-│                                                                      ││                                              │
-│                                                                      ││                                              │
-│                                                                      ││                                              │
-│                                                                      ││                                              │
-╰──────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
+╭ repos ─────────────╮╭ clones 5 ──────────────────────────────────────────────────────────────────────────────────────╮
+│ ▌ app          5 ● ││   NAME                    BRANCH                     CHANGES       AGE    SIZE  PATH           │
+│   mono         2 ● ││ ● feat-login              feat/login                 dirty ↑2       5m     14M  …eat-login/app │
+│   web       set up ││ ● fix╭ remove feat-login ─────────────────────────────────────────╮ 3h    230M  …/fix-race/app │
+│                    ││ ○ spi│                                                            │ 3h     14M  …ike-cache/app │
+│                    ││ ● pie│  feat-login  on feat/login                                 │ 4d     14M  …ding-flow/app │
+│                    ││ ● det│  /work/app.clove/feat-login/app                            │ 3h     14M  …/detached/app │
+│                    ││      │                                                            │                            │
+│                    ││      │  ! uncommitted changes will be discarded                   │                            │
+│                    ││      │  ! 2 commits not on origin/main                            │                            │
+│                    ││      │                                                            │                            │
+│                    ││      │  [x] also delete branch feat/login  b                      │                            │
+│                    ││      │  [x] force: discard changes, eject if busy  f              │                            │
+│                    ││      │                                                            │                            │
+│                    ││      │                               discard & remove    cancel   │                            │
+│                    ││      │                                                            │                            │
+│                    ││      ╰────────────────────────────────────────────────────────────╯                            │
+│ ────────────────── ││                                                                                                │
+│ s settings         ││                                                                                                │
+│ g cleanup          ││                                                                                                │
+│ D doctor           ││                                                                                                │
+│ S service          ││                                                                                                │
+╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────────────╯
  ⏎ confirm  b delete branch  f force  esc cancel

@@ -2,31 +2,31 @@
 source: crates/clove-tui/src/tests.rs
 expression: s
 ---
-╭ clove ──────────────────────────────────────────────────────────────────────────────────────────  app   mono   web  ─╮
+╭ clove ───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ app  /work/app                                                                                  5 clones · 4 mounted │
 │ golden  ● gen 3 · a1b2c3d4e5 · 2h old · ↓4 behind origin/main · 1.3G                                                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭ clones 5 ────────────────────────────────────────────────────────────╮╭ feat-login ──────────────────────────────────╮
-│   NAME              BRANCH               CHANGES       AGE    SIZE   ││                                              │
-│ ● feat-login        feat/login           dirty ↑2       5m     14M   ││  branch  feat/login  ↑2                      │
-│ ● fix-race          fix/race             ↑1 ↓3          3h    230M   ││  head    9f8e7d6c5b                          │
-│ ○ spike-cache       spike/cache          unmounted      3h     14M   ││  status  ● mounted · dirty · 14M             │
-│ ● pierre-onboardi…  pierre/onboarding-…  clean          4d     14M   ││  from    gen 3 · 5m old                      │
-│ ● detached          detached @9f8e7d6    clean          3h     14M   ││  path    /work/app.clove/feat-login/app      │
-│                                                                      ││                                              │
-│                                                                      ││  TIMINGS                               3.2s  │
-│                                                                      ││  clone image ▏                          6ms  │
-│                                                                      ││  mount       ██████▋                  612ms  │
-│                                                                      ││  fetch       ███▏                     288ms  │
-│                                                                      ││  checkout    █▌                       141ms  │
-│                                                                      ││  setup deps  ███████████████████████   2.1s  │
-│╭─────────────────────────────╮                                       ││                                              │
-││ feat/search          origin │                                       ││                                              │
-││ feat/settings-page   origin │                                       ││                                              │
-│╰─────────────────────────────╯                                       ││                                              │
-│╭ new clone ─────────────────────────────────────────────────────────╮││                                              │
-││ branch ❯ feat/se                         base ❯ origin/main        │││                                              │
-││ → feat-se · new branch from origin/main · /work/app.clove/feat-se… │││                                              │
-│╰────────────────────────────────────────────────────────────────────╯││                                              │
-╰──────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
+╭ repos ─────────────╮╭ clones 5 ──────────────────────────────────────────────────────────────────────────────────────╮
+│ ▌ app          5 ● ││   NAME                    BRANCH                     CHANGES       AGE    SIZE  PATH           │
+│   mono         2 ● ││ ● feat-login              feat/login                 dirty ↑2       5m     14M  …eat-login/app │
+│   web       set up ││ ● fix-race                fix/race                   ↑1 ↓3          3h    230M  …/fix-race/app │
+│                    ││ ○ spike-cache             spike/cache                unmounted      3h     14M  …ike-cache/app │
+│                    ││ ● pierre-onboarding-flow  pierre/onboarding-flow-v2  clean          4d     14M  …ding-flow/app │
+│                    ││ ● detached                detached @9f8e7d6          clean          3h     14M  …/detached/app │
+│                    ││                                                                                                │
+│                    ││                                                                                                │
+│                    ││                                                                                                │
+│                    ││                                                                                                │
+│                    ││                                                                                                │
+│                    ││                                                                                                │
+│                    ││                                                                                                │
+│                    ││╭─────────────────────────────╮                                                                 │
+│                    │││ feat/search          origin │                                                                 │
+│                    │││ feat/settings-page   origin │                                                                 │
+│ ────────────────── ││╰─────────────────────────────╯                                                                 │
+│ s settings         ││╭ new clone ───────────────────────────────────────────────────────────────────────────────────╮│
+│ g cleanup          │││ branch ❯ feat/se                                         base ❯ origin/main                  ││
+│ D doctor           │││ → feat-se · new branch from origin/main · /work/app.clove/feat-se/app                        ││
+│ S service          ││╰──────────────────────────────────────────────────────────────────────────────────────────────╯│
+╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────────────╯
  ⏎ create  tab complete  ↑↓ pick  ⇧tab field  esc cancel

@@ -82,10 +82,32 @@ pub fn run(start_dir: &Path) -> Result<()> {
         let wrote = std::env::var_os("CLOVE_CD_FILE")
             .is_some_and(|f| std::fs::write(f, path.as_os_str().as_encoded_bytes()).is_ok());
         if !wrote {
-            println!("{}", path.display());
+            if std::io::stdout().is_terminal() {
+                // Nobody captures stdout, so the path would just be printed: a
+                // program can't change its parent shell's directory by itself.
+                eprintln!(
+                    "clove can't cd your shell without its shell integration.\n  \
+                     once: clove shell-init --install   (then open a new terminal)\n  \
+                     now:  cd {}",
+                    shell_quote(&path.to_string_lossy())
+                );
+            } else {
+                // `cd "$(clove ui)"`
+                println!("{}", path.display());
+            }
         }
     }
     Ok(())
+}
+
+fn shell_quote(s: &str) -> String {
+    if s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || "/._-~+".contains(c))
+    {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', r"'\''"))
+    }
 }
 
 fn perform(e: Effect, app: &mut App, tx: &mpsc::Sender<Msg>, term: &mut Term) {
@@ -112,6 +134,17 @@ fn perform(e: Effect, app: &mut App, tx: &mpsc::Sender<Msg>, term: &mut Term) {
             Ok(what) => app.toast(model::ToastKind::Ok, format!("opened in {what}")),
             Err(e) => app.toast(model::ToastKind::Err, format!("{e:#}")),
         },
+        Effect::EditConfig(path) => {
+            let res = clove_core::config::ensure_file(&path).and_then(|_| open_editor(term, &path));
+            match res {
+                // The editor may have changed anything: reload everything.
+                Ok(_) => {
+                    app.toast(model::ToastKind::Ok, format!("opened {}", fmt::tilde(&path)));
+                    app.loaded_ms = None;
+                }
+                Err(e) => app.toast(model::ToastKind::Err, format!("{e:#}")),
+            }
+        }
     }
 }
 
@@ -130,13 +163,27 @@ fn open_editor(term: &mut Term, path: &Path) -> Result<String> {
         }
         None if cfg!(target_os = "macos") => {
             let mut c = std::process::Command::new("open");
+            // A file opens in the default text editor; a folder in Finder.
+            if path.is_file() {
+                c.arg("-t");
+            }
             c.arg(path);
-            ("Finder".to_string(), c)
+            let what = if path.is_file() {
+                "your text editor"
+            } else {
+                "Finder"
+            };
+            (what.to_string(), c)
         }
         None => anyhow::bail!("set $EDITOR to open clones"),
     };
     term.suspend();
-    let status = cmd.current_dir(path).status();
+    let dir = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
+    let status = cmd.current_dir(dir).status();
     term.resume()?;
     let status = status?;
     if !status.success() {

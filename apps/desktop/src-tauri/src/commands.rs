@@ -3,7 +3,7 @@
 
 use crate::ops::block;
 use clove_core::doctor::{self, Check};
-use clove_core::{CloneInfo, Clove, RepoStatus, known_repos};
+use clove_core::{CloneInfo, Clove, Config, Freshness, MergeCheck, RepoStatus, Verdict, known_repos};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::process::Command;
@@ -23,6 +23,11 @@ pub struct RepoSummary {
     pub mounted: usize,
     pub generation: Option<u32>,
     pub behind: Option<u32>,
+    /// A new clone would rerun a step, or past the age/commit safety net.
+    pub stale: bool,
+    pub refreshing: bool,
+    /// Clones the last PR check found merged and clean.
+    pub prunable: usize,
     pub error: Option<String>,
 }
 
@@ -33,8 +38,8 @@ pub async fn repos() -> CmdResult<Vec<RepoSummary>> {
             .into_iter()
             .map(|r| {
                 let id = clove_core::repo::repo_id(&r.root, &r.name);
-                match Clove::open(&r.root).and_then(|c| c.status()) {
-                    Ok(s) => RepoSummary {
+                match Clove::open(&r.root).and_then(|c| Ok((c.status()?, c.summary()))) {
+                    Ok((s, sum)) => RepoSummary {
                         id: s.id,
                         name: s.name,
                         root: s.root,
@@ -42,6 +47,9 @@ pub async fn repos() -> CmdResult<Vec<RepoSummary>> {
                         mounted: s.mounted,
                         generation: s.golden.as_ref().map(|g| g.meta.generation),
                         behind: s.golden.and_then(|g| g.behind),
+                        stale: sum.stale,
+                        refreshing: sum.refreshing,
+                        prunable: sum.prunable,
                         error: None,
                     },
                     Err(e) => RepoSummary {
@@ -52,6 +60,9 @@ pub async fn repos() -> CmdResult<Vec<RepoSummary>> {
                         mounted: 0,
                         generation: None,
                         behind: None,
+                        stale: false,
+                        refreshing: false,
+                        prunable: 0,
                         error: Some(err(e)),
                     },
                 }
@@ -251,6 +262,170 @@ pub async fn copy_text(text: String) -> CmdResult<()> {
             .write_all(text.as_bytes())?;
         child.wait()?;
         Ok(())
+    })
+    .await
+}
+
+#[derive(Serialize)]
+pub struct ConfigLayer {
+    pub label: &'static str,
+    pub path: PathBuf,
+    pub exists: bool,
+}
+
+#[derive(Serialize)]
+pub struct RepoConfig {
+    pub config: Config,
+    /// Lowest precedence first: all repos, team, you for this repo.
+    pub layers: Vec<ConfigLayer>,
+    /// Files copied into clones (configured, or detected when `config.copy` is null).
+    pub copy: Vec<String>,
+    pub freshness: Option<Freshness>,
+    /// clove's state folder on this machine.
+    pub state_home: PathBuf,
+}
+
+/// The resolved config for the settings page, with where each layer lives.
+#[tauri::command]
+pub async fn repo_config(root: PathBuf) -> CmdResult<RepoConfig> {
+    block(move || {
+        let c = Clove::open(&root)?;
+        let status = c.status()?;
+        let layers = clove_core::config::layer_paths(&c.root, &c.name)
+            .into_iter()
+            .map(|(label, path)| ConfigLayer {
+                label,
+                exists: path.exists(),
+                path,
+            })
+            .collect();
+        Ok(RepoConfig {
+            config: c.config.clone(),
+            layers,
+            copy: status.copy,
+            freshness: status.freshness,
+            state_home: clove_core::state_home(),
+        })
+    })
+    .await
+}
+
+/// Opens a config file in the default text editor, creating it from the
+/// shared template first so CLI, TUI and app start from the same file.
+#[tauri::command]
+pub async fn edit_config(path: PathBuf) -> CmdResult<()> {
+    block(move || {
+        clove_core::config::ensure_file(&path)?;
+        clove_core::util::output(Command::new("open").arg("-t").arg(&path))?;
+        Ok(())
+    })
+    .await
+}
+
+/// Whether both launchd agents are installed.
+#[tauri::command]
+pub async fn service_status() -> CmdResult<bool> {
+    block(|| Ok(clove_core::service::installed().iter().all(|(_, on)| *on))).await
+}
+
+#[tauri::command]
+pub async fn service_set(install: bool) -> CmdResult<bool> {
+    block(move || {
+        if install {
+            clove_core::service::install(clove_core::service::DEFAULT_EVERY)?;
+        } else {
+            clove_core::service::uninstall()?;
+        }
+        Ok(install)
+    })
+    .await
+}
+
+/// The last PR check per clone (from `clove prune`, the service, or cleanup).
+#[tauri::command]
+pub async fn prs(root: PathBuf) -> CmdResult<Vec<MergeCheck>> {
+    block(move || Ok(Clove::open(&root)?.prune_cache().map(|p| p.checks).unwrap_or_default())).await
+}
+
+#[derive(Serialize)]
+pub struct Cleanup {
+    pub leftovers: Vec<String>,
+    pub checks: Vec<MergeCheck>,
+    /// GitHub could not be asked; only local proofs counted.
+    pub warning: Option<String>,
+    pub removed: Vec<String>,
+    /// Merged clones that could not be removed, with why.
+    pub kept: Vec<String>,
+}
+
+/// Leftovers plus clones whose PR is merged. `apply` removes the provably
+/// merged clones with their branches and the leftovers, like the TUI's cleanup.
+#[tauri::command]
+pub async fn cleanup(root: PathBuf, apply: bool) -> CmdResult<Cleanup> {
+    block(move || {
+        let c = Clove::open(&root)?;
+        let leftovers = c.gc(apply)?;
+        let (checks, warning) = c.merge_checks(true)?;
+        let (mut removed, mut kept) = (vec![], vec![]);
+        if apply {
+            for m in checks.iter().filter(|m| m.verdict == Verdict::Prune) {
+                let opts = clove_core::RemoveOptions {
+                    force: false,
+                    delete_branch: true,
+                    branch_merged: true,
+                };
+                match c.remove(&m.clone, &opts, &clove_core::Silent) {
+                    Ok(()) => removed.push(m.clone.clone()),
+                    Err(e) => kept.push(format!("{}: {}", m.clone, err(e))),
+                }
+            }
+        }
+        Ok(Cleanup {
+            leftovers,
+            checks,
+            warning,
+            removed,
+            kept,
+        })
+    })
+    .await
+}
+
+#[derive(Serialize)]
+pub struct ShellStatus {
+    /// zsh, bash or fish; None when the login shell is something else.
+    pub shell: Option<&'static str>,
+    pub installed: bool,
+    /// The rc file the line goes in.
+    pub rc: Option<PathBuf>,
+    pub line: Option<&'static str>,
+}
+
+fn shell_status_now() -> ShellStatus {
+    use clove_core::shellrc;
+    let shell = shellrc::detect();
+    ShellStatus {
+        shell,
+        installed: shell.is_some_and(shellrc::installed),
+        rc: shell.map(shellrc::path),
+        line: shell.map(shellrc::line),
+    }
+}
+
+/// Whether the shell integration (`clove new`/`cd`/`ui` changing directory) is in the rc file.
+#[tauri::command]
+pub async fn shell_status() -> CmdResult<ShellStatus> {
+    block(|| Ok(shell_status_now())).await
+}
+
+/// Adds the integration line to the login shell's rc file (no-op when present).
+#[tauri::command]
+pub async fn shell_install() -> CmdResult<ShellStatus> {
+    block(|| {
+        let shell = clove_core::shellrc::detect()
+            .ok_or_else(|| anyhow::anyhow!("unsupported login shell: add `clove shell-init` to your rc by hand"))?;
+        clove_core::shellrc::install(shell)?;
+        Ok(shell_status_now())
     })
     .await
 }

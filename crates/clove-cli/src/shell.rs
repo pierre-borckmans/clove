@@ -3,7 +3,7 @@
 
 use clap::ValueEnum;
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum Shell {
     Zsh,
     Bash,
@@ -79,3 +79,40 @@ pub fn request_cd_then(path: &std::path::Path, args: &[String]) -> bool {
     std::fs::write(&f, path.as_os_str().as_encoded_bytes()).is_ok()
         && std::fs::write(then, args.join(" ")).is_ok()
 }
+
+/// The user's shell, from $SHELL.
+pub fn detect() -> Option<Shell> {
+    match clove_core::shellrc::detect()? {
+        "zsh" => Some(Shell::Zsh),
+        "bash" => Some(Shell::Bash),
+        _ => Some(Shell::Fish),
+    }
+}
+
+fn name(shell: Shell) -> &'static str {
+    match shell {
+        Shell::Zsh => "zsh",
+        Shell::Bash => "bash",
+        Shell::Fish => "fish",
+    }
+}
+
+pub fn rc_line(shell: Shell) -> &'static str {
+    clove_core::shellrc::line(name(shell))
+}
+
+pub fn rc_path(shell: Shell) -> std::path::PathBuf {
+    clove_core::shellrc::path(name(shell))
+}
+
+pub fn install(shell: Shell) -> anyhow::Result<(std::path::PathBuf, bool)> {
+    clove_core::shellrc::install(name(shell))
+}
+
+/// Whether this process runs inside the shell function (so it can cd).
+pub fn active() -> bool {
+    std::env::var_os("CLOVE_CD_FILE").is_some()
+}
+
+/// One line telling the user how to turn the integration on.
+pub const HINT: &str = "run `clove shell-init --install` (then open a new terminal) so clove can cd for you";

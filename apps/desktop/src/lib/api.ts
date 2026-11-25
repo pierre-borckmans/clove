@@ -1,5 +1,18 @@
 import { invoke, isTauri } from "./bridge";
-import type { AppId, Check, CloneInfo, Discovered, OpRequest, Refs, RepoStatus, RepoSummary } from "./types";
+import type {
+  AppId,
+  Check,
+  Cleanup,
+  CloneInfo,
+  Discovered,
+  MergeCheck,
+  OpRequest,
+  Refs,
+  RepoConfig,
+  RepoStatus,
+  RepoSummary,
+  ShellStatus,
+} from "./types";
 
 export const api = {
   repos: () => invoke<RepoSummary[]>("repos"),
@@ -15,6 +28,14 @@ export const api = {
   installedApps: () => invoke<AppId[]>("installed_apps"),
   openIn: (path: string, app: AppId) => invoke<void>("open_in", { path, app }),
   copy: (text: string) => invoke<void>("copy_text", { text }),
+  repoConfig: (root: string) => invoke<RepoConfig>("repo_config", { root }),
+  editConfig: (path: string) => invoke<void>("edit_config", { path }),
+  serviceStatus: () => invoke<boolean>("service_status"),
+  serviceSet: (install: boolean) => invoke<boolean>("service_set", { install }),
+  prs: (root: string) => invoke<MergeCheck[]>("prs", { root }),
+  cleanup: (root: string, apply: boolean) => invoke<Cleanup>("cleanup", { root, apply }),
+  shellStatus: () => invoke<ShellStatus>("shell_status"),
+  shellInstall: () => invoke<ShellStatus>("shell_install"),
   startOp: (op: OpRequest) => invoke<string>("start_op", { op }),
   openMain: (route?: string, action?: string) => invoke<void>("open_main", { route, action }),
   hidePopover: () => invoke<void>("hide_popover"),

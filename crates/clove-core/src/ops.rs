@@ -62,6 +62,19 @@ pub struct Freshness {
     pub refreshing: Option<u32>,
 }
 
+/// A cheap overview of a repo for lists of repos: no git status per clone.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct RepoSummary {
+    pub clones: usize,
+    pub mounted: usize,
+    /// None: no golden image yet (`clove init`).
+    pub generation: Option<u32>,
+    pub stale: bool,
+    pub refreshing: bool,
+    /// Clones the last PR check found merged and clean.
+    pub prunable: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RemoveOptions {
     /// Remove even with uncommitted changes, and force-unmount busy volumes.
@@ -137,6 +150,28 @@ impl Clove {
                 .ok()
                 .and_then(|s| s.trim().parse().ok())
                 .or(Some(0)),
+        }
+    }
+
+    pub fn summary(&self) -> RepoSummary {
+        let names = self.clone_names().unwrap_or_default();
+        let mounted = names
+            .iter()
+            .filter(|n| backend::is_mounted(&self.clone_mount(n)))
+            .count();
+        let fresh = self.freshness().ok().flatten();
+        RepoSummary {
+            clones: names.len(),
+            mounted,
+            generation: self.golden_meta().ok().flatten().map(|m| m.generation),
+            stale: fresh.as_ref().is_some_and(|f| f.stale),
+            refreshing: fresh.as_ref().is_some_and(|f| f.refreshing.is_some()),
+            prunable: self.prune_cache().map_or(0, |p| {
+                p.checks
+                    .iter()
+                    .filter(|m| m.verdict == crate::prune::Verdict::Prune && names.contains(&m.clone))
+                    .count()
+            }),
         }
     }
 

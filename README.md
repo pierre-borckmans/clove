@@ -46,7 +46,7 @@ macOS with APFS. Built and tested on macOS 26, which has the faster ASIF images.
 
 ```
 cargo install --git https://github.com/pierre-borckmans/clove clove-cli
-eval "$(clove shell-init zsh)"     # in ~/.zshrc; bash works too, fish: clove shell-init fish | source
+clove shell-init --install         # adds the shell integration to ~/.zshrc (bash and fish too)
 ```
 
 Shell integration lets `clove new` and `clove cd` change your directory, and adds completions for clone and branch names.
@@ -65,7 +65,15 @@ clove prune                   # remove clones whose PR is merged, and their bran
 clove setup                   # in a clone, after a pull: rerun the setup steps that changed
 clove refresh                 # bring the golden image to the latest base (incremental)
 clove doctor                  # check the setup, with a fix for each problem
+clove repos                   # every repo clove manages, with golden state and merged clones
+clove config --edit           # open your settings for this repo (--edit team, --edit all)
 ```
+
+The same features are in three places, and each one gets new features at the same time:
+
+- **The CLI**, above.
+- **`clove ui`**, a terminal UI with mouse support. A sidebar lists every repo, with its clones and whether its golden image is fresh. `s` opens settings (config files, steps, service), `g` cleans up merged clones and leftovers, and Enter quits into the selected clone.
+- **The Mac app** (`apps/desktop`), with the same sidebar, settings and cleanup, plus a menu-bar popover.
 
 Every command takes `--json`. `clove new --json` prints the clone's path, branch and timings, so an agent can create its own worktree:
 

@@ -2,23 +2,23 @@
 source: crates/clove-tui/src/tests.rs
 expression: s
 ---
-╭ clove ──────────────────────────────────────────────────────────────────────  app   mono   web  ─╮
+╭ clove ───────────────────────────────────────────────────────────────────────────────────────────╮
 │ app  /work/app                                                              0 clones · 0 mounted │
 │ golden  ○ not built yet · press i to build it                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
-╭ clones 0 ────────────────────────────────────────────────────────────────────────────────────────╮
-│                                                                                                  │
-│                                            ▄▄██████▄▄                                            │
-│                                           ███▀    ▀██▀                                           │
-│                                           ███    ▄█                                              │
-│                                           ███   ██▀                                              │
-│                                           ███▄    ▄██▄                                           │
-│                                            ▀▀██████▀▀                                            │
-│                                                                                                  │
-│                                    app has no golden image yet                                   │
-│                                                                                                  │
-│                  press i to build it: a checkout of origin/main with deps warmed                 │
-│                       slow once, then every new clone takes about a second                       │
-│                                                                                                  │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- i init  tab repo  g gc  D doctor  ? help  q quit
+╭ repos ─────────────╮╭ clones 0 ──────────────────────────────────────────────────────────────────╮
+│ ▌ app       set up ││                                                                            │
+│   mono         2 ● ││                                 ▄▄██████▄▄                                 │
+│   web       set up ││                                ███▀    ▀██▀                                │
+│                    ││                                ███    ▄█                                   │
+│                    ││                                ███   ██▀                                   │
+│                    ││                                ███▄    ▄██▄                                │
+│                    ││                                 ▀▀██████▀▀                                 │
+│                    ││                                                                            │
+│ ────────────────── ││                         app has no golden image yet                        │
+│ s settings         ││                                                                            │
+│ g cleanup          ││       press i to build it: a checkout of origin/main with deps warmed      │
+│ D doctor           ││            slow once, then every new clone takes about a second            │
+│ S service          ││                                                                            │
+╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯
+ i init  tab repo  s settings  g cleanup  D doctor  ? help  q quit

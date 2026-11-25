@@ -164,6 +164,54 @@ pub fn user_config_path() -> PathBuf {
         })
 }
 
+/// The config files for a repo, lowest precedence first, labelled for display:
+/// personal defaults, the repo's shared file, personal overrides for this repo.
+pub fn layer_paths(repo_root: &Path, repo_name: &str) -> [(&'static str, PathBuf); 3] {
+    let user_path = user_config_path();
+    let personal = user_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("repos")
+        .join(format!("{repo_name}.toml"));
+    [
+        ("all repos", user_path),
+        ("team", repo_root.join(REPO_FILE)),
+        ("you, this repo", personal),
+    ]
+}
+
+/// Starting point for a new config file: every key optional and commented out.
+pub const TEMPLATE: &str = "\
+# clove settings. Every key is optional; later layers win:
+# ~/.config/clove/config.toml < .clove.toml (team) < ~/.config/clove/repos/<repo>.toml (you)
+# https://github.com/pierre-borckmans/clove#configure
+
+# base = \"origin/main\"
+# copy = [\".env\", \"apps/*/.env.local\"]
+
+# [refresh]
+# max_age = \"24h\"
+# max_behind = 100
+
+# [[add_step]]
+# name = \"build-deps\"
+# warm = \"pnpm run build-deps\"
+# setup = \"pnpm run build-deps\"
+# watch = [\"packages/shared\", \"pnpm-lock.yaml\"]
+";
+
+/// Creates a missing config file from [`TEMPLATE`] so an editor opens on
+/// something useful. Leaves an existing file alone.
+pub fn ensure_file(path: &Path) -> Result<()> {
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, TEMPLATE).with_context(|| format!("write {}", path.display()))
+}
+
 fn read(path: &Path) -> Result<Option<FileConfig>> {
     match std::fs::read_to_string(path) {
         Ok(s) => Ok(Some(
@@ -179,14 +227,8 @@ impl Config {
         let mut sources = vec![];
         // Lowest to highest precedence: personal defaults, the repo's shared
         // file, then personal overrides for this repo.
-        let user_path = user_config_path();
-        let personal_path = user_path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join("repos")
-            .join(format!("{repo_name}.toml"));
         let mut layers = vec![];
-        for path in [user_path, repo_root.join(REPO_FILE), personal_path] {
+        for (_, path) in layer_paths(repo_root, repo_name) {
             if let Some(f) = read(&path)? {
                 sources.push(path);
                 layers.push(f);
@@ -284,6 +326,11 @@ mod tests {
         assert_eq!(c.steps.len(), 1);
         assert!(c.steps[0].wrap);
         assert_eq!(c.steps[0].watch, vec!["pnpm-lock.yaml"]);
+    }
+
+    #[test]
+    fn template_parses() {
+        assert!(toml::from_str::<FileConfig>(TEMPLATE).is_ok());
     }
 
     #[test]

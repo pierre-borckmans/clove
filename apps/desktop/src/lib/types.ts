@@ -10,6 +10,11 @@ export type RepoSummary = {
   mounted: number;
   generation: number | null;
   behind: number | null;
+  /** A new clone would rerun a step, or past the age/commit safety net. */
+  stale: boolean;
+  refreshing: boolean;
+  /** Clones the last PR check found merged and clean. */
+  prunable: number;
   error: string | null;
 };
 
@@ -112,3 +117,66 @@ export type CloveEvent =
 export type OpStarted = { id: string; at: number; op: OpRequest };
 export type OpEvent = { id: string; at: number; event: CloveEvent };
 export type OpFinished = { id: string; at: number; ok: boolean; error: string | null; result: unknown };
+
+export type Freshness = {
+  age_secs: number;
+  behind: number | null;
+  stale: boolean;
+  changed_steps: string[];
+  reason: string | null;
+  refreshing: number | null;
+};
+
+export type Config = {
+  base: string;
+  clone_root: string;
+  image_size: string;
+  fetch: boolean;
+  fetch_interval: number;
+  exec: "auto" | "direnv" | "mise" | "none";
+  env: Record<string, string>;
+  steps: Step[];
+  steps_detected: boolean;
+  /** Configured copy pathspecs, or null when env-like ignored files are detected. */
+  copy: string[] | null;
+  refresh: { auto: boolean; max_age_secs: number; max_behind: number };
+  sources: string[];
+};
+
+export type ConfigLayer = { label: string; path: string; exists: boolean };
+
+export type RepoConfig = {
+  config: Config;
+  layers: ConfigLayer[];
+  copy: string[];
+  freshness: Freshness | null;
+  state_home: string;
+};
+
+export type PrState = "open" | "merged" | "closed";
+export type Pr = { number: number; state: PrState; head_oid: string; title: string; url: string };
+export type Verdict = "prune" | "review" | "keep";
+export type MergeCheck = {
+  clone: string;
+  branch: string | null;
+  head: string | null;
+  pr: Pr | null;
+  verdict: Verdict;
+  reason: string;
+  own_bytes: number;
+};
+
+export type Cleanup = {
+  leftovers: string[];
+  checks: MergeCheck[];
+  warning: string | null;
+  removed: string[];
+  kept: string[];
+};
+
+export type ShellStatus = {
+  shell: "zsh" | "bash" | "fish" | null;
+  installed: boolean;
+  rc: string | null;
+  line: string | null;
+};

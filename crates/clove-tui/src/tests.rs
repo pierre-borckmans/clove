@@ -5,8 +5,11 @@ use crate::app::{App, Effect, Exit};
 use crate::model::*;
 use crate::theme;
 use crate::ui;
+use clove_core::config::RefreshPolicy;
 use clove_core::doctor::{Check, Level};
-use clove_core::{CloneInfo, Event, GoldenMeta, GoldenStatus, RepoStatus, Timing};
+use clove_core::{
+    CloneInfo, Config, Event, Exec, GoldenMeta, GoldenStatus, RepoStatus, RepoSummary, Step, Timing,
+};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -105,14 +108,73 @@ fn status(golden: bool, n: usize) -> RepoStatus {
     }
 }
 
+fn summary(clones: usize, generation: Option<u32>, stale: bool) -> RepoSummary {
+    RepoSummary {
+        clones,
+        mounted: clones,
+        generation,
+        stale,
+        refreshing: false,
+        prunable: 0,
+    }
+}
+
 fn repos() -> Vec<RepoTab> {
-    ["app", "mono", "web"]
-        .iter()
-        .map(|n| RepoTab {
-            name: n.to_string(),
-            root: PathBuf::from(format!("/work/{n}")),
-        })
-        .collect()
+    [
+        ("app", summary(5, Some(3), false)),
+        ("mono", summary(2, Some(7), true)),
+        ("web", summary(0, None, false)),
+    ]
+    .into_iter()
+    .map(|(n, s)| RepoTab {
+        name: n.to_string(),
+        root: PathBuf::from(format!("/work/{n}")),
+        summary: Some(s),
+    })
+    .collect()
+}
+
+fn config() -> Config {
+    Config {
+        base: "origin/main".into(),
+        clone_root: "/work/app.clove".into(),
+        image_size: "300G".into(),
+        fetch: true,
+        fetch_interval: 300,
+        exec: Exec::Auto,
+        env: Default::default(),
+        steps: vec![Step {
+            name: "deps".into(),
+            warm: Some("pnpm install --frozen-lockfile".into()),
+            setup: Some("pnpm install --prefer-offline".into()),
+            watch: vec!["pnpm-lock.yaml".into()],
+            ..Default::default()
+        }],
+        steps_detected: true,
+        copy: None,
+        refresh: RefreshPolicy {
+            auto: true,
+            max_age_secs: 86_400,
+            max_behind: 100,
+        },
+        sources: vec![],
+    }
+}
+
+fn data(root: impl Into<PathBuf>, status: RepoStatus, clones: Vec<CloneInfo>) -> RepoData {
+    let summary = summary(
+        clones.len(),
+        status.golden.as_ref().map(|g| g.meta.generation),
+        false,
+    );
+    RepoData {
+        root: root.into(),
+        status,
+        clones,
+        config: config(),
+        prs: Default::default(),
+        summary,
+    }
 }
 
 fn app_with(golden: bool, clones: Vec<CloneInfo>) -> App {
@@ -121,11 +183,7 @@ fn app_with(golden: bool, clones: Vec<CloneInfo>) -> App {
     app.now_ms = 10_000;
     app.loaded_ms = Some(10_000);
     let n = clones.len();
-    app.apply_data(RepoData {
-        root: "/work/app".into(),
-        status: status(golden, n),
-        clones,
-    });
+    app.apply_data(data("/work/app", status(golden, n), clones));
     app
 }
 
@@ -217,6 +275,110 @@ fn main_screen() {
     assert_eq!(buf[(x + 2, y)].bg, theme::BOTTLE);
     let (x, y) = find(&s, "● feat-login");
     assert_eq!(buf[(x + 2, y)].bg, ratatui::style::Color::Reset);
+}
+
+#[test]
+fn wide_screen_has_sidebar_and_detail() {
+    let mut app = app();
+    app.service = Some(true);
+    let (s, _) = render(&mut app, 160, 26);
+    insta::assert_snapshot!(s);
+}
+
+#[test]
+fn sidebar_switches_repo_and_opens_tools() {
+    let mut app = app();
+    let (s, _) = render(&mut app, 140, 26);
+    let (x, y) = find(&s, "mono");
+    let fx = click(&mut app, x, y);
+    assert_eq!(app.repo().unwrap().name, "mono");
+    assert_eq!(fx, vec![Effect::Load]);
+    let (s, _) = render(&mut app, 140, 26);
+    let (x, y) = find(&s, "s settings");
+    click(&mut app, x, y);
+    assert!(app.modal.is_none(), "settings wait until the repo has loaded");
+}
+
+#[test]
+fn settings_view() {
+    let mut app = app();
+    key(&mut app, KeyCode::Char('s'));
+    assert!(matches!(app.modal, Some(Modal::Settings(_))));
+    let (s, _) = render(&mut app, 120, 60);
+    for want in [
+        "CONFIG FILES",
+        "all repos",
+        "you, this repo",
+        "origin/main",
+        "STEPS · DETECTED FROM THE REPO",
+        "pnpm install --frozen-lockfile",
+        "pnpm-lock.yaml",
+        "FRESHNESS",
+        "THIS MACHINE",
+        "service",
+    ] {
+        assert!(s.contains(want), "{want:?} missing:\n{s}");
+    }
+    // e edits your personal file for this repo
+    let fx = key(&mut app, KeyCode::Char('e'));
+    assert!(
+        matches!(&fx[..], [Effect::EditConfig(p)] if p.ends_with("repos/app.toml")),
+        "{fx:?}"
+    );
+    // S turns the service on when it is off
+    app.service = Some(false);
+    let fx = key(&mut app, KeyCode::Char('S'));
+    assert!(matches!(&fx[..], [Effect::Spawn { root: Some(_), .. }]));
+    assert!(matches!(
+        app.jobs.last().unwrap().task,
+        Task::Service { install: true }
+    ));
+    key(&mut app, KeyCode::Esc);
+    assert!(app.modal.is_none());
+}
+
+#[test]
+fn cleanup_view() {
+    use clove_core::{MergeCheck, Pr, PrState, Verdict};
+    let m = |clone: &str, verdict, reason: &str, pr: Option<u32>| MergeCheck {
+        clone: clone.into(),
+        branch: Some(clone.into()),
+        head: Some("9f8e7d6c5b".into()),
+        pr: pr.map(|n| Pr {
+            number: n,
+            state: PrState::Merged,
+            head_oid: "9f8e7d6c5b".into(),
+            title: String::new(),
+            url: String::new(),
+        }),
+        verdict,
+        reason: reason.into(),
+        own_bytes: 14 * 1024 * 1024,
+    };
+    let mut app = app();
+    app.modal = Some(Modal::Gc(GcView {
+        result: Some(Cleanup {
+            leftovers: vec!["unregistered clone image /state/clones/old".into()],
+            checks: vec![
+                m("feat-login", Verdict::Prune, "PR #3672 merged", Some(3672)),
+                m(
+                    "fix-race",
+                    Verdict::Review,
+                    "PR #3690 merged, but 2 commits after it",
+                    Some(3690),
+                ),
+                m("spike-cache", Verdict::Keep, "no PR", None),
+            ],
+            warning: None,
+            removed: vec![],
+        }),
+        ..Default::default()
+    }));
+    let (s, _) = render(&mut app, 120, 30);
+    insta::assert_snapshot!(s);
+    let fx = key(&mut app, KeyCode::Char('a'));
+    assert!(matches!(&fx[..], [Effect::Spawn { .. }]));
+    assert!(matches!(app.jobs.last().unwrap().task, Task::Gc { apply: true }));
 }
 
 #[test]
@@ -452,11 +614,7 @@ fn creates_a_clone_and_selects_it() {
     assert!(matches!(&app.job(id).unwrap().result, Some(Ok(s)) if s.starts_with("feat-search ready")));
     let mut list = clones();
     list.push(info);
-    app.apply_data(RepoData {
-        root: "/work/app".into(),
-        status: status(true, list.len()),
-        clones: list,
-    });
+    app.apply_data(data("/work/app", status(true, list.len()), list));
     assert_eq!(app.selected_clone().unwrap().name, "feat-search");
     // Enter on the finished job view cds into the new clone.
     key(&mut app, KeyCode::Enter);
@@ -735,11 +893,7 @@ fn golden_detail_when_no_clones() {
         ];
         g.meta.steps = vec!["deps".into(), "direnv".into()];
     }
-    app.apply_data(RepoData {
-        root: "/work/app".into(),
-        status: st,
-        clones: vec![],
-    });
+    app.apply_data(data("/work/app", st, vec![]));
     let (s, _) = render(&mut app, 110, 22);
     insta::assert_snapshot!(s);
 }
@@ -801,8 +955,8 @@ fn long_list_scrolls_with_a_scrollbar() {
     }
     let (s, buf) = render(&mut app, 100, 24);
     insta::assert_snapshot!(s);
-    let (_, y) = find(&s, "● task-25");
-    assert_eq!(buf[(4, y)].bg, theme::BOTTLE, "selection stays in view");
+    let (x, y) = find(&s, "● task-25");
+    assert_eq!(buf[(x + 2, y)].bg, theme::BOTTLE, "selection stays in view");
     assert!(s.contains('┃'), "scrollbar thumb drawn");
     // Easing: right after a jump the offset is still travelling.
     key(&mut app, KeyCode::Home);
@@ -824,16 +978,13 @@ fn switching_repo_mid_load_reloads_at_once() {
         root: "/work/app".into(),
         data: Err("stale".into()),
         repos: vec![],
+        service: false,
     });
     assert!(app.needs_reload(), "mono should load now, not in 3s");
     // Branch suggestions from the old repo are not offered in the new one.
     app.refs = refs();
     app.refs_root = Some("/work/app".into());
-    app.apply_data(RepoData {
-        root: "/work/mono".into(),
-        status: status(true, 0),
-        clones: vec![],
-    });
+    app.apply_data(data("/work/mono", status(true, 0), vec![]));
     key(&mut app, KeyCode::Char('n'));
     assert!(app.refs.is_empty());
 }
@@ -847,6 +998,7 @@ fn reload_requested_mid_load_runs_after_it() {
         root: "/work/app".into(),
         data: Err("x".into()),
         repos: vec![],
+        service: false,
     });
     assert!(app.needs_reload());
 }

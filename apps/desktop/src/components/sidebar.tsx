@@ -1,5 +1,5 @@
 import { Link, useParams, useRouterState } from "@tanstack/react-router";
-import { Activity, BrushCleaning, Loader, Plus, Search, Settings2, Stethoscope } from "lucide-react";
+import { Activity, BrushCleaning, Loader, Plus, Search, Settings, Settings2, Stethoscope } from "lucide-react";
 import type { ReactNode } from "react";
 import {
   DropdownMenu,
@@ -13,7 +13,8 @@ import {
 import { isTauri } from "@/lib/bridge";
 import { useOps } from "@/lib/ops";
 import { APP_LABELS, EDITORS, setPrefs, TERMINALS, usePrefs } from "@/lib/prefs";
-import { useInstalledApps, useRepos } from "@/lib/queries";
+import { useInstalledApps, useRepos, useService } from "@/lib/queries";
+import type { RepoSummary } from "@/lib/types";
 import { setUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 import { Shortcut } from "./shortcut";
@@ -23,6 +24,7 @@ export function Sidebar() {
   const ops = useOps();
   const params = useParams({ strict: false }) as { repoId?: string };
   const running = ops.filter((o) => o.status === "running");
+  const prunable = repos?.reduce((a, r) => a + r.prunable, 0) ?? 0;
 
   return (
     <aside className="flex h-full w-[236px] shrink-0 flex-col bg-sidebar">
@@ -79,12 +81,10 @@ export function Sidebar() {
               >
                 <RepoMark name={r.name} active={active} />
                 <span className="min-w-0 flex-1 truncate">{r.name}</span>
-                {busy ? (
+                {busy || r.refreshing ? (
                   <Loader className="size-3 animate-spin text-bottle [animation-duration:1.4s]" />
                 ) : (
-                  <span className="font-mono text-[11px] tabular-nums text-faint group-hover:hidden">
-                    {r.clones || ""}
-                  </span>
+                  <RepoState repo={r} />
                 )}
                 {!busy && i < 9 && (
                   <span className="hidden font-mono text-[11px] text-faint group-hover:inline">⌘{i + 1}</span>
@@ -106,10 +106,28 @@ export function Sidebar() {
       </nav>
 
       <div className="flex flex-col gap-px px-2 pb-3">
+        <NavItem
+          to="/settings"
+          search={params.repoId ? { repo: params.repoId } : {}}
+          icon={<Settings />}
+          right={<ServiceState />}
+        >
+          Settings
+        </NavItem>
         <NavItem to="/doctor" icon={<Stethoscope />}>
           Doctor
         </NavItem>
-        <NavItem to="/cleanup" icon={<BrushCleaning />}>
+        <NavItem
+          to="/cleanup"
+          icon={<BrushCleaning />}
+          right={
+            prunable > 0 ? (
+              <span className="rounded-full bg-sage-soft px-1.5 font-mono text-[10.5px] leading-[18px] text-sage">
+                {prunable} merged
+              </span>
+            ) : null
+          }
+        >
           Cleanup
         </NavItem>
         <button
@@ -131,12 +149,54 @@ export function Sidebar() {
   );
 }
 
-function NavItem({ to, icon, children }: { to: "/doctor" | "/cleanup"; icon: ReactNode; children: ReactNode }) {
+/** Clone count and a dot for the golden image: sage when fresh, amber when stale; "set up" before init. */
+function RepoState({ repo: r }: { repo: RepoSummary }) {
+  if (r.error) return <span className="size-1.5 rounded-full bg-destructive" title={r.error} />;
+  if (r.generation === null) return <span className="text-[11px] text-amber group-hover:hidden">set up</span>;
+  return (
+    <span
+      className="flex items-center gap-1.5 group-hover:hidden"
+      title={r.stale ? "Golden image is stale: a new clone would redo work" : "Golden image is fresh"}
+    >
+      <span className="font-mono text-[11px] tabular-nums text-faint">{r.clones || ""}</span>
+      <span className={cn("size-1.5 rounded-full", r.stale ? "bg-amber" : "bg-sage")} />
+    </span>
+  );
+}
+
+function ServiceState() {
+  const { data: on } = useService();
+  if (on === undefined) return null;
+  return (
+    <span
+      className={cn("flex items-center gap-1 text-[11px]", on ? "text-sage" : "text-faint")}
+      title="Background service"
+    >
+      <span className={cn("size-1.5 rounded-full", on ? "bg-sage" : "border border-faint")} />
+      {on ? "on" : "off"}
+    </span>
+  );
+}
+
+function NavItem({
+  to,
+  search,
+  icon,
+  right,
+  children,
+}: {
+  to: "/doctor" | "/cleanup" | "/settings";
+  search?: { repo?: string };
+  icon: ReactNode;
+  right?: ReactNode;
+  children: ReactNode;
+}) {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const active = path === to;
   return (
     <Link
       to={to}
+      search={search as never}
       className={cn(
         "flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors [&_svg]:size-4",
         active
@@ -145,7 +205,8 @@ function NavItem({ to, icon, children }: { to: "/doctor" | "/cleanup"; icon: Rea
       )}
     >
       {icon}
-      {children}
+      <span className="flex-1">{children}</span>
+      {right}
     </Link>
   );
 }

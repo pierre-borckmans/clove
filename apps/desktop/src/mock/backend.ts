@@ -6,18 +6,27 @@ import { repoName } from "@/lib/ops";
 import type {
   AppId,
   Check,
+  Cleanup,
   CloneInfo,
   CloveEvent,
   Discovered,
   GoldenStatus,
   OpRequest,
   Refs,
+  RepoConfig,
   RepoStatus,
   RepoSummary,
 } from "@/lib/types";
 import { CARGO_OUTPUT, type MockRepo, machineChecks, PNPM_OUTPUT, seed } from "./fixtures";
 
 const repos = seed();
+let serviceOn = true;
+let shellOn = false;
+const LAYERS = [
+  { label: "all repos", path: () => "/Users/ada/.config/clove/config.toml" },
+  { label: "team", path: (r: MockRepo) => `${r.status.root}/.clove.toml` },
+  { label: "you, this repo", path: (r: MockRepo) => `/Users/ada/.config/clove/repos/${r.status.name}.toml` },
+];
 const listeners = new Map<string, Set<(p: unknown) => void>>();
 const MB = 1024 * 1024;
 
@@ -195,6 +204,9 @@ async function runOp(id: string, op: OpRequest): Promise<unknown> {
         },
         clones: [],
         gc: [],
+        prs: [],
+        stale: null,
+        layers: [],
         refs: [{ name: "origin/main", kind: "remote", age: 600, subject: "initial commit" }],
       };
       await play(id, [
@@ -266,6 +278,9 @@ const commands: Record<string, (a: Args) => unknown> = {
           mounted: s.mounted,
           generation: s.golden?.generation ?? null,
           behind: s.golden?.behind ?? null,
+          stale: !!r.stale,
+          refreshing: false,
+          prunable: r.prs.filter((m) => m.verdict === "prune" && r.clones.some((c) => c.name === m.clone)).length,
           error: null,
         };
       })
@@ -336,6 +351,74 @@ const commands: Record<string, (a: Args) => unknown> = {
     const root = (a.dir as string).replace(/\/$/, "");
     return { root, name: repoName(root), initialized: repos.has(root), base: "origin/main", steps: ["pnpm"] };
   },
+  repo_config: (a): RepoConfig => {
+    const r = get(a.root as string);
+    const g = r.status.golden;
+    return {
+      config: {
+        base: r.status.base,
+        clone_root: r.status.clone_root,
+        image_size: "300G",
+        fetch: true,
+        fetch_interval: 300,
+        exec: "auto",
+        env: {},
+        steps: r.status.steps,
+        steps_detected: r.status.steps_detected,
+        copy: null,
+        refresh: { auto: true, max_age_secs: 86_400, max_behind: 100 },
+        sources: [],
+      },
+      layers: LAYERS.map((l) => ({ label: l.label, path: l.path(r), exists: r.layers.includes(l.label) })),
+      copy: r.status.name === "mono" ? ["apps/web/.env.local", "packages/api/.env"] : [],
+      freshness: g
+        ? {
+            age_secs: now() - g.created_at,
+            behind: g.behind,
+            stale: !!r.stale,
+            changed_steps: r.stale ? ["pnpm"] : [],
+            reason: r.stale,
+            refreshing: null,
+          }
+        : null,
+      state_home: "/Users/ada/.clove",
+    };
+  },
+  edit_config: (a) => {
+    for (const r of repos.values())
+      for (const l of LAYERS) if (l.path(r) === a.path && !r.layers.includes(l.label)) r.layers.push(l.label);
+    return null;
+  },
+  service_status: () => serviceOn,
+  service_set: (a) => {
+    serviceOn = !!a.install;
+    return serviceOn;
+  },
+  prs: (a) => get(a.root as string).prs,
+  shell_status: () => ({
+    shell: "zsh",
+    installed: shellOn,
+    rc: "/Users/ada/.zshrc",
+    line: 'eval "$(clove shell-init zsh)"',
+  }),
+  shell_install: () => {
+    shellOn = true;
+    return { shell: "zsh", installed: true, rc: "/Users/ada/.zshrc", line: 'eval "$(clove shell-init zsh)"' };
+  },
+  cleanup: (a): Cleanup => {
+    const r = get(a.root as string);
+    const leftovers = [...r.gc];
+    const checks = r.prs.filter((m) => r.clones.some((c) => c.name === m.clone));
+    const removed: string[] = [];
+    if (a.apply) {
+      r.gc = [];
+      for (const m of checks.filter((m) => m.verdict === "prune")) {
+        r.clones = r.clones.filter((c) => c.name !== m.clone);
+        removed.push(m.clone);
+      }
+    }
+    return { leftovers, checks, warning: null, removed, kept: [] };
+  },
   installed_apps: (): AppId[] => ["terminal", "ghostty", "vscode", "cursor", "zed"],
   open_in: () => null,
   copy_text: (a) => navigator.clipboard?.writeText(a.text as string).catch(() => undefined) ?? null,
@@ -349,7 +432,7 @@ export const mockBackend = {
   async invoke<T>(cmd: string, args: Args = {}): Promise<T> {
     const f = commands[cmd];
     if (!f) throw new Error(`mock: unknown command ${cmd}`);
-    await sleep(cmd === "clones" || cmd === "doctor_repo" ? 90 : 25);
+    await sleep(cmd === "clones" || cmd === "doctor_repo" ? 90 : cmd === "cleanup" ? 400 : 25);
     return (await f(args)) as T;
   },
   async listen<T>(event: string, cb: (p: T) => void) {

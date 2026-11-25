@@ -1,8 +1,8 @@
 //! launchd agents: remount clones at login; refresh stale golden images when a
 //! repo's base is fetched (FETCH_HEAD changes) and on a slow timer otherwise.
 
+use crate::util::home;
 use anyhow::{Context, Result};
-use clove_core::util::home;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -19,7 +19,7 @@ fn xml_escape(s: &str) -> String {
 
 fn plist(label: &str, args: &[&str], trigger: &str) -> Result<String> {
     let exe = std::env::current_exe()?.canonicalize()?;
-    let log = clove_core::state_home().join("logs").join(format!("{label}.log"));
+    let log = crate::state_home().join("logs").join(format!("{label}.log"));
     std::fs::create_dir_all(log.parent().context("log dir")?)?;
     // Steps need the user's tools (nix, direnv, pnpm); launchd starts with a bare PATH.
     let path = std::env::var("PATH").unwrap_or_default();
@@ -73,9 +73,9 @@ pub const DEFAULT_EVERY: u64 = 4 * 3600;
 
 /// FETCH_HEAD of every repo clove knows: git rewrites it on each fetch and pull.
 fn watch_paths() -> Vec<PathBuf> {
-    clove_core::known_repos()
+    crate::known_repos()
         .into_iter()
-        .filter_map(|r| clove_core::Clove::open(&r.root).ok())
+        .filter_map(|r| crate::Clove::open(&r.root).ok())
         .map(|c| c.common_dir.join("FETCH_HEAD"))
         .collect()
 }

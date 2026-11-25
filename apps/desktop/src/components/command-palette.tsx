@@ -12,7 +12,9 @@ import {
   GitBranch,
   HardDrive,
   Plus,
+  Power,
   RefreshCw,
+  Settings,
   Settings2,
   SquareTerminal,
   Stethoscope,
@@ -32,7 +34,16 @@ import {
 import { api } from "@/lib/api";
 import { startOp } from "@/lib/ops";
 import { APP_LABELS, EDITORS, setPrefs, TERMINALS, usePrefs } from "@/lib/prefs";
-import { copyPath, keys, openIn, useInstalledApps, useMountToggle, useRepos } from "@/lib/queries";
+import {
+  copyPath,
+  keys,
+  openIn,
+  useInstalledApps,
+  useMountToggle,
+  useRepos,
+  useService,
+  useServiceToggle,
+} from "@/lib/queries";
 import type { CloneInfo, RepoSummary } from "@/lib/types";
 import { setUi, useUi } from "@/lib/ui";
 import { RepoMark } from "./sidebar";
@@ -112,6 +123,8 @@ function RootPage({ go, close }: { go: (p: Page) => void; close: () => void }) {
   const params = useParams({ strict: false }) as { repoId?: string };
   const current = repos.find((r) => r.id === params.repoId);
   const prefs = usePrefs();
+  const { data: serviceOn } = useService();
+  const service = useServiceToggle();
   const clones = useQueries({
     queries: repos.map((r) => ({
       queryKey: keys.clones(r.root),
@@ -141,8 +154,21 @@ function RootPage({ go, close }: { go: (p: Page) => void; close: () => void }) {
         <CommandItem onSelect={run(() => void navigate({ to: "/doctor" }))}>
           <Stethoscope /> Run doctor
         </CommandItem>
-        <CommandItem onSelect={run(() => void navigate({ to: "/cleanup" }))}>
-          <BrushCleaning /> Clean up leftovers
+        <CommandItem
+          value="settings config preferences"
+          onSelect={run(() => void navigate({ to: "/settings", search: current ? { repo: current.id } : {} }))}
+        >
+          <Settings /> Settings{current ? ` for ${current.name}` : ""}
+          <CommandShortcut>⌘,</CommandShortcut>
+        </CommandItem>
+        <CommandItem
+          value="cleanup prune merged clones leftovers gc"
+          onSelect={run(() => void navigate({ to: "/cleanup" }))}
+        >
+          <BrushCleaning /> Clean up merged clones and leftovers
+        </CommandItem>
+        <CommandItem value="service background refresh launchd toggle" onSelect={run(() => service.mutate(!serviceOn))}>
+          <Power /> {serviceOn ? "Turn off the background service" : "Turn on the background service"}
         </CommandItem>
         <CommandItem onSelect={run(() => setUi({ activity: true }))}>
           <Activity /> Show recent activity

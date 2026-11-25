@@ -5,6 +5,7 @@ import { DoctorPage } from "@/routes/doctor";
 import { HomePage } from "@/routes/home";
 import { PopoverPage } from "@/routes/popover";
 import { RepoPage } from "@/routes/repo";
+import { SettingsPage } from "@/routes/settings";
 
 const rootRoute = createRootRoute({ component: Outlet });
 
@@ -16,6 +17,14 @@ const routeTree = rootRoute.addChildren([
     createRoute({ getParentRoute: () => shellRoute, path: "/repo/$repoId", component: RepoPage }),
     createRoute({ getParentRoute: () => shellRoute, path: "/doctor", component: DoctorPage }),
     createRoute({ getParentRoute: () => shellRoute, path: "/cleanup", component: CleanupPage }),
+    createRoute({
+      getParentRoute: () => shellRoute,
+      path: "/settings",
+      component: SettingsPage,
+      validateSearch: (s: Record<string, unknown>): { repo?: string } => ({
+        repo: typeof s.repo === "string" ? s.repo : undefined,
+      }),
+    }),
   ]),
   createRoute({ getParentRoute: () => rootRoute, path: "/popover", component: PopoverPage }),
 ]);

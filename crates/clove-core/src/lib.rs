@@ -17,11 +17,13 @@ pub mod names;
 pub mod ops;
 pub mod prune;
 pub mod repo;
+pub mod service;
+pub mod shellrc;
 pub mod steps;
 pub mod util;
 
 pub use config::{Config, Exec, Step};
 pub use events::{Event, Reporter, Silent, Timing};
-pub use ops::{Freshness, GoldenStatus, NewOptions, RefreshOptions, RemoveOptions, RepoStatus};
+pub use ops::{Freshness, GoldenStatus, NewOptions, RefreshOptions, RemoveOptions, RepoStatus, RepoSummary};
 pub use prune::{MergeCheck, Pr, PrState, PruneCache, Verdict};
 pub use repo::{CloneInfo, CloneMeta, Clove, GoldenMeta, RepoRecord, known_repos, state_home};

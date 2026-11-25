@@ -29,15 +29,15 @@ import { useHotkey } from "@/hooks/use-hotkey";
 import { bytes, since } from "@/lib/format";
 import { useOps } from "@/lib/ops";
 import { APP_LABELS, usePrefs } from "@/lib/prefs";
-import { copyPath, copyText, openIn, useMountToggle } from "@/lib/queries";
-import type { CloneInfo } from "@/lib/types";
+import { copyPath, copyText, openIn, useMountToggle, usePrs } from "@/lib/queries";
+import type { CloneInfo, MergeCheck } from "@/lib/types";
 import { setUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 import { Empty } from "./empty";
 import { Shortcut } from "./shortcut";
 import { StatusDot } from "./status-dot";
 
-const COLS = "grid-cols-[14px_minmax(0,1fr)_128px_84px_72px_148px]";
+const COLS = "grid-cols-[14px_minmax(0,1fr)_176px_84px_72px_148px]";
 
 export function CloneList({
   root,
@@ -55,6 +55,7 @@ export function CloneList({
   const prefs = usePrefs();
   const mount = useMountToggle(root);
   const ops = useOps();
+  const { data: prs } = usePrs(root);
 
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -187,6 +188,7 @@ export function CloneList({
               selected={i === selected}
               busy={removing.has(c.name)}
               stale={goldenGeneration !== null && c.golden_generation < goldenGeneration}
+              check={prs?.get(c.name)}
               onSelect={() => {
                 setSelected(i);
                 listRef.current?.focus();
@@ -228,6 +230,7 @@ function CloneRow({
   selected,
   busy,
   stale,
+  check,
   onSelect,
 }: {
   clone: CloneInfo;
@@ -235,6 +238,7 @@ function CloneRow({
   selected: boolean;
   busy: boolean;
   stale: boolean;
+  check?: MergeCheck;
   onSelect: () => void;
 }) {
   const prefs = usePrefs();
@@ -307,7 +311,7 @@ function CloneRow({
         </div>
       </div>
 
-      <Changes clone={c} />
+      <Changes clone={c} check={check} />
 
       <span
         className="text-[12.5px] text-muted-foreground tabular-nums"
@@ -357,9 +361,33 @@ function CloneRow({
   );
 }
 
-function Changes({ clone: c }: { clone: CloneInfo }) {
-  if (!c.mounted) return <span className="text-[12px] text-faint">unmounted</span>;
-  const parts: ReactNode[] = [];
+function Changes({ clone: c, check }: { clone: CloneInfo; check?: MergeCheck }) {
+  // The last PR check: merged leads, an open PR's number trails.
+  const pr = check?.pr;
+  const prParts: ReactNode[] = [];
+  if (pr?.state === "merged")
+    prParts.push(
+      <span
+        key="m"
+        className="rounded-full bg-sage-soft px-1.5 text-[11px] leading-[17px] text-sage"
+        title={check?.reason ?? `PR #${pr.number} merged`}
+      >
+        merged
+      </span>,
+    );
+  const openPr =
+    pr?.state === "open" ? (
+      <span key="o" className="font-mono text-[11.5px] text-muted-foreground" title={`PR #${pr.number} open`}>
+        #{pr.number}
+      </span>
+    ) : null;
+  if (!c.mounted)
+    return (
+      <span className="flex items-center gap-2 text-[12px] text-faint">
+        {prParts}unmounted{openPr}
+      </span>
+    );
+  const parts: ReactNode[] = [...prParts];
   if (c.dirty)
     parts.push(
       <span key="d" className="flex items-center gap-1 text-amber">
@@ -389,8 +417,14 @@ function Changes({ clone: c }: { clone: CloneInfo }) {
         {c.behind}
       </span>,
     );
-  if (parts.length === 0) return <span className="text-[12px] text-faint">clean</span>;
-  return <span className="flex items-center gap-2.5 text-[12px] tabular-nums">{parts}</span>;
+  if (parts.length === 0)
+    return <span className="flex items-center gap-2.5 text-[12px] text-faint">clean{openPr}</span>;
+  return (
+    <span className="flex min-w-0 items-center gap-2.5 overflow-hidden text-[12px] tabular-nums">
+      {parts}
+      {openPr}
+    </span>
+  );
 }
 
 function RowAction({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {

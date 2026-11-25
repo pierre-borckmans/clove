@@ -12,6 +12,11 @@ export const keys = {
   doctorMachine: ["doctor", "machine"] as const,
   doctorRepo: (root: string) => ["doctor", "repo", root] as const,
   gc: (root: string) => ["gc", root] as const,
+  cleanup: (root: string) => ["cleanup", root] as const,
+  config: (root: string) => ["config", root] as const,
+  prs: (root: string) => ["prs", root] as const,
+  service: ["service"] as const,
+  shell: ["shell"] as const,
   apps: ["apps"] as const,
 };
 
@@ -50,6 +55,71 @@ export function useRefs(root: string | undefined, enabled = true) {
     enabled: !!root && enabled,
     staleTime: 10_000,
   });
+}
+
+export function useRepoConfig(root: string | undefined) {
+  return useQuery({
+    queryKey: keys.config(root ?? ""),
+    queryFn: () => api.repoConfig(root as string),
+    enabled: !!root,
+    refetchInterval: 5000,
+  });
+}
+
+/** The last PR check per clone, by clone name. */
+export function usePrs(root: string | undefined) {
+  return useQuery({
+    queryKey: keys.prs(root ?? ""),
+    queryFn: () => api.prs(root as string),
+    enabled: !!root,
+    refetchInterval: 15_000,
+    select: (list) => new Map(list.map((m) => [m.clone, m])),
+  });
+}
+
+export function useService() {
+  return useQuery({ queryKey: keys.service, queryFn: api.serviceStatus, refetchInterval: 15_000 });
+}
+
+export function useServiceToggle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (install: boolean) => api.serviceSet(install),
+    onSuccess: (on) =>
+      toast.success(on ? "Service installed" : "Service removed", {
+        description: on
+          ? "Refreshes stale golden images when you pull, remounts clones at login"
+          : "Golden images refresh only when a new clone finds them stale",
+      }),
+    onError: (e) => toast.error("Could not change the service", { description: String(e) }),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.service }),
+  });
+}
+
+export function useShell() {
+  return useQuery({ queryKey: keys.shell, queryFn: api.shellStatus, staleTime: 30_000 });
+}
+
+export function useShellInstall() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.shellInstall,
+    onSuccess: (s) => {
+      qc.setQueryData(keys.shell, s);
+      toast.success(`Added to ${s.rc?.replace(/^\/Users\/[^/]+/, "~") ?? "your shell rc"}`, {
+        description: "Open a new terminal to use it",
+      });
+    },
+    onError: (e) => toast.error("Could not set up the shell integration", { description: String(e) }),
+  });
+}
+
+export async function editConfig(path: string) {
+  try {
+    await api.editConfig(path);
+  } catch (e) {
+    toast.error("Could not open the config file", { description: String(e) });
+  }
 }
 
 export function useInstalledApps() {

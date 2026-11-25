@@ -2,35 +2,35 @@
 source: crates/clove-tui/src/tests.rs
 expression: s
 ---
-╭ clove ──────────────────────────────────────────────────────────────────────  app   mono   web  ─╮
+╭ clove ───────────────────────────────────────────────────────────────────────────────────────────╮
 │ app  /work/app                                                              5 clones · 4 mounted │
-│ golden  ● gen 3 · a1b2c3d4e5 · 2h old · ↓4 behind origin/main · 1.3G                             │
-╰─────────────────────╭ keys ────────────────────────────────────────────────╮─────────────────────╯
-╭ clones 5 ───────────│                                                      │─────────────────────╮
-│   NAME              │  CLONES                                              │ZE  PATH             │
-│ ● feat-login        │             ⏎   cd into it and quit                  │4M  …/feat-login/app │
-│ ● fix-race          │             n   new clone on a branch                │0M  …ve/fix-race/app │
-│ ○ spike-cache       │             d   remove (asks first)                  │4M  …spike-cache/app │
-│ ● pierre-onboarding-│         m / u   mount / unmount                      │4M  …arding-flow/app │
-│ ● detached          │             o   open in $EDITOR                      │4M  …ve/detached/app │
-│                     │             /   filter by name or branch             │                     │
-│                     │         ↑↓ jk   move · wheel scrolls                 │                     │
-│                     │                                                      │                     │
-│                     │  GOLDEN IMAGE                                        │                     │
-│                     │             r   refresh to latest base               │                     │
-│                     │             i   build it (first time)                │                     │
-│                     │             l   watch the last operation             │                     │
+│ golden  ● gen 3 · a1╭ keys ────────────────────────────────────────────────╮                     │
 ╰─────────────────────│                                                      │─────────────────────╯
-╭ feat-login ─────────│  ANYWHERE                                            │─────────────────────╮
-│                     │   tab [ ] 1-9   switch repository                    │                     │
-│  branch  feat/login │             g   find leftovers (gc)                  │                     │
-│  head    9f8e7d6c5b │             D   doctor                               │                     │
-│  status  ● mounted ·│        ctrl-r   reload now                           │                     │
-│  from    gen 3 · 5m │         q esc   quit                                 │                     │
-│  path    /work/app.c│                                                      │                     │
-│                     │  rows, tabs, buttons and hints are clickable         │                     │
-│  TIMINGS            │                                                      │               3.2s  │
-│  clone image ▎      ╰──────────────────────────────────────────────────────╯                6ms  │
-│                                                                                                  │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ repos ─────────────╮│  CLONES                                              │─────────────────────╮
+│ ▌ app          5 ● ││             ⏎   cd into it and quit                  │       AGE    SIZE   │
+│   mono         2 ● ││             n   new clone on a branch                │2       5m     14M   │
+│   web       set up ││             d   remove (asks first)                  │        3h    230M   │
+│                    ││         m / u   mount / unmount                      │ed      3h     14M   │
+│                    ││             o   open in $EDITOR                      │        4d     14M   │
+│                    ││             /   filter by name or branch             │        3h     14M   │
+│                    ││         ↑↓ jk   move · wheel scrolls                 │                     │
+│                    ││                                                      │                     │
+│                    ││  GOLDEN IMAGE                                        │                     │
+│                    ││             r   refresh to latest base               │                     │
+│                    ││             i   build it (first time)                │                     │
+│                    ││             l   watch the last operation             │                     │
+│                    ││                                                      │                     │
+│                    ││  ANYWHERE                                            │─────────────────────╯
+│                    ││   tab [ ] 1-9   switch repository                    │─────────────────────╮
+│                    ││             s   settings, service                    │                     │
+│                    ││             g   cleanup: merged clones, leftovers    │                     │
+│                    ││             D   doctor                               │                     │
+│                    ││        ctrl-r   reload now                           │                     │
+│                    ││         q esc   quit                                 │                     │
+│ ────────────────── ││                                                      │                     │
+│ s settings         ││  rows, tabs, buttons and hints are clickable         │                     │
+│ g cleanup          ││                                                      │               3.2s  │
+│ D doctor           │╰──────────────────────────────────────────────────────╯                6ms  │
+│ S service          ││                                                                            │
+╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯
  esc close

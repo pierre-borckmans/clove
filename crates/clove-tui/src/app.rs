@@ -25,6 +25,9 @@ pub enum Effect {
         root: Option<PathBuf>,
     },
     OpenEditor(PathBuf),
+    /// Open a config file in $EDITOR, creating it from a template if missing,
+    /// then reload.
+    EditConfig(PathBuf),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,6 +72,10 @@ pub struct App {
     pending_select: Option<String>,
     last_click: Option<(u64, usize)>,
     pub log_height: usize,
+    /// Launchd agents installed; None until the first load.
+    pub service: Option<bool>,
+    /// Lines the settings view showed last frame (for page up/down).
+    pub settings_height: usize,
 }
 
 impl App {
@@ -101,6 +108,8 @@ impl App {
             pending_select: None,
             last_click: None,
             log_height: 10,
+            service: None,
+            settings_height: 10,
         }
     }
 
@@ -286,6 +295,9 @@ impl App {
         if let Some(Modal::Doctor(d)) = &mut self.modal {
             moving |= d.scroll.tick();
         }
+        if let Some(Modal::Settings(v)) = &mut self.modal {
+            moving |= v.scroll.tick();
+        }
         moving || !self.toasts.is_empty() || self.running().next().is_some() || self.loading
     }
 
@@ -298,13 +310,16 @@ impl App {
         if let Some(Modal::Doctor(d)) = &mut self.modal {
             d.scroll.snap();
         }
+        if let Some(Modal::Settings(v)) = &mut self.modal {
+            v.scroll.snap();
+        }
     }
 
     // ---- jobs ----------------------------------------------------------
 
     pub fn spawn(&mut self, task: Task, after: After) -> Vec<Effect> {
         let Some(repo) = self.repo().cloned() else {
-            if matches!(task, Task::Doctor) {
+            if matches!(task, Task::Doctor | Task::Service { .. } | Task::ShellInstall) {
                 return self.spawn_at(None, String::new(), task, after);
             }
             self.toast(ToastKind::Err, "no repository");
@@ -510,24 +525,44 @@ impl App {
                 toasts.push((ToastKind::Ok, s.clone()));
                 Ok(s)
             }
-            Ok(Outcome::Gc(actions)) => {
+            Ok(Outcome::Gc(cleanup)) => {
                 let apply = matches!(task, Task::Gc { apply: true });
                 if apply {
+                    let n = cleanup.removed.len() + cleanup.leftovers.len();
                     toasts.push((
                         ToastKind::Ok,
-                        match actions.len() {
-                            0 => "nothing to clean".to_string(),
-                            1 => "cleaned 1 leftover".to_string(),
-                            n => format!("cleaned {n} leftovers"),
+                        match (cleanup.removed.len(), cleanup.leftovers.len()) {
+                            (0, 0) => "nothing to clean".to_string(),
+                            (c, 0) => format!("removed {c} merged clone{}", if c == 1 { "" } else { "s" }),
+                            _ => format!("cleaned {n} item{}", if n == 1 { "" } else { "s" }),
                         },
                     ));
                 }
                 if let Some(Modal::Gc(g)) = &mut self.modal {
                     g.running = false;
                     g.applied = apply;
-                    g.actions = Some(actions);
+                    g.result = Some(cleanup);
                 }
                 Ok(String::new())
+            }
+            Ok(Outcome::ShellInstalled(path, changed)) => {
+                let s = if changed {
+                    format!("added to {}; open a new terminal to use it", fmt::tilde(&path))
+                } else {
+                    format!("already in {}; open a new terminal to use it", fmt::tilde(&path))
+                };
+                toasts.push((ToastKind::Ok, s.clone()));
+                Ok(s)
+            }
+            Ok(Outcome::Service(on)) => {
+                self.service = Some(on);
+                let s = if on {
+                    "service installed: refreshes on fetch, remounts at login"
+                } else {
+                    "service removed"
+                };
+                toasts.push((ToastKind::Ok, s.to_string()));
+                Ok(s.to_string())
             }
             Ok(Outcome::Doctor(checks)) => {
                 if let Some(Modal::Doctor(d)) = &mut self.modal {
@@ -553,7 +588,9 @@ impl App {
                 self.toast(k, t);
             }
         }
-        if self.repo().is_some_and(|r| r.root == repo) && !matches!(task, Task::Doctor) {
+        if self.repo().is_some_and(|r| r.root == repo)
+            && !matches!(task, Task::Doctor | Task::Service { .. } | Task::ShellInstall)
+        {
             effects.push(Effect::Load);
         }
         effects
@@ -561,8 +598,14 @@ impl App {
 
     pub fn on_msg(&mut self, msg: Msg) -> Vec<Effect> {
         match msg {
-            Msg::Loaded { root, data, repos } => {
+            Msg::Loaded {
+                root,
+                data,
+                repos,
+                service,
+            } => {
                 self.loading = false;
+                self.service = Some(service);
                 // A load for a repo we switched away from: reload the current one now.
                 let current = self.repo().is_some_and(|r| r.root == root);
                 self.loaded_ms = (current && !self.reload_queued).then_some(self.now_ms);
@@ -602,6 +645,9 @@ impl App {
     pub fn apply_data(&mut self, d: RepoData) {
         let is_current = self.repo().is_some_and(|r| r.root == d.root);
         let keep = self.selected_clone().map(|c| c.name.clone());
+        if let Some(t) = self.repos.iter_mut().find(|t| t.root == d.root) {
+            t.summary = Some(d.summary.clone());
+        }
         self.data.insert(d.root.clone(), d);
         if !is_current {
             return;
@@ -617,11 +663,17 @@ impl App {
         self.selected = self.selected.min(n.saturating_sub(1));
     }
 
-    /// Adds repos clove learned about (e.g. after an init) without reordering.
+    /// Adds repos clove learned about (e.g. after an init) without reordering,
+    /// and takes their fresh summaries.
     fn merge_repos(&mut self, repos: Vec<RepoTab>) {
         for r in repos {
-            if !self.repos.iter().any(|x| x.root == r.root) {
-                self.repos.push(r);
+            match self.repos.iter_mut().find(|x| x.root == r.root) {
+                Some(x) => {
+                    if r.summary.is_some() {
+                        x.summary = r.summary;
+                    }
+                }
+                None => self.repos.push(r),
             }
         }
     }
@@ -793,6 +845,13 @@ impl App {
                 self.modal = Some(Modal::Doctor(DoctorView::default()));
                 return self.spawn(Task::Doctor, After::Nothing);
             }
+            KeyCode::Char('s') | KeyCode::Char(',') => {
+                if self.current().is_some() {
+                    self.modal = Some(Modal::Settings(SettingsView::default()));
+                } else {
+                    self.toast(ToastKind::Info, "settings show once the repo has loaded");
+                }
+            }
             KeyCode::Char('l') => {
                 if let Some(j) = self.jobs.iter().rev().find(|j| j.has_progress()) {
                     self.modal = Some(Modal::Job(j.id));
@@ -952,6 +1011,7 @@ impl App {
             Modal::Remove(f) => self.remove_form_key(f, k),
             Modal::Gc(g) => self.gc_key(g, k),
             Modal::Doctor(d) => self.doctor_key(d, k),
+            Modal::Settings(v) => self.settings_key(v, k),
             Modal::Job(id) => self.job_key(id, k),
         };
         // A handler may have opened another modal (or exited); don't clobber it.
@@ -1097,7 +1157,7 @@ impl App {
         match k.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('g') | KeyCode::Enter => (None, vec![]),
             KeyCode::Char('a')
-                if !g.running && !g.applied && g.actions.as_ref().is_some_and(|a| !a.is_empty()) =>
+                if !g.running && !g.applied && g.result.as_ref().is_some_and(cleanup_has_work) =>
             {
                 g.running = true;
                 self.modal = Some(Modal::Gc(g));
@@ -1106,6 +1166,47 @@ impl App {
             }
             _ => (Some(Modal::Gc(g)), vec![]),
         }
+    }
+
+    fn settings_key(&mut self, mut v: SettingsView, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
+        let page = self.settings_height.max(1);
+        let paths = self
+            .current()
+            .map(|d| clove_core::config::layer_paths(&d.root, &d.status.name));
+        let edit = |i: usize| -> Vec<Effect> {
+            paths
+                .as_ref()
+                .map(|p| vec![Effect::EditConfig(p[i].1.clone())])
+                .unwrap_or_default()
+        };
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('s') | KeyCode::Char(',') => {
+                return (None, vec![]);
+            }
+            KeyCode::Up | KeyCode::Char('k') => v.scroll.set(v.scroll.target().saturating_sub(1)),
+            KeyCode::Down | KeyCode::Char('j') => v.scroll.set(v.scroll.target() + 1),
+            KeyCode::PageUp => v.scroll.set(v.scroll.target().saturating_sub(page)),
+            KeyCode::PageDown => v.scroll.set(v.scroll.target() + page),
+            KeyCode::Char('E') => return (Some(Modal::Settings(v)), edit(0)),
+            KeyCode::Char('t') => return (Some(Modal::Settings(v)), edit(1)),
+            KeyCode::Char('e') => return (Some(Modal::Settings(v)), edit(2)),
+            KeyCode::Char('i') => {
+                self.modal = Some(Modal::Settings(v));
+                let fx = self.spawn(Task::ShellInstall, After::Nothing);
+                return (None, fx);
+            }
+            KeyCode::Char('S') => {
+                if self.running().any(|j| matches!(j.task, Task::Service { .. })) {
+                    return (Some(Modal::Settings(v)), vec![]);
+                }
+                let install = !self.service.unwrap_or(false);
+                self.modal = Some(Modal::Settings(v));
+                let fx = self.spawn(Task::Service { install }, After::Nothing);
+                return (None, fx);
+            }
+            _ => {}
+        }
+        (Some(Modal::Settings(v)), vec![])
     }
 
     fn doctor_key(&mut self, mut d: DoctorView, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
@@ -1164,7 +1265,11 @@ impl App {
                     .iter()
                     .rev()
                     .find(|(r, h)| {
-                        r.contains(pos) && matches!(h, Hit::ScrollList | Hit::ScrollLog | Hit::ScrollDoctor)
+                        r.contains(pos)
+                            && matches!(
+                                h,
+                                Hit::ScrollList | Hit::ScrollLog | Hit::ScrollDoctor | Hit::ScrollSettings
+                            )
                     })
                     .map(|(_, h)| *h);
                 match target {
@@ -1175,6 +1280,12 @@ impl App {
                             && let Some(j) = self.job_mut(id)
                         {
                             scroll_job(j, d * 3, page);
+                        }
+                    }
+                    Some(Hit::ScrollSettings) => {
+                        if let Some(Modal::Settings(v)) = &mut self.modal {
+                            let t = v.scroll.target() as isize + d * 2;
+                            v.scroll.set(t.max(0) as usize);
                         }
                     }
                     Some(Hit::ScrollDoctor) => {
@@ -1245,7 +1356,14 @@ fn job_title(t: &Task) -> String {
         Task::Unmount { name } => format!("unmount {name}"),
         Task::Gc { .. } => "gc".into(),
         Task::Doctor => "doctor".into(),
+        Task::Service { .. } => "service".into(),
+        Task::ShellInstall => "shell integration".into(),
     }
+}
+
+/// Something cleanup can remove: a leftover or a provably merged clone.
+pub fn cleanup_has_work(c: &Cleanup) -> bool {
+    !c.leftovers.is_empty() || c.checks.iter().any(|m| m.verdict == clove_core::Verdict::Prune)
 }
 
 fn scroll_job(job: &mut Job, d: isize, page: usize) {

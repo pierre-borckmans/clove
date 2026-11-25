@@ -1,14 +1,19 @@
 //! Plain data the UI renders: repos, jobs, forms, toasts. No I/O here.
 
 use clove_core::doctor::Check;
-use clove_core::{CloneInfo, GoldenMeta, NewOptions, RemoveOptions, RepoStatus};
+use clove_core::{
+    CloneInfo, Config, GoldenMeta, MergeCheck, NewOptions, RemoveOptions, RepoStatus, RepoSummary,
+};
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RepoTab {
     pub name: String,
     pub root: PathBuf,
+    /// Clone counts and golden state for the sidebar; None until loaded.
+    pub summary: Option<RepoSummary>,
 }
 
 #[derive(Debug, Clone)]
@@ -16,6 +21,10 @@ pub struct RepoData {
     pub root: PathBuf,
     pub status: RepoStatus,
     pub clones: Vec<CloneInfo>,
+    pub config: Config,
+    /// The last PR check per clone (`clove prune`, the service, or cleanup here).
+    pub prs: BTreeMap<String, MergeCheck>,
+    pub summary: RepoSummary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,11 +47,26 @@ pub enum Task {
     Init,
     Refresh,
     New(NewOptions),
-    Remove { name: String, opts: RemoveOptions },
-    Mount { name: String },
-    Unmount { name: String },
-    Gc { apply: bool },
+    Remove {
+        name: String,
+        opts: RemoveOptions,
+    },
+    Mount {
+        name: String,
+    },
+    Unmount {
+        name: String,
+    },
+    /// Leftovers and merged clones; `apply` removes both.
+    Gc {
+        apply: bool,
+    },
     Doctor,
+    Service {
+        install: bool,
+    },
+    /// Add the shell integration line to the user's rc file.
+    ShellInstall,
 }
 
 /// What to do once a mount finishes.
@@ -60,8 +84,20 @@ pub enum Outcome {
     Removed,
     Mounted(PathBuf),
     Unmounted,
-    Gc(Vec<String>),
+    Gc(Cleanup),
     Doctor(Vec<Check>),
+    Service(bool),
+    /// The rc file that now loads the integration, and whether it changed.
+    ShellInstalled(PathBuf, bool),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Cleanup {
+    pub leftovers: Vec<String>,
+    pub checks: Vec<MergeCheck>,
+    /// GitHub could not be asked; only local proofs counted.
+    pub warning: Option<String>,
+    pub removed: Vec<String>,
 }
 
 pub enum Msg {
@@ -69,6 +105,8 @@ pub enum Msg {
         root: PathBuf,
         data: Result<Box<RepoData>, String>,
         repos: Vec<RepoTab>,
+        /// Whether the launchd agents are installed.
+        service: bool,
     },
     Refs {
         root: PathBuf,
@@ -203,6 +241,9 @@ impl Job {
             Task::Gc { apply: false } => "scan for leftovers".into(),
             Task::Gc { apply: true } => "clean leftovers".into(),
             Task::Doctor => "doctor".into(),
+            Task::Service { install: true } => "install the service".into(),
+            Task::Service { install: false } => "remove the service".into(),
+            Task::ShellInstall => "install shell integration".into(),
         }
     }
 
@@ -390,7 +431,7 @@ pub struct RemoveForm {
 
 #[derive(Debug, Clone, Default)]
 pub struct GcView {
-    pub actions: Option<Vec<String>>,
+    pub result: Option<Cleanup>,
     pub applied: bool,
     pub running: bool,
     pub error: Option<String>,
@@ -410,7 +451,13 @@ pub enum Modal {
     Remove(RemoveForm),
     Gc(GcView),
     Doctor(DoctorView),
+    Settings(SettingsView),
     Job(u64),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SettingsView {
+    pub scroll: Smooth,
 }
 
 /// A clickable or scrollable region recorded while drawing.
@@ -426,6 +473,7 @@ pub enum Hit {
     ScrollList,
     ScrollLog,
     ScrollDoctor,
+    ScrollSettings,
     /// Swallows clicks (a modal's body over the click-to-close backdrop).
     Inert,
 }
