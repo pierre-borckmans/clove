@@ -166,6 +166,7 @@ pub fn run(op: &OpRequest, r: &dyn clove_core::Reporter) -> anyhow::Result<serde
             let opts = RemoveOptions {
                 force: *force,
                 delete_branch: *delete_branch,
+                branch_merged: false,
             };
             Clove::open(root)?.remove(name, &opts, r)?;
             serde_json::Value::Null
