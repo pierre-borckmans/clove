@@ -561,8 +561,10 @@ pub struct AdoptForm {
     pub name: String,
     pub path: PathBuf,
     pub branch: Option<String>,
-    /// Why it can't be adopted (dirty, detached, ...), if it can't.
+    /// Why it can't be adopted (locked, detached, ...), if it can't.
     pub blocker: Option<String>,
+    /// Uncommitted changes that move to the clone (via a stash).
+    pub changes: usize,
     /// Cancel has focus (else convert).
     pub focus_cancel: bool,
 }

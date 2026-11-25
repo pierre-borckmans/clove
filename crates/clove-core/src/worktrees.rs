@@ -48,18 +48,45 @@ pub struct OtherWorktree {
     /// [`OtherWorktree::forceable`]). Only filled with `status`.
     #[serde(default)]
     pub can_force: bool,
+    /// Why it can't become a clone (see [`OtherWorktree::adopt_blocker`]).
+    /// Only filled with `status`.
+    #[serde(default)]
+    pub adopt_blocker: Option<String>,
 }
 
 /// Changed paths kept per worktree, to show what removing it would discard.
 pub const MAX_CHANGES: usize = 12;
 
 impl OtherWorktree {
-    /// Why making it a clone could lose something, or can't work.
+    /// Why removing it could lose something (no overrides).
     pub fn blocker(&self) -> Option<String> {
+        self.removal_blocker(false, false)
+    }
+
+    /// Why it can't become a clone. Uncommitted changes don't stop it: they
+    /// move to the clone (see [`Clove::adopt`]).
+    pub fn adopt_blocker(&self) -> Option<String> {
         if self.missing {
             return Some(format!("{} is gone from disk", self.name));
         }
-        self.removal_blocker(false, false)
+        if self.locked {
+            let why = self
+                .lock_reason
+                .as_deref()
+                .map(|r| format!(" ({r})"))
+                .unwrap_or_default();
+            return Some(format!("{} is locked{why}", self.name));
+        }
+        if self.branch.is_none() {
+            return Some(format!(
+                "{} is detached; a clone takes a branch (`git switch -c <branch>` in it first)",
+                self.name
+            ));
+        }
+        if self.dirty.is_none() {
+            return Some(format!("couldn't check {} for uncommitted changes", self.name));
+        }
+        None
     }
 
     /// Something stands in the way of removing it, but only things the user
@@ -206,6 +233,7 @@ impl Clove {
                     changes: vec![],
                     changes_total: 0,
                     can_force: false,
+                    adopt_blocker: None,
                     detached_commits: None,
                     pr,
                     blocker: None,
@@ -242,12 +270,14 @@ impl Clove {
                         }
                         w.blocker = w.removal_blocker(false, false);
                         w.can_force = w.forceable();
+                        w.adopt_blocker = w.adopt_blocker();
                     });
                 }
             });
             for w in list.iter_mut().filter(|w| w.missing) {
                 w.blocker = w.removal_blocker(false, false);
                 w.can_force = w.forceable();
+                w.adopt_blocker = w.adopt_blocker();
             }
         }
         Ok(list)
@@ -369,10 +399,13 @@ impl Clove {
 
     /// Turns a plain worktree into a clone on the same branch.
     ///
-    /// git won't check a branch out twice, so the old worktree lets go of it
-    /// first, by detaching (its files stay). Then the clone is made on the
-    /// branch. Only once the clone exists is the old worktree removed; if the
-    /// clone fails, the old worktree is switched back to its branch.
+    /// Uncommitted changes (untracked files too, not ignored ones) go into a
+    /// stash first; stashes are shared by every worktree of a repo. git won't
+    /// check a branch out twice, so the old worktree then lets go of it by
+    /// detaching. The clone is made on the branch and the stash applied in it.
+    /// Only then is the old worktree removed. If the clone fails, the old
+    /// worktree goes back on its branch with its changes; if applying fails,
+    /// the stash stays and the warning says how to apply it.
     pub fn adopt(&self, path: &Path, opts: &AdoptOptions, r: &dyn Reporter) -> Result<CloneInfo> {
         self.require_record()?;
         self.adopt_with(path, opts, r, |o| self.new_clone(o, r))
@@ -390,14 +423,11 @@ impl Clove {
             .into_iter()
             .find(|w| w.path == path)
             .with_context(|| format!("{} is not a plain git worktree of {}", path.display(), self.name))?;
-        if let Some(why) = w.blocker() {
+        if let Some(why) = w.adopt_blocker() {
             bail!("{why}");
         }
         let Some(branch) = w.branch.clone() else {
-            bail!(
-                "{} is detached; a clone takes a branch (`git switch -c <branch>` in it first)",
-                w.name
-            );
+            bail!("{} is detached", w.name);
         };
         let name = sanitize_name(opts.name.as_deref().unwrap_or(&branch));
         if name.is_empty() {
@@ -406,11 +436,34 @@ impl Clove {
         if self.clone_meta(&name)?.is_some() || self.clone_dir(&name).exists() {
             bail!("clone `{name}` already exists; pick another name");
         }
+        // Carry uncommitted changes over in a stash.
+        let stash = if w.dirty == Some(true) {
+            r.event(Event::Info {
+                message: format!(
+                    "stashing {} uncommitted change{} to carry them into the clone",
+                    w.changes_total,
+                    if w.changes_total == 1 { "" } else { "s" }
+                ),
+            });
+            let msg = format!("clove: {}'s changes, moving to a clone", w.name);
+            git::run_ok(
+                &w.path,
+                &["stash", "push", "--include-untracked", "--quiet", "-m", &msg],
+            )
+            .with_context(|| format!("stash {}'s changes", w.name))?;
+            Some(git::out(&w.path, &["rev-parse", "refs/stash"]).context("find the stash")?)
+        } else {
+            None
+        };
         r.event(Event::Info {
             message: format!("detaching {} so the clone can take {branch}", w.name),
         });
-        git::run_ok(&w.path, &["switch", "--quiet", "--detach"])
-            .with_context(|| format!("detach {}", w.name))?;
+        if let Err(e) = git::run_ok(&w.path, &["switch", "--quiet", "--detach"]) {
+            if let Some(sha) = &stash {
+                let _ = unstash(&w.path, sha);
+            }
+            return Err(e).with_context(|| format!("detach {}", w.name));
+        }
         let new = NewOptions {
             branch: Some(branch.clone()),
             name: Some(name),
@@ -420,7 +473,19 @@ impl Clove {
         let info = match create(&new) {
             Ok(i) => i,
             Err(e) => {
-                return Err(match git::run_ok(&w.path, &["switch", "--quiet", &branch]) {
+                let back = git::run_ok(&w.path, &["switch", "--quiet", &branch]);
+                if let Some(sha) = &stash
+                    && let Err(se) = unstash(&w.path, sha)
+                {
+                    r.event(Event::Warn {
+                        message: format!(
+                            "{}'s changes stay in stash {sha} ({se:#}); `git -C {} stash apply {sha}`",
+                            w.name,
+                            w.path.display()
+                        ),
+                    });
+                }
+                return Err(match back {
                     Ok(()) => e.context(format!("no clone made; {} is back on {branch}", w.name)),
                     Err(back) => e.context(format!(
                         "no clone made, and {} could not go back on {branch} ({back:#}); run `git -C {} switch {branch}`",
@@ -430,6 +495,19 @@ impl Clove {
                 });
             }
         };
+        if let Some(sha) = &stash {
+            match unstash(&info.path, sha) {
+                Ok(()) => r.event(Event::Info {
+                    message: format!("moved {}'s uncommitted changes into {}", w.name, info.name),
+                }),
+                Err(e) => r.event(Event::Warn {
+                    message: format!(
+                        "couldn't apply {}'s changes in {} ({e:#}); they stay in stash {sha}: `git stash apply {sha}` there",
+                        w.name, info.name
+                    ),
+                }),
+            }
+        }
         if let Err(e) = git::run_ok(&self.root, &["worktree", "remove", &w.path.to_string_lossy()]) {
             r.event(Event::Warn {
                 message: format!(
@@ -441,6 +519,16 @@ impl Clove {
         }
         Ok(info)
     }
+}
+
+/// Applies stash `sha` in `dir` (index too) and drops it from the stash list.
+fn unstash(dir: &Path, sha: &str) -> Result<()> {
+    git::run_ok(dir, &["stash", "apply", "--index", "--quiet", sha])?;
+    let list = git::out(dir, &["stash", "list", "--format=%H"]).unwrap_or_default();
+    if let Some(i) = list.lines().position(|l| l.trim() == sha) {
+        let _ = git::run_ok(dir, &["stash", "drop", "--quiet", &format!("stash@{{{i}}}")]);
+    }
+    Ok(())
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {
@@ -829,17 +917,107 @@ mod tests {
         assert!(git::ref_exists(&r.dir, "refs/heads/feat/z"));
     }
 
+    /// Stands in for new_clone: checks the branch out at `path`.
+    fn fake_clone(r: &Repo, o: &NewOptions, path: &Path) -> CloneInfo {
+        git(
+            &r.dir,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                path.to_str().unwrap(),
+                o.branch.as_deref().unwrap(),
+            ],
+        );
+        CloneInfo {
+            name: o.name.clone().unwrap(),
+            path: path.to_path_buf(),
+            mounted: true,
+            branch: o.branch.clone(),
+            head: None,
+            dirty: None,
+            ahead: None,
+            behind: None,
+            image_bytes: 0,
+            own_bytes: 0,
+            created_at: 0,
+            golden_generation: 0,
+            timings: vec![],
+            total_ms: 0.0,
+            failed_steps: vec![],
+            issue: None,
+            removing_when_free: false,
+        }
+    }
+
+    /// A worktree on branch `b` with a committed file, then a modified,
+    /// a staged and an untracked one.
+    fn dirty_worktree(r: &Repo, name: &str, b: &str) -> PathBuf {
+        let wt = r.add(name, &["-b", b]);
+        std::fs::write(wt.join("tracked.txt"), "v1").unwrap();
+        std::fs::write(wt.join("staged.txt"), "v1").unwrap();
+        git(&wt, &["add", "."]);
+        git(
+            &wt,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "files",
+            ],
+        );
+        std::fs::write(wt.join("tracked.txt"), "v2").unwrap();
+        std::fs::write(wt.join("staged.txt"), "v2").unwrap();
+        git(&wt, &["add", "staged.txt"]);
+        std::fs::write(wt.join("new.txt"), "new").unwrap();
+        wt
+    }
+
     #[test]
-    fn adopt_refuses_dirty_detached_and_locked() {
+    fn adopt_carries_uncommitted_changes_into_the_clone() {
+        let r = repo();
+        let wt = dirty_worktree(&r, "wip", "wip/a");
+        let other = r.dir.parent().unwrap().join("clone-wip");
+        let info = r
+            .clove
+            .adopt_with(&wt, &AdoptOptions::default(), &Silent, |o| {
+                Ok(fake_clone(&r, o, &other))
+            })
+            .unwrap();
+        assert!(!wt.exists());
+        let p = &info.path;
+        assert_eq!(std::fs::read_to_string(p.join("tracked.txt")).unwrap(), "v2");
+        assert_eq!(std::fs::read_to_string(p.join("new.txt")).unwrap(), "new");
+        // Staged stays staged.
+        assert_eq!(git(p, &["diff", "--cached", "--name-only"]), "staged.txt");
+        assert_eq!(git(&r.dir, &["stash", "list"]), "", "the stash is dropped");
+    }
+
+    #[test]
+    fn adopt_puts_changes_back_when_the_clone_fails() {
+        let r = repo();
+        let wt = dirty_worktree(&r, "wip", "wip/b");
+        let e = r
+            .clove
+            .adopt_with(&wt, &AdoptOptions::default(), &Silent, |_| {
+                anyhow::bail!("no space")
+            })
+            .unwrap_err();
+        assert!(format!("{e:#}").contains("back on wip/b"), "{e:#}");
+        assert_eq!(r.find("wip").branch.as_deref(), Some("wip/b"));
+        assert_eq!(std::fs::read_to_string(wt.join("tracked.txt")).unwrap(), "v2");
+        assert!(wt.join("new.txt").exists());
+        assert_eq!(git(&wt, &["diff", "--cached", "--name-only"]), "staged.txt");
+        assert_eq!(git(&r.dir, &["stash", "list"]), "");
+    }
+
+    #[test]
+    fn adopt_refuses_detached_and_locked() {
         let r = repo();
         let never = |_: &NewOptions| -> Result<CloneInfo> { panic!("must not create") };
-        let dirty = r.add("dirty", &["-b", "d"]);
-        std::fs::write(dirty.join("x"), "x").unwrap();
-        assert!(
-            r.clove
-                .adopt_with(&dirty, &AdoptOptions::default(), &Silent, never)
-                .is_err()
-        );
         let det = r.add("det", &["--detach"]);
         assert!(
             r.clove
@@ -853,6 +1031,5 @@ mod tests {
                 .adopt_with(&locked, &AdoptOptions::default(), &Silent, never)
                 .is_err()
         );
-        assert_eq!(r.find("dirty").branch.as_deref(), Some("d"));
     }
 }

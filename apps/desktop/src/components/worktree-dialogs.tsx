@@ -154,7 +154,8 @@ export function RemoveWorktreeDialog() {
 export function AdoptDialog() {
   const { adopt } = useUi();
   const w = adopt?.worktree;
-  const blocker = w?.blocker ?? (w && !w.branch ? `${w.name} is detached; a clone takes a branch` : null);
+  const blocker = w?.adopt_blocker ?? (w && !w.branch ? `${w.name} is detached; a clone takes a branch` : null);
+  const moving = w && !blocker && w.dirty ? (w.changes_total ?? 1) : 0;
   return (
     <AlertDialog open={!!adopt} onOpenChange={(o) => !o && setUi({ adopt: null })}>
       <AlertDialogContent className="max-w-[460px] gap-5 rounded-xl sm:max-w-[460px]">
@@ -171,6 +172,18 @@ export function AdoptDialog() {
         </AlertDialogHeader>
 
         {blocker && <Blocker text={blocker} />}
+
+        {moving > 0 && (
+          <div className="rounded-lg border px-3 py-2.5 text-[12.5px] leading-relaxed">
+            Its {moving} uncommitted change{moving === 1 ? "" : "s"} move{moving === 1 ? "s" : ""} to the clone, through
+            a <span className="font-mono">git stash</span> (untracked files too).
+            {w?.changes && w.changes.length > 0 && (
+              <pre className="selectable mt-1.5 max-h-32 overflow-auto font-mono text-[12px] text-muted-foreground">
+                {w.changes.slice(0, 8).join("\n")}
+              </pre>
+            )}
+          </div>
+        )}
 
         <AlertDialogFooter>
           <AlertDialogCancel className="h-8 text-[13px]">Cancel</AlertDialogCancel>

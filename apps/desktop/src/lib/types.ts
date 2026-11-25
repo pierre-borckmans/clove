@@ -102,6 +102,8 @@ export type OtherWorktree = {
   changes_total?: number;
   /** Only a lock and/or uncommitted changes block it: both can be overridden. */
   can_force?: boolean;
+  /** Why it can't become a clone; uncommitted changes don't stop it (they move). */
+  adopt_blocker?: string | null;
 };
 
 export type CheckLevel = "ok" | "warn" | "fail";

@@ -1183,12 +1183,13 @@ impl App {
             self.toast(ToastKind::Info, "build the golden image first: press i");
             return;
         }
-        let blocker = w.blocker.clone().or_else(|| {
-            w.branch
-                .is_none()
-                .then(|| format!("{} is detached; a clone takes a branch", w.name))
-        });
+        let blocker = w.adopt_blocker();
         self.modal = Some(Modal::Adopt(AdoptForm {
+            changes: if w.dirty == Some(true) {
+                w.changes_total.max(1)
+            } else {
+                0
+            },
             name: w.name,
             path: w.path,
             branch: w.branch,

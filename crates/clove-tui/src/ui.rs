@@ -2632,6 +2632,20 @@ fn draw_adopt(f: &mut Frame, app: &mut App, area: Rect, a: &AdoptForm) {
     ) {
         lines.push(Line::from(Span::styled(l, muted())));
     }
+    if a.changes > 0 && a.blocker.is_none() {
+        lines.push(Line::from(""));
+        let n = a.changes;
+        for l in fmt::wrap(
+            &format!(
+                "→ its {n} uncommitted change{} move{} to the clone (through a git stash, untracked files too)",
+                if n == 1 { "" } else { "s" },
+                if n == 1 { "s" } else { "" }
+            ),
+            iw,
+        ) {
+            lines.push(Line::from(Span::styled(l, fg(SAGE))));
+        }
+    }
     if let Some(b) = &a.blocker {
         lines.push(Line::from(""));
         for l in fmt::wrap(&format!("✗ {b}"), iw) {

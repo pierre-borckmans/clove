@@ -245,9 +245,10 @@ async function runOp(id: string, op: OpRequest): Promise<unknown> {
       const r = get(op.root);
       const w = r.worktrees.find((x) => x.path === op.path);
       if (!w) throw new Error(`${op.path} is not a plain git worktree of ${r.status.name}`);
-      if (w.blocker || !w.branch) {
+      const why = w.adopt_blocker ?? (w.locked ? `${w.name} is locked` : null);
+      if (why || !w.branch) {
         await sleep(120);
-        throw new Error(w.blocker ?? `${w.name} is detached; a clone takes a branch`);
+        throw new Error(why ?? `${w.name} is detached; a clone takes a branch`);
       }
       const name = op.name?.trim() || sanitize(w.branch);
       emit("op-event", {

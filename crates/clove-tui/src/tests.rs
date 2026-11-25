@@ -1532,6 +1532,7 @@ fn worktree(name: &str, branch: Option<&str>) -> clove_core::OtherWorktree {
         changes: vec![],
         changes_total: 0,
         can_force: false,
+        adopt_blocker: None,
         detached_commits: branch.is_none().then_some(0),
         pr: None,
         blocker: None,
@@ -2045,4 +2046,26 @@ fn a_locked_worktree_can_be_unlocked_and_removed() {
         Task::RemoveWorktree { unlock, force, .. } => assert!(*unlock && !*force),
         t => panic!("{t:?}"),
     }
+}
+
+#[test]
+fn a_dirty_worktree_becomes_a_clone_with_its_changes() {
+    let mut app = app();
+    let mut w = worktree("surveyor", Some("pierre/wip/surveyor"));
+    w.dirty = Some(true);
+    w.changes = vec![" M src/a.rs".into(), "?? notes.md".into()];
+    w.changes_total = 2;
+    w.blocker = w.blocker();
+    w.adopt_blocker = w.adopt_blocker();
+    let root = PathBuf::from("/work/app");
+    let mut d = app.data.get(&root).unwrap().clone();
+    d.worktrees = vec![w];
+    app.apply_data(d);
+    key(&mut app, KeyCode::End);
+    key(&mut app, KeyCode::Char('c'));
+    let (s, _) = render(&mut app, 120, 30);
+    assert!(s.contains("2 uncommitted changes move"), "{s}");
+    let fx = key(&mut app, KeyCode::Enter);
+    assert!(matches!(&fx[..], [Effect::Spawn { .. }]), "{fx:?}");
+    assert!(matches!(app.jobs.last().unwrap().task, Task::Adopt { .. }));
 }
