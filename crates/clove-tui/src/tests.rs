@@ -1907,3 +1907,42 @@ fn panel_sizes_persist() {
     assert_eq!(p.body.sizes(), [None, None, None]);
     assert_eq!(p.stack.sizes(), [None, Some(9)]);
 }
+
+#[test]
+fn hovering_a_panel_lights_its_border() {
+    let mut app = app_with_worktrees();
+    let (s, _) = render(&mut app, 140, 30);
+    let (x, y) = find(&s, "app-agent");
+    moved(&mut app, x, y);
+    let (s, buf) = render(&mut app, 140, 30);
+    // The worktrees panel's title row: its corner turns SAGE, the clones panel's stays LINE.
+    let (tx, ty) = find(&s, "git worktrees 3");
+    assert_eq!(buf[(tx - 2, ty)].symbol(), "╭");
+    assert_eq!(buf[(tx - 2, ty)].fg, theme::SAGE);
+    let (cx, cy) = find(&s, "clones 5");
+    assert_eq!(buf[(cx - 2, cy)].fg, theme::LINE);
+    // The title text keeps its own colour.
+    assert_ne!(buf[(tx, ty)].fg, theme::SAGE);
+    // Nothing lit with the mouse elsewhere or a modal open.
+    key(&mut app, KeyCode::Char('?'));
+    let (_, buf) = render(&mut app, 140, 30);
+    assert_ne!(buf[(tx - 2, ty)].fg, theme::SAGE);
+}
+
+#[test]
+fn the_worktrees_panel_resizes_and_falls_back_inline_when_short() {
+    let mut app = app_with_worktrees();
+    let (s, _) = render(&mut app, 140, 30);
+    let (_, top) = find(&s, "git worktrees 3");
+    // Drag the border between the clones and the worktrees up by three rows.
+    let (dx, _) = find(&s, "git worktrees 3");
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), dx, top);
+    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), dx, top - 3);
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), dx, top - 3);
+    let (s, _) = render(&mut app, 140, 30);
+    assert_eq!(find(&s, "git worktrees 3").1, top - 3, "{s}");
+    // Too short for two panels: one list with a heading, as before.
+    let (s, _) = render(&mut app, 140, 18);
+    assert!(!s.contains("git worktrees 3"), "{s}");
+    assert!(s.contains("OTHER GIT WORKTREES"), "{s}");
+}

@@ -10,12 +10,15 @@ pub const SIDEBAR_WIDTH: u16 = 22;
 pub const DETAIL_WIDTH: u16 = 48;
 pub const DETAIL_HEIGHT: u16 = 12;
 pub const JOB_STEPS_WIDTH: u16 = 38;
+/// Rows of the plain-worktrees panel under the clones: borders, header, five rows.
+pub const WORKTREES_HEIGHT: u16 = 8;
 
 /// Pane indices in each split.
 pub const SIDEBAR: usize = 0;
 pub const DETAIL: usize = 2;
 pub const STACK_DETAIL: usize = 1;
 pub const JOB_STEPS: usize = 0;
+pub const WORKTREES: usize = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitId {
@@ -25,6 +28,8 @@ pub enum SplitId {
     Stack,
     /// steps | output, in the progress modal
     Job,
+    /// clones over plain git worktrees
+    Worktrees,
 }
 
 #[derive(Clone, Debug)]
@@ -32,6 +37,7 @@ pub struct Panes {
     pub body: Split,
     pub stack: Split,
     pub job: Split,
+    pub worktrees: Split,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -66,6 +72,13 @@ impl Default for Panes {
                 ],
             )
             .spacing(2),
+            worktrees: Split::new(
+                Direction::Vertical,
+                vec![
+                    Pane::fill(Extent::Cells(5)),
+                    Pane::sized(WORKTREES_HEIGHT, Extent::Cells(4), Extent::Frac(0.7)),
+                ],
+            ),
         }
     }
 }
@@ -76,6 +89,7 @@ impl Panes {
             SplitId::Body => &self.body,
             SplitId::Stack => &self.stack,
             SplitId::Job => &self.job,
+            SplitId::Worktrees => &self.worktrees,
         }
     }
 
@@ -84,14 +98,16 @@ impl Panes {
             SplitId::Body => &mut self.body,
             SplitId::Stack => &mut self.stack,
             SplitId::Job => &mut self.job,
+            SplitId::Worktrees => &mut self.worktrees,
         }
     }
 
-    fn named(&mut self) -> [(&'static str, &mut Split); 3] {
+    fn named(&mut self) -> [(&'static str, &mut Split); 4] {
         [
             ("body", &mut self.body),
             ("stack", &mut self.stack),
             ("job", &mut self.job),
+            ("worktrees", &mut self.worktrees),
         ]
     }
 

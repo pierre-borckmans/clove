@@ -19,6 +19,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 pub fn draw(f: &mut Frame, app: &mut App) {
     app.hits.clear();
     app.tips.clear();
+    app.panels.clear();
     let area = f.area();
     if area.width < 60 || area.height < 14 {
         let msg = Paragraph::new(vec![
@@ -80,6 +81,7 @@ fn tip(app: &mut App, r: Rect, t: Option<Tip>) {
 /// so it's clear the UI takes the mouse. The runtime also turns the pointer
 /// into a hand, or a resize arrow over a divider (hovered or dragged).
 fn draw_hover(f: &mut Frame, app: &mut App) {
+    hover_panel(f, app);
     let hit = app.hover.and_then(|p| {
         app.hits
             .iter()
@@ -119,6 +121,33 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
                 if c.bg == ratatui::style::Color::Reset {
                     c.fg = SAGE;
                 }
+            }
+        }
+    }
+}
+
+/// Lights up the border of the panel under the mouse (SAGE, softer than the
+/// BOTTLE of focused modals). Only plain border cells change, not titles.
+fn hover_panel(f: &mut Frame, app: &App) {
+    if app.modal.is_some() || app.dragging.is_some() {
+        return;
+    }
+    let Some(p) = app.hover else { return };
+    let Some(r) = app.panels.iter().rev().find(|r| r.contains(p)).copied() else {
+        return;
+    };
+    let buf = f.buffer_mut();
+    let edge = |x: u16, y: u16| x == r.left() || x + 1 == r.right() || y == r.top() || y + 1 == r.bottom();
+    for y in r.top()..r.bottom() {
+        for x in r.left()..r.right() {
+            if !edge(x, y) {
+                continue;
+            }
+            if let Some(c) = buf.cell_mut((x, y))
+                && c.fg == LINE
+                && "─│╭╮╰╯".contains(c.symbol())
+            {
+                c.fg = SAGE;
             }
         }
     }
@@ -631,9 +660,28 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect, sidebar: bool) -> (Rect, 
     if sidebar {
         draw_sidebar(f, app, rects[SIDEBAR]);
     }
-    draw_list(f, app, list);
+    // Plain git worktrees get their own panel under the clones when there
+    // is room for both; on short terminals they stay in the clone list.
+    let wts = !app.visible_worktrees().is_empty() && list.height >= 14;
+    if wts {
+        let s = &mut app.panes.worktrees;
+        let r = s.layout(list);
+        dividers.extend(
+            s.dividers()
+                .iter()
+                .map(|&(p, r)| (r, Hit::Divider(SplitId::Worktrees, p))),
+        );
+        draw_list(f, app, r[0], false);
+        draw_worktrees(f, app, r[crate::panes::WORKTREES]);
+    } else {
+        draw_list(f, app, list, true);
+    }
     if let Some(d) = detail {
         draw_detail(f, app, d);
+        app.panels.push(d);
+    }
+    if sidebar {
+        app.panels.push(rects[SIDEBAR]);
     }
     app.hits.extend(dividers);
     let main = if sidebar {
@@ -659,9 +707,15 @@ fn empty_state(f: &mut Frame, area: Rect, mut lines: Vec<Line>) {
     );
 }
 
-fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
+/// The clone list. With `inline_wts`, plain worktrees follow the clones under
+/// a heading; otherwise `draw_worktrees` shows them in their own panel.
+fn draw_list(f: &mut Frame, app: &mut App, area: Rect, inline_wts: bool) {
     let total = app.current().map(|d| d.clones.len()).unwrap_or(0);
-    let total_wt = app.current().map(|d| d.worktrees.len()).unwrap_or(0);
+    let total_wt = if inline_wts {
+        app.current().map(|d| d.worktrees.len()).unwrap_or(0)
+    } else {
+        0
+    };
     let vis_len = app.visible().len();
     let mut t = vec![Span::styled("clones", title())];
     if app.current().is_some() {
@@ -691,6 +745,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
     let block = panel(t, false);
     let inner = block.inner(area).inner(Margin::new(1, 0));
     f.render_widget(block, area);
+    app.panels.push(area);
     app.hits.push((inner, Hit::ScrollList));
 
     if app.repo().is_none() {
@@ -775,7 +830,28 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let clones: Vec<CloneInfo> = app.visible().into_iter().cloned().collect();
-    let wts: Vec<OtherWorktree> = app.visible_worktrees().into_iter().cloned().collect();
+    let all_wts: Vec<OtherWorktree> = app.visible_worktrees().into_iter().cloned().collect();
+    // Columns line up across both panels.
+    let cols = columns(&clones, &all_wts, inner.width as usize);
+    let wts = if inline_wts { all_wts } else { vec![] };
+    if !inline_wts && clones.is_empty() {
+        let msg = if app.filter.is_empty() {
+            vec![
+                Span::styled("no clones yet · ", muted()),
+                Span::styled("n", key()),
+                Span::styled(" makes one · ", muted()),
+                Span::styled("c", key()),
+                Span::styled(" turns a worktree below into one", muted()),
+            ]
+        } else {
+            vec![
+                Span::styled("no clone matches ", muted()),
+                Span::styled(format!("/{}", app.filter), bold()),
+            ]
+        };
+        empty_state(f, inner, vec![Line::from(msg)]);
+        return;
+    }
     if clones.is_empty() && wts.is_empty() {
         empty_state(
             f,
@@ -787,7 +863,69 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         );
         return;
     }
-    draw_table(f, app, area, inner, &clones, &wts);
+    draw_table(f, app, area, inner, &clones, &wts, cols);
+}
+
+/// Plain git worktrees in their own panel under the clones. Selection runs on
+/// from the last clone, so the same keys act on both.
+fn draw_worktrees(f: &mut Frame, app: &mut App, area: Rect) {
+    let clones: Vec<CloneInfo> = app.visible().into_iter().cloned().collect();
+    let wts: Vec<OtherWorktree> = app.visible_worktrees().into_iter().cloned().collect();
+    let total = app.current().map(|d| d.worktrees.len()).unwrap_or(0);
+    let count = if app.filter.is_empty() {
+        format!(" {total}")
+    } else {
+        format!(" {}/{total}", wts.len())
+    };
+    let block = panel(
+        vec![
+            Span::styled("git worktrees", title()),
+            Span::styled(count, muted()),
+            Span::styled(" · not clones, ", muted()),
+            Span::styled("c", key()),
+            Span::styled(" makes one a clone", muted()),
+        ],
+        false,
+    );
+    let inner = block.inner(area).inner(Margin::new(1, 0));
+    f.render_widget(block, area);
+    app.panels.push(area);
+    app.hits.push((inner, Hit::ScrollList));
+    let cols = columns(&clones, &wts, inner.width as usize);
+    let mut head = format!(
+        "  {}  {}  {}",
+        pad("NAME", cols.name),
+        pad("BRANCH", cols.branch),
+        pad("STATE", cols.changes)
+    );
+    if cols.path > 0 {
+        head.push_str(&" ".repeat(cols.age + cols.size + 4));
+        head.push_str("  PATH");
+    }
+    put(
+        f,
+        row(inner, 0),
+        Line::from(Span::styled(head, muted().add_modifier(Modifier::BOLD))),
+    );
+    let h = inner.height.saturating_sub(1) as usize;
+    let n = clones.len();
+    let len = wts.len();
+    if let Some(sel) = app.selected.checked_sub(n).filter(|s| *s < len) {
+        app.wt_scroll.follow(sel, h, len);
+    }
+    app.wt_scroll.clamp(h, len);
+    let off = app.wt_scroll.offset().min(len.saturating_sub(h));
+    for (i, w) in wts.iter().enumerate().skip(off).take(h) {
+        let r = row(inner, 1 + (i - off) as u16);
+        put(f, r, worktree_row(app, w, &cols));
+        worktree_tips(app, w, &cols, r);
+        if n + i == app.selected {
+            f.buffer_mut().set_style(r, selected());
+        }
+        app.hits.push((r, Hit::Row(n + i)));
+    }
+    let track = Rect::new(area.right() - 1, inner.y + 1, 1, h as u16);
+    scrollbar(f, track, off, h, len);
 }
 
 struct Cols {
@@ -856,8 +994,8 @@ fn draw_table(
     inner: Rect,
     clones: &[CloneInfo],
     wts: &[OtherWorktree],
+    cols: Cols,
 ) {
-    let cols = columns(clones, wts, inner.width as usize);
     let gap = "  ";
     let mut head = format!(
         "  {}{gap}{}{gap}{}{gap}{:>age$}{gap}{:>size$}",
@@ -1114,6 +1252,35 @@ fn worktree_tips(app: &mut App, w: &OtherWorktree, cols: &Cols, r: Rect) {
     tip(app, name, cut(&w.name, cols.name).1);
     if let Some(b) = &w.branch {
         tip(app, branch, cut(b, cols.branch).1);
+    }
+    let state = Rect::new(branch.right() + 2, r.y, cols.changes as u16, 1).intersection(r);
+    let mut lines: Vec<String> = vec![];
+    if let Some(pr) = &w.pr {
+        lines.push(format!(
+            "PR #{} {}",
+            pr.number,
+            format!("{:?}", pr.state).to_lowercase()
+        ));
+    }
+    if w.missing {
+        lines.push("missing: its folder is gone; git worktree prune forgets it".into());
+    }
+    if w.locked {
+        lines.push(match &w.lock_reason {
+            Some(why) => format!("locked: {why}"),
+            None => "locked".into(),
+        });
+    }
+    match w.dirty {
+        Some(true) => lines.push("dirty: uncommitted changes".into()),
+        Some(false) if !w.missing => lines.push("clean: no uncommitted changes".into()),
+        _ => {}
+    }
+    if let Some(n) = w.detached_commits.filter(|n| *n > 0) {
+        lines.push(format!("{n} commit(s) on no branch: removing it would lose them"));
+    }
+    if !lines.is_empty() {
+        tip(app, state, Some(Tip::new(lines.join("\n"))));
     }
     if cols.path > 0 {
         let x = r.right().saturating_sub(cols.path as u16);

@@ -74,6 +74,10 @@ pub struct App {
     pub watch: Option<Vec<clove_core::watch::Target>>,
     pub selected: usize,
     pub list_scroll: Smooth,
+    /// Scroll of the plain-worktrees panel.
+    pub wt_scroll: Smooth,
+    /// Panel rects drawn this frame, for the hover border.
+    pub panels: Vec<Rect>,
     /// Rows the clone list showed last frame (for page up/down).
     pub list_height: usize,
     pub filter: String,
@@ -137,6 +141,8 @@ impl App {
             watch: None,
             selected: 0,
             list_scroll: Smooth::default(),
+            wt_scroll: Smooth::default(),
+            panels: vec![],
             list_height: 10,
             filter: String::new(),
             filtering: false,
@@ -397,6 +403,7 @@ impl App {
         let now = self.now_ms;
         self.toasts.retain(|t| now.saturating_sub(t.born_ms) < t.ttl_ms());
         let mut moving = self.list_scroll.tick();
+        moving |= self.wt_scroll.tick();
         for j in &mut self.jobs {
             moving |= j.scroll.tick();
         }
@@ -423,6 +430,7 @@ impl App {
     /// Jumps every animation to its end (tests, and after a resize).
     pub fn settle(&mut self) {
         self.list_scroll.snap();
+        self.wt_scroll.snap();
         for j in &mut self.jobs {
             j.scroll.snap();
         }
@@ -941,6 +949,7 @@ impl App {
         self.filter.clear();
         self.filtering = false;
         self.list_scroll = Smooth::default();
+        self.wt_scroll = Smooth::default();
         self.loaded_ms = None;
         if self.loading {
             // The in-flight load is for the old repo; let the next tick reload.
