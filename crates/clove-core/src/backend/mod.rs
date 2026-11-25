@@ -220,10 +220,56 @@ pub fn describe(u: &VolumeUser) -> String {
 /// anything still running is a daemon a warm step started (bazel, gradle, turbo).
 pub fn stop_users(mount_point: &Path, grace: std::time::Duration) -> Vec<VolumeUser> {
     let users = users(mount_point);
+    stop(&users, grace);
+    users
+}
+
+/// Background servers started from inside `mount` (a turbo, nx or bazel
+/// daemon): their executable lives there and init is their parent, so no
+/// terminal or editor owns them, and they can't outlive the volume. Left
+/// alone, they hold a removed clone forever (and some spin once their files
+/// are gone). Stops them and returns them.
+pub fn stop_orphan_daemons(mount: &Path, grace: std::time::Duration) -> Vec<VolumeUser> {
+    let roots = [
+        mount.to_path_buf(),
+        mount.canonicalize().unwrap_or(mount.to_path_buf()),
+    ];
+    let orphans: Vec<VolumeUser> = users(mount)
+        .into_iter()
+        .filter(|u| {
+            proc_parent_and_exe(u.pid)
+                .is_some_and(|(ppid, exe)| ppid == 1 && roots.iter().any(|r| exe.starts_with(r)))
+        })
+        .collect();
+    stop(&orphans, grace);
+    orphans
+}
+
+#[cfg(target_os = "linux")]
+fn proc_parent_and_exe(pid: i32) -> Option<(i32, PathBuf)> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // pid (comm) state ppid ...; comm may hold spaces and parens.
+    let ppid = stat.rsplit_once(')')?.1.split_whitespace().nth(1)?.parse().ok()?;
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+    Some((ppid, exe))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn proc_parent_and_exe(pid: i32) -> Option<(i32, PathBuf)> {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "ppid=,comm=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout);
+    let (ppid, exe) = s.trim().split_once(' ')?;
+    Some((ppid.trim().parse().ok()?, PathBuf::from(exe.trim())))
+}
+
+fn stop(users: &[VolumeUser], grace: std::time::Duration) {
     if users.is_empty() {
-        return users;
+        return;
     }
-    for u in &users {
+    for u in users {
         // SAFETY: kill(2) with a pid we just read; no memory involved.
         unsafe { libc::kill(u.pid, libc::SIGTERM) };
     }
@@ -231,15 +277,14 @@ pub fn stop_users(mount_point: &Path, grace: std::time::Duration) -> Vec<VolumeU
     while std::time::Instant::now() < deadline {
         // SAFETY: signal 0 only checks existence.
         if users.iter().all(|u| unsafe { libc::kill(u.pid, 0) } != 0) {
-            return users;
+            return;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    for u in &users {
+    for u in users {
         // SAFETY: as above.
         unsafe { libc::kill(u.pid, libc::SIGKILL) };
     }
-    users
 }
 
 /// Error for a busy volume, naming who holds it.
@@ -253,4 +298,36 @@ pub(crate) fn busy_error(who: &[VolumeUser]) -> String {
             .join(", ")
     };
     format!("the volume is busy: {detail}; close it or pass --force")
+}
+
+#[cfg(test)]
+mod daemon_tests {
+    use super::*;
+
+    #[test]
+    fn reads_a_process_parent_and_executable() {
+        let mut child = std::process::Command::new("sleep").arg("5").spawn().unwrap();
+        let (ppid, exe) = proc_parent_and_exe(child.id() as i32).unwrap();
+        child.kill().unwrap();
+        let _ = child.wait();
+        assert_eq!(ppid, std::process::id() as i32);
+        assert!(exe.to_string_lossy().ends_with("sleep"), "{}", exe.display());
+    }
+
+    #[test]
+    fn a_daemon_with_a_live_parent_is_not_an_orphan() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("5")
+            .current_dir(tmp.path())
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let stopped = stop_orphan_daemons(tmp.path(), std::time::Duration::from_secs(1));
+        let alive = child.try_wait().unwrap().is_none();
+        child.kill().unwrap();
+        let _ = child.wait();
+        assert!(stopped.is_empty());
+        assert!(alive);
+    }
 }

@@ -980,7 +980,7 @@ impl Clove {
             bail!("`{name}` has uncommitted changes; commit them, or `clove rm --force {name}` to discard");
         }
         let branch = git::current_branch(&meta.path).or(meta.branch.clone());
-        stop_fsmonitor(&meta.path);
+        stop_daemons(&meta.path, &meta.mount);
         timed(r, &mut timings, "unmount", || {
             store.clone_detach(self, name, &meta.mount, opts.force)
         })?;
@@ -1037,7 +1037,7 @@ impl Clove {
                 "clones share the repo's volume; `clove unmount` without arguments unmounts it when nothing uses it"
             );
         }
-        stop_fsmonitor(&meta.path);
+        stop_daemons(&meta.path, &meta.mount);
         self.store()?.clone_detach(self, name, &meta.mount, force)
     }
 
@@ -1129,7 +1129,7 @@ impl Clove {
                         "`{name}` has uncommitted changes; commit them, or `clove rm --force {name}` to discard"
                     );
                 }
-                stop_fsmonitor(&meta.path);
+                stop_daemons(&meta.path, &meta.mount);
                 let users = backend::users(&meta.mount);
                 if !users.is_empty() {
                     let pending = serde_json::json!({
@@ -1178,8 +1178,11 @@ impl Clove {
             let attached = self
                 .store()
                 .is_ok_and(|s| s.clone_attached(self, &name, &meta.mount));
-            if attached && !backend::users(&meta.mount).is_empty() {
-                continue;
+            if attached {
+                backend::stop_orphan_daemons(&meta.mount, std::time::Duration::from_secs(5));
+                if !backend::users(&meta.mount).is_empty() {
+                    continue;
+                }
             }
             match self.remove(&name, &opts, r) {
                 Ok(()) => done.push(name),
@@ -1200,9 +1203,12 @@ impl Clove {
             return Ok(());
         };
         let start = std::time::Instant::now();
+        // Each check scans every process's open files: back off to a minute.
+        let mut wait = std::time::Duration::from_secs(5);
         while !self.pending_removals().is_empty() && start.elapsed() < max {
             self.remove_pending(r);
-            std::thread::sleep(std::time::Duration::from_secs(5));
+            std::thread::sleep(wait);
+            wait = (wait * 2).min(std::time::Duration::from_secs(60));
         }
         Ok(())
     }
@@ -1524,6 +1530,13 @@ fn stop_fsmonitor(wt: &Path) {
     if wt.join(".git").exists() {
         let _ = git::cmd(wt).args(["fsmonitor--daemon", "stop"]).output();
     }
+}
+
+/// Stops what would hold a clone's volume with nobody to close it: git's
+/// fsmonitor and daemons started from the clone (see `stop_orphan_daemons`).
+fn stop_daemons(wt: &Path, mount: &Path) {
+    stop_fsmonitor(wt);
+    backend::stop_orphan_daemons(mount, std::time::Duration::from_secs(5));
 }
 
 /// Next to each clone's worktree: KEY=VALUE lines the shell integration loads.
