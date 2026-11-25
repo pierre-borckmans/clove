@@ -245,6 +245,54 @@ pub fn stop_orphan_daemons(mount: &Path, grace: std::time::Duration) -> Vec<Volu
     orphans
 }
 
+/// Every process: (pid, parent pid, executable).
+pub fn processes() -> Vec<(i32, i32, PathBuf)> {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_dir("/proc")
+            .map(|rd| {
+                rd.flatten()
+                    .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
+                    .filter_map(|pid| proc_parent_and_exe(pid).map(|(pp, exe)| (pid, pp, exe)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let Ok(out) = std::process::Command::new("ps")
+            .args(["-axo", "pid=,ppid=,comm="])
+            .output()
+        else {
+            return vec![];
+        };
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(parse_ps_line)
+            .collect()
+    }
+}
+
+/// `  123     1 /path/may have spaces/bin` from `ps -o pid=,ppid=,comm=`.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+fn parse_ps_line(l: &str) -> Option<(i32, i32, PathBuf)> {
+    let (pid, rest) = l.trim_start().split_once(char::is_whitespace)?;
+    let (ppid, exe) = rest.trim_start().split_once(char::is_whitespace)?;
+    Some((pid.parse().ok()?, ppid.parse().ok()?, PathBuf::from(exe.trim())))
+}
+
+/// Stops these processes: TERM, then KILL after `grace`.
+pub fn stop_processes(pids: &[i32], grace: std::time::Duration) {
+    let users: Vec<VolumeUser> = pids
+        .iter()
+        .map(|&pid| VolumeUser {
+            pid,
+            command: String::new(),
+        })
+        .collect();
+    stop(&users, grace);
+}
+
 #[cfg(target_os = "linux")]
 fn proc_parent_and_exe(pid: i32) -> Option<(i32, PathBuf)> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
@@ -312,6 +360,23 @@ mod daemon_tests {
         let _ = child.wait();
         assert_eq!(ppid, std::process::id() as i32);
         assert!(exe.to_string_lossy().ends_with("sleep"), "{}", exe.display());
+    }
+
+    #[test]
+    fn parses_ps_lines_with_spaces_in_paths() {
+        assert_eq!(
+            parse_ps_line("  4242     1 /Users/a b/x.clove/c/bin/turbo"),
+            Some((4242, 1, PathBuf::from("/Users/a b/x.clove/c/bin/turbo")))
+        );
+        assert_eq!(parse_ps_line("garbage"), None);
+    }
+
+    #[test]
+    fn lists_this_process() {
+        let me = std::process::id() as i32;
+        let exe = std::env::current_exe().unwrap();
+        let found = processes().into_iter().find(|(p, _, _)| *p == me).unwrap();
+        assert_eq!(found.2.file_name(), exe.file_name());
     }
 
     #[test]

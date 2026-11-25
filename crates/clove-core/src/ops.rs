@@ -1467,6 +1467,39 @@ impl Clove {
                 }
             }
         }
+        // Daemons started from a clone that is gone or unmounted (a forced
+        // unmount, a clone removed outside clove): nothing else stops them,
+        // and some spin once their files are gone.
+        let roots = [
+            self.clone_root(),
+            self.clone_root().canonicalize().unwrap_or_default(),
+        ];
+        for (pid, ppid, exe) in backend::processes() {
+            let Some(rel) = roots.iter().find_map(|r| exe.strip_prefix(r).ok()) else {
+                continue;
+            };
+            let Some(clone) = rel
+                .components()
+                .next()
+                .map(|c| c.as_os_str().to_string_lossy().to_string())
+            else {
+                continue;
+            };
+            let known = names.contains(&clone);
+            if ppid != 1 || (known && store.clone_attached(self, &clone, &self.clone_mount(&clone))) {
+                continue;
+            }
+            let what = exe
+                .file_name()
+                .map_or_else(|| exe.display().to_string(), |n| n.to_string_lossy().to_string());
+            let state = if known { "unmounted" } else { "removed" };
+            actions.push(format!(
+                "stop {what} (pid {pid}), still running from {state} clone {clone}"
+            ));
+            if apply {
+                backend::stop_processes(&[pid], std::time::Duration::from_secs(5));
+            }
+        }
         if store.golden_stuck(self)
             && let Ok(lock) = FileLock::try_acquire(&self.state.join("refresh.lock"))
         {

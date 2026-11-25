@@ -749,7 +749,7 @@ fn run(cli: Cli) -> Result<()> {
                 );
             }
             if !apply && !actions.is_empty() {
-                eprintln!("\nrun {} to remove them", paint(BOLD, "clove gc --apply"));
+                eprintln!("\nrun {} to clean these up", paint(BOLD, "clove gc --apply"));
             }
         }
         Cmd::Repos { candidates: true } => cmd_candidates(&cli)?,
