@@ -317,7 +317,12 @@ pub async fn repo_config(root: PathBuf) -> CmdResult<RepoConfig> {
 /// Sets one setting in one config file, or removes it when `value` is null.
 /// Returns what to tell the user.
 #[tauri::command]
-pub async fn config_set(root: PathBuf, layer: Layer, key: String, value: Option<String>) -> CmdResult<String> {
+pub async fn config_set(
+    root: PathBuf,
+    layer: Layer,
+    key: String,
+    value: Option<String>,
+) -> CmdResult<String> {
     block(move || {
         let c = Clove::open(&root)?;
         let path = layer.path(&c.root, &c.name);
