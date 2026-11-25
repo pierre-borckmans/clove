@@ -21,9 +21,24 @@ pub fn detach(mount_point: &Path, force: bool) -> Result<()> {
         return plain.map(|_| ()).with_context(|| msg);
     }
     let dev = mounted_device(mount_point).unwrap_or_default();
-    run(Command::new("diskutil")
-        .args(["unmount", "force"])
-        .arg(mount_point))?;
+    // A volume mounted moments ago can be held by Spotlight or fseventsd for a
+    // beat, and even a forced unmount refuses then: stop what we can, retry.
+    let mut last: Result<()> = Ok(());
+    for attempt in 0..4 {
+        if attempt > 0 {
+            super::stop_users(mount_point, std::time::Duration::from_millis(500));
+            std::thread::sleep(std::time::Duration::from_millis(500 * attempt));
+        }
+        last = run(Command::new("diskutil")
+            .args(["unmount", "force"])
+            .arg(mount_point))
+        .map(|_| ());
+        if last.is_ok() || !is_mounted(mount_point) {
+            last = Ok(());
+            break;
+        }
+    }
+    last?;
     if !dev.is_empty() {
         let _ = output(Command::new("diskutil").arg("eject").arg(&dev));
     }
