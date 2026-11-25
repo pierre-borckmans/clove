@@ -7,6 +7,7 @@
 //! inputs changed since the golden commit run in the clone.
 
 pub mod backend;
+pub mod brand;
 pub mod config;
 pub mod detect;
 pub mod doctor;

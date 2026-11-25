@@ -57,7 +57,7 @@ export function PopoverPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[var(--popover-surface)] text-[13px] in-data-[shell=web]:rounded-xl in-data-[shell=web]:border in-data-[shell=web]:shadow-2xl">
       <header className="flex h-11 shrink-0 items-center gap-2 px-3.5">
-        <Glyph className="size-4 text-rust" />
+        <Glyph className="size-4" />
         <span className="font-semibold tracking-tight">clove</span>
         <div className="flex-1" />
         <IconButton label="Open clove" onClick={() => void api.openMain()}>

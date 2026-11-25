@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/mark-on-dark.svg">
+  <img src="brand/mark.svg" alt="" width="72">
+</picture>
+
 # clove
 
 A ready git worktree in about a second, with `node_modules`, the dev shell and every other ignored file already there.

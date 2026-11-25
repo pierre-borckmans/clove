@@ -19,7 +19,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
     if area.width < 60 || area.height < 14 {
         let msg = Paragraph::new(vec![
-            Line::from(Span::styled("◆ clove", title())),
+            Line::from(crate::theme::wordmark()),
             Line::from(Span::styled(
                 format!("needs 60×14, have {}×{}", area.width, area.height),
                 muted(),
@@ -115,11 +115,14 @@ fn draw_header(f: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(border())
-        .title(Line::from(vec![
-            Span::raw(" "),
-            Span::styled("◆ clove", title()),
-            Span::raw(" "),
-        ]));
+        .title(Line::from(
+            [
+                vec![Span::raw(" ")],
+                crate::theme::wordmark(),
+                vec![Span::raw(" ")],
+            ]
+            .concat(),
+        ));
     let inner = block.inner(area).inner(Margin::new(1, 0));
     f.render_widget(block, area);
     draw_tabs(
@@ -316,7 +319,13 @@ fn draw_body(f: &mut Frame, app: &mut App, area: Rect) -> Rect {
     list
 }
 
-fn empty_state(f: &mut Frame, area: Rect, lines: Vec<Line>) {
+fn empty_state(f: &mut Frame, area: Rect, mut lines: Vec<Line>) {
+    // A lone ◆ heading becomes the full mark when there is room for it.
+    let mark = crate::theme::mark_lines();
+    if lines.first().is_some_and(|l| l.to_string() == "◆") && (lines.len() + mark.len()) as u16 <= area.height
+    {
+        lines.splice(0..1, mark.into_iter().chain([Line::from("")]));
+    }
     let h = lines.len() as u16;
     let y = area.y + area.height.saturating_sub(h) / 2;
     f.render_widget(

@@ -1,3 +1,4 @@
+mod brand;
 mod complete;
 mod render;
 mod service;
@@ -40,7 +41,7 @@ struct Cli {
     #[arg(short, long, global = true)]
     verbose: bool,
     #[command(subcommand)]
-    cmd: Cmd,
+    cmd: Option<Cmd>,
 }
 
 #[derive(Subcommand)]
@@ -252,7 +253,10 @@ fn emit<T: serde::Serialize>(v: &T) -> Result<()> {
 fn run(cli: Cli) -> Result<()> {
     let reporter = TermReporter::new(cli.verbose);
     let r: &dyn clove_core::Reporter = if cli.json { &Silent } else { &reporter };
-    match &cli.cmd {
+    let Some(cmd) = &cli.cmd else {
+        return home(&cli);
+    };
+    match cmd {
         Cmd::Init => {
             let c = repo(&cli)?;
             if !cli.json {
@@ -974,5 +978,63 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
             )?;
         }
     }
+    Ok(())
+}
+
+/// `clove` with no command: the mark, where this repo stands, and what to type next.
+fn home(cli: &Cli) -> Result<()> {
+    if !std::io::stdout().is_terminal() || cli.json {
+        Cli::command().print_help()?;
+        return Ok(());
+    }
+    println!();
+    for line in brand::banner_lines() {
+        println!("  {line}");
+    }
+    println!(
+        "  {}",
+        paint(DIM, "copy-on-write git worktrees, ready in a second")
+    );
+    println!();
+    let hint =
+        |cmd: &str, what: &str| println!("  {}  {}", paint(BOLD, format!("{cmd:<22}")), paint(DIM, what));
+    match repo(cli) {
+        Ok(c) => match c.status() {
+            Ok(s) if s.golden.is_some() => {
+                let fresh = match &s.freshness {
+                    Some(f) if f.refreshing.is_some() => paint(CYAN, "refreshing"),
+                    Some(f) if f.stale => paint(YELLOW, "stale"),
+                    _ => paint(GREEN, "fresh"),
+                };
+                println!(
+                    "  {}  golden {fresh} · {} clone{} ({} mounted)",
+                    paint(BOLD, &s.name),
+                    s.clones,
+                    if s.clones == 1 { "" } else { "s" },
+                    s.mounted
+                );
+                println!();
+                hint("clove new <branch>", "a ready worktree");
+                hint("clove ls", "your clones");
+                hint("clove ui", "browse and manage them");
+            }
+            _ => {
+                println!(
+                    "  {}  {}",
+                    paint(BOLD, &c.name),
+                    paint(DIM, "no golden image yet")
+                );
+                println!();
+                hint("clove init", "build it once (a few minutes on a big repo)");
+                hint("clove doctor", "check the setup first");
+            }
+        },
+        Err(_) => {
+            hint("cd <repo> && clove init", "set up a repository");
+            hint("clove ui", "browse repos you already set up");
+        }
+    }
+    println!();
+    println!("  {}", paint(DIM, "clove --help for every command"));
     Ok(())
 }

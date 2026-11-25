@@ -2,7 +2,7 @@
 source: crates/clove-tui/src/tests.rs
 expression: s
 ---
-╭ ◆ clove ────────────────────────────────────────────────────────────────────  app   mono   web  ─╮
+╭ clove ──────────────────────────────────────────────────────────────────────  app   mono   web  ─╮
 │ app  /work/app                                                              5 clones · 4 mounted │
 │ go╭ ✓ refresh golden image  app · 4.2s ──────────────────────────────────────────────────────╮   │
 ╰───│                                                                                          │───╯

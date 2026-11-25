@@ -29,26 +29,18 @@ function Nav() {
   return (
     <nav className="mx-auto flex max-w-[74rem] items-center justify-between gap-6 px-4 py-5 sm:px-8">
       <a href="#top" className="flex items-center gap-2 text-[1.35rem] font-semibold no-underline">
-        <svg viewBox="0 0 20 20" className="size-5" aria-hidden="true">
-          <rect
-            x="2"
-            y="3"
-            width="10"
-            height="13"
-            rx="1.5"
+        <svg viewBox="0 0 100 100" className="size-6" aria-hidden="true">
+          <path
+            d="M73.04 29.26 A31 31 0 1 0 73.04 70.74"
             fill="none"
             stroke="currentColor"
-            strokeWidth="1.6"
+            strokeWidth="19"
+            strokeLinecap="round"
           />
-          <rect
-            x="7"
-            y="5"
-            width="10"
-            height="13"
-            rx="1.5"
+          <path
+            d="M50 8 C62 28 74 52 70 76 C68 90 32 90 30 76 C26 52 38 28 50 8Z"
+            transform="translate(53 51) rotate(16) scale(0.33) translate(-50 -49)"
             fill="var(--rust)"
-            stroke="var(--rust)"
-            strokeWidth="1.6"
           />
         </svg>
         clove

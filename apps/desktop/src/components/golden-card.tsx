@@ -22,7 +22,7 @@ export function GoldenCard({ status }: { status: RepoStatus }) {
     return (
       <section className="rounded-xl border bg-card p-5">
         <div className="flex items-center gap-3">
-          <Glyph className="size-5 text-faint" />
+          <Glyph className="size-5 text-faint" mono />
           <div className="flex-1">
             <div className="text-[13px] font-medium">No golden image</div>
             <div className="text-[12.5px] text-muted-foreground">
@@ -46,7 +46,7 @@ export function GoldenCard({ status }: { status: RepoStatus }) {
     <section className="overflow-hidden rounded-xl border bg-card shadow-[0_1px_2px_0_rgb(0_0_0/0.03)]">
       <div className="flex items-center gap-2.5 border-b px-4 py-2.5">
         <span className="flex size-6 items-center justify-center rounded-md bg-rust-soft text-rust">
-          <Glyph className="size-3.5" />
+          <Glyph className="size-3.5" mono />
         </span>
         <span className="text-[13px] font-medium">Golden image</span>
         <span className="rounded-full border px-1.5 font-mono text-[11px] leading-[18px] text-muted-foreground">

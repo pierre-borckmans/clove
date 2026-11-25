@@ -48,3 +48,40 @@ pub const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦"
 pub fn spinner(now_ms: u64) -> &'static str {
     SPINNER[((now_ms / 80) % SPINNER.len() as u64) as usize]
 }
+
+/// The clove mark as half-block lines (6 rows). The c uses the terminal's own
+/// foreground; the clove is rust.
+pub fn mark_lines() -> Vec<ratatui::text::Line<'static>> {
+    use clove_core::brand::{Ink, MARK, half_blocks};
+    let colour = |ink: Ink| match ink {
+        Ink::Accent => Some(RUST),
+        Ink::Fg | Ink::None => None,
+    };
+    half_blocks(&MARK)
+        .into_iter()
+        .map(|cells| {
+            let spans: Vec<_> = cells
+                .into_iter()
+                .map(|c| {
+                    let mut st = Style::new();
+                    if let Some(fg) = colour(c.fg) {
+                        st = st.fg(fg);
+                    }
+                    if let Some(bg) = colour(c.bg) {
+                        st = st.bg(bg);
+                    }
+                    ratatui::text::Span::styled(c.ch.to_string(), st)
+                })
+                .collect();
+            ratatui::text::Line::from(spans)
+        })
+        .collect()
+}
+
+/// "clove" with the c in rust, for titles.
+pub fn wordmark() -> Vec<ratatui::text::Span<'static>> {
+    vec![
+        ratatui::text::Span::styled("c", title()),
+        ratatui::text::Span::styled("love", Style::new().add_modifier(Modifier::BOLD)),
+    ]
+}

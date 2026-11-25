@@ -19,7 +19,7 @@ export function HomePage() {
       <div className="flex flex-1 items-center justify-center pb-16">
         {!isLoading && (
           <Empty
-            icon={<Glyph className="!size-6 text-rust" />}
+            icon={<Glyph className="!size-7" />}
             title={error ? "Could not read clove's state" : "No repositories yet"}
             action={
               <Button onClick={() => setUi({ addRepo: true })} className="gap-2">
