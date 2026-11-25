@@ -425,8 +425,51 @@ pub struct RemoveForm {
     pub base: String,
     pub delete_branch: bool,
     pub force: bool,
-    /// 0 = remove button, 1 = cancel.
+    /// Index into [`RemoveForm::items`].
     pub focus: usize,
+    /// The shell that started the TUI is inside this clone.
+    pub inside: bool,
+}
+
+/// The focusable rows of the remove dialog, top to bottom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoveItem {
+    DeleteBranch,
+    Force,
+    Remove,
+    Cancel,
+}
+
+impl RemoveForm {
+    pub fn items(&self) -> Vec<RemoveItem> {
+        let mut v = vec![];
+        if self.branch.is_some() {
+            v.push(RemoveItem::DeleteBranch);
+        }
+        v.extend([RemoveItem::Force, RemoveItem::Remove, RemoveItem::Cancel]);
+        v
+    }
+
+    pub fn focused(&self) -> RemoveItem {
+        let items = self.items();
+        items[self.focus.min(items.len() - 1)]
+    }
+
+    pub fn focus_on(&mut self, item: RemoveItem) {
+        if let Some(i) = self.items().iter().position(|x| *x == item) {
+            self.focus = i;
+        }
+    }
+
+    /// Flips a checkbox; false for buttons.
+    pub fn toggle(&mut self, item: RemoveItem) -> bool {
+        match item {
+            RemoveItem::DeleteBranch => self.delete_branch = !self.delete_branch,
+            RemoveItem::Force => self.force = !self.force,
+            _ => return false,
+        }
+        true
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -435,6 +478,8 @@ pub struct GcView {
     pub applied: bool,
     pub running: bool,
     pub error: Option<String>,
+    /// The close button has focus (else remove, when there is work).
+    pub focus_close: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -458,6 +503,19 @@ pub enum Modal {
 #[derive(Debug, Clone, Default)]
 pub struct SettingsView {
     pub scroll: Smooth,
+    /// Index into [`crate::app::App::settings_actions`].
+    pub cursor: usize,
+    /// Keep the cursor in view (arrow keys); off after wheel scrolling.
+    pub follow: bool,
+}
+
+/// What a focusable settings row does on Enter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsAction {
+    /// Edit config layer `n` (0 all repos, 1 team, 2 you).
+    Edit(usize),
+    Service,
+    Shell,
 }
 
 /// A clickable or scrollable region recorded while drawing.
@@ -474,6 +532,10 @@ pub enum Hit {
     ScrollLog,
     ScrollDoctor,
     ScrollSettings,
+    /// A remove-dialog row: focus it and toggle it.
+    RemoveRow(RemoveItem),
+    /// A settings row: focus it.
+    SettingsRow(SettingsAction),
     /// Swallows clicks (a modal's body over the click-to-close backdrop).
     Inert,
 }

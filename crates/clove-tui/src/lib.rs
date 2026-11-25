@@ -39,6 +39,8 @@ pub fn run(start_dir: &Path) -> Result<()> {
     }
     let (repos, idx, notice) = worker::discover(start_dir);
     let mut app = App::new(repos, idx);
+    app.start_dir = start_dir.to_path_buf();
+    app.integrated = std::env::var_os("CLOVE_CD_FILE").is_some();
     app.notice = notice;
     app.now_unix = clove_core::util::now_unix();
 
@@ -78,6 +80,15 @@ pub fn run(start_dir: &Path) -> Result<()> {
     }
     drop(term);
 
+    if let Some(Exit::CdThen(path, args)) = &app.exit
+        && let Some(f) = std::env::var_os("CLOVE_CD_FILE")
+    {
+        let mut then = std::path::PathBuf::from(&f).into_os_string();
+        then.push(".then");
+        std::fs::write(&f, path.as_os_str().as_encoded_bytes())?;
+        std::fs::write(then, args.join(" "))?;
+        return Ok(());
+    }
     if let Some(Exit::Cd(path)) = app.exit {
         let wrote = std::env::var_os("CLOVE_CD_FILE")
             .is_some_and(|f| std::fs::write(f, path.as_os_str().as_encoded_bytes()).is_ok());

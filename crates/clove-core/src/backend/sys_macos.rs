@@ -103,6 +103,8 @@ pub fn users(mount_point: &Path) -> Vec<VolumeUser> {
         } else if let Some(c) = line.strip_prefix('c')
             && pid != 0
             && pid != me
+            // lsof inherits our cwd, which may be inside the volume.
+            && c != "lsof"
             && !users.iter().any(|u| u.pid == pid)
         {
             users.push(VolumeUser {

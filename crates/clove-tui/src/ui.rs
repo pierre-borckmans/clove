@@ -965,11 +965,15 @@ fn hints(app: &App) -> Vec<Hint> {
             ("esc", "cancel", Esc),
         ],
         Some(Modal::Remove(f)) => {
-            let mut v = vec![("⏎", "confirm", Enter)];
-            if f.branch.is_some() {
-                v.push(("b", "delete branch", Char('b')));
+            let mut v = vec![("↑↓", "move", Down)];
+            if matches!(f.focused(), RemoveItem::DeleteBranch | RemoveItem::Force) {
+                v.push(("space", "toggle", Char(' ')));
             }
-            v.push(("f", "force", Char('f')));
+            v.push(if f.focused() == RemoveItem::Cancel {
+                ("⏎", "cancel", Enter)
+            } else {
+                ("⏎", "remove", Enter)
+            });
             v.push(("esc", "cancel", Esc));
             v
         }
@@ -990,29 +994,28 @@ fn hints(app: &App) -> Vec<Hint> {
         }
         Some(Modal::Gc(g)) => {
             let mut v = vec![];
-            if !g.applied && g.result.as_ref().is_some_and(crate::app::cleanup_has_work) {
-                v.push(("a", "remove", Char('a')));
+            if !g.running && !g.applied && g.result.as_ref().is_some_and(crate::app::cleanup_has_work) {
+                v.push(("←→", "move", Right));
+                v.push(if g.focus_close {
+                    ("⏎", "close", Enter)
+                } else {
+                    ("⏎", "remove", Enter)
+                });
             }
             v.push(("esc", "close", Esc));
             v
         }
         Some(Modal::Doctor(_)) => vec![("↑↓", "scroll", Down), ("esc", "close", Esc)],
-        Some(Modal::Settings(_)) => vec![
-            ("e", "edit (you)", Char('e')),
-            ("t", "edit (team)", Char('t')),
-            ("E", "edit (all repos)", Char('E')),
-            ("i", "shell integration", Char('i')),
-            (
-                "S",
-                if app.service == Some(true) {
-                    "service off"
-                } else {
-                    "service on"
-                },
-                Char('S'),
-            ),
-            ("esc", "close", Esc),
-        ],
+        Some(Modal::Settings(sv)) => {
+            let actions = app.settings_actions();
+            let what = match actions[sv.cursor.min(actions.len() - 1)] {
+                SettingsAction::Edit(_) => "edit",
+                SettingsAction::Service if app.service == Some(true) => "turn off",
+                SettingsAction::Service => "turn on",
+                SettingsAction::Shell => "install",
+            };
+            vec![("↑↓", "move", Down), ("⏎", what, Enter), ("esc", "close", Esc)]
+        }
         Some(Modal::Help) => vec![("esc", "close", Esc)],
         None if app.filtering => vec![("⏎", "keep", Enter), ("esc", "clear", Esc), ("↑↓", "move", Down)],
         None => {
@@ -1141,8 +1144,10 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
 
 // ---- toasts ------------------------------------------------------------
 
+/// Bottom-right corner of the body, newest at the bottom, older ones stacked
+/// above it.
 fn draw_toasts(f: &mut Frame, app: &mut App, body: Rect) {
-    let mut y = body.y + 1;
+    let mut bottom = body.bottom().saturating_sub(1);
     let maxw = 60.min(body.width.saturating_sub(4)) as usize;
     let toasts: Vec<Toast> = app.toasts.iter().rev().cloned().collect();
     let n = toasts.len();
@@ -1157,10 +1162,10 @@ fn draw_toasts(f: &mut Frame, app: &mut App, body: Rect) {
         let lines: Vec<String> = lines.into_iter().take(3).collect();
         let tw = lines.iter().map(|l| width(l)).max().unwrap_or(0) + 6;
         let h = lines.len() as u16 + 2;
-        if y + h > body.bottom() {
+        if bottom < body.y + h {
             break;
         }
-        let r = Rect::new(body.right() - tw as u16 - 2, y, tw as u16, h);
+        let r = Rect::new(body.right() - tw as u16 - 2, bottom - h, tw as u16, h);
         f.render_widget(Clear, r);
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -1182,7 +1187,7 @@ fn draw_toasts(f: &mut Frame, app: &mut App, body: Rect) {
             .collect();
         f.render_widget(Paragraph::new(content), inner);
         app.hits.push((r, Hit::Toast(n - 1 - ri)));
-        y += h;
+        bottom -= h;
     }
 }
 
@@ -1463,35 +1468,53 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
             if r.delete_branch { fg(AMBER) } else { muted() },
         )));
     }
+    if r.inside {
+        for l in fmt::wrap(
+            "you're in this clone: clove quits, moves your shell to the main checkout, then removes it",
+            iw,
+        ) {
+            lines.push(Line::from(Span::styled(l, muted())));
+        }
+    }
     lines.push(Line::from(""));
-    let check = |on: bool| {
-        if on {
+    let focused = r.focused();
+    // `›` marks the focused checkbox; space toggles it.
+    let check = |item: RemoveItem, on: bool| {
+        let cursor = if focused == item {
+            Span::styled("› ", fg(BOTTLE).add_modifier(Modifier::BOLD))
+        } else {
+            Span::raw("  ")
+        };
+        let mark = if on {
             Span::styled("[x] ", key())
         } else {
             Span::styled("[ ] ", muted())
-        }
+        };
+        (cursor, mark, if focused == item { bold() } else { Style::new() })
     };
     let mut toggles = vec![];
     if let Some(b) = &r.branch {
-        toggles.push((lines.len(), 'b'));
+        toggles.push((lines.len(), RemoveItem::DeleteBranch));
+        let (cursor, mark, st) = check(RemoveItem::DeleteBranch, r.delete_branch);
         lines.push(Line::from(vec![
-            check(r.delete_branch),
-            Span::raw("also delete branch "),
+            cursor,
+            mark,
+            Span::styled("also delete branch ", st),
             Span::styled(trunc(b, iw.saturating_sub(30)), fg(PLUM)),
-            Span::styled("  b", key()),
         ]));
     }
-    toggles.push((lines.len(), 'f'));
+    toggles.push((lines.len(), RemoveItem::Force));
+    let (cursor, mark, st) = check(RemoveItem::Force, r.force);
     lines.push(Line::from(vec![
-        check(r.force),
-        Span::raw("force: discard changes, eject if busy"),
-        Span::styled("  f", key()),
+        cursor,
+        mark,
+        Span::styled("force: discard changes, eject if busy", st),
     ]));
     lines.push(Line::from(""));
     let danger = r.force && r.dirty == Some(true);
     let confirm = if danger { "discard & remove" } else { "remove" };
-    let b1 = button(confirm, r.focus == 0, danger);
-    let b2 = button("cancel", r.focus == 1, false);
+    let b1 = button(confirm, focused == RemoveItem::Remove, danger);
+    let b2 = button("cancel", focused == RemoveItem::Cancel, false);
     let (b1w, b2w) = (width(&b1.content) as u16, width(&b2.content) as u16);
     let bw = (b1w + 2 + b2w) as usize;
     let btn_line = lines.len() as u16;
@@ -1510,8 +1533,8 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
     ]);
     let inner = block.inner(rect);
     f.render_widget(Paragraph::new(lines).block(block), rect);
-    for (i, c) in toggles {
-        app.hits.push((row(inner, i as u16), key_hit(c)));
+    for (i, item) in toggles {
+        app.hits.push((row(inner, i as u16), Hit::RemoveRow(item)));
     }
     let bx = inner.x + (iw.saturating_sub(bw)) as u16;
     let by = inner.y + btn_line;
@@ -1619,14 +1642,21 @@ fn draw_gc(f: &mut Frame, app: &mut App, area: Rect, g: &GcView) {
             } else if g.applied {
                 lines.push(Line::from(Span::styled("done", fg(SAGE))));
             } else if crate::app::cleanup_has_work(c) {
-                apply_line = Some(lines.len() as u16);
+                lines.push(Line::from(Span::styled(
+                    "removes the ✓ clones (and their branches) and the leftovers",
+                    muted(),
+                )));
+                lines.push(Line::from(""));
+                let b1 = button("remove", !g.focus_close, true);
+                let b2 = button("close", g.focus_close, false);
+                let (b1w, b2w) = (width(&b1.content) as u16, width(&b2.content) as u16);
+                let bw = (b1w + 2 + b2w) as usize;
+                apply_line = Some((lines.len() as u16, (iw.saturating_sub(bw)) as u16, b1w, b2w));
                 lines.push(Line::from(vec![
-                    Span::styled("press ", muted()),
-                    Span::styled("a", key()),
-                    Span::styled(
-                        " to remove the ✓ clones (and their branches) and the leftovers",
-                        muted(),
-                    ),
+                    Span::raw(" ".repeat(iw.saturating_sub(bw))),
+                    b1,
+                    Span::raw("  "),
+                    b2,
                 ]));
             } else {
                 lines.push(Line::from(Span::styled("✓ nothing to clean", fg(SAGE))));
@@ -1639,16 +1669,46 @@ fn draw_gc(f: &mut Frame, app: &mut App, area: Rect, g: &GcView) {
     let block = modal_block(vec![Span::styled("cleanup", title())]);
     let inner = block.inner(rect);
     f.render_widget(Paragraph::new(lines).block(block), rect);
-    if let Some(y) = apply_line {
-        app.hits.push((row(inner, y), key_hit('a')));
+    if let Some((y, x, b1w, b2w)) = apply_line {
+        let by = inner.y + y;
+        if by < inner.bottom() {
+            app.hits.push((Rect::new(inner.x + x, by, b1w, 1), key_hit('a')));
+            app.hits.push((
+                Rect::new(inner.x + x + b1w + 2, by, b2w, 1),
+                Hit::Key(KeyCode::Esc, KeyModifiers::NONE),
+            ));
+        }
     }
 }
 
 /// Resolved config for the current repo, where each part comes from, and the
 /// machine-wide pieces: service, shell integration, state folder.
-fn settings_lines(app: &App, iw: usize) -> Vec<Line<'static>> {
+/// The lines, plus which line each actionable row is on.
+fn settings_lines(app: &App, iw: usize) -> (Vec<Line<'static>>, Vec<(usize, SettingsAction)>) {
     let Some(d) = app.current() else {
-        return vec![Line::from(Span::styled("loading", muted()))];
+        return (vec![Line::from(Span::styled("loading", muted()))], vec![]);
+    };
+    let actions = app.settings_actions();
+    let cur = match &app.modal {
+        Some(Modal::Settings(v)) => actions
+            .get(v.cursor.min(actions.len().saturating_sub(1)))
+            .copied(),
+        _ => None,
+    };
+    let mut rows: Vec<(usize, SettingsAction)> = vec![];
+    // An actionable row: `›` and a bold label when it has the cursor.
+    let kva = |a: SettingsAction, k: &str, v: Vec<Span<'static>>| {
+        let on = cur == Some(a);
+        let mut s = vec![
+            if on {
+                Span::styled("› ", fg(BOTTLE).add_modifier(Modifier::BOLD))
+            } else {
+                Span::raw("  ")
+            },
+            Span::styled(pad(k, 15), if on { bold() } else { muted() }),
+        ];
+        s.extend(v);
+        Line::from(s)
     };
     let c = &d.config;
     let st = &d.status;
@@ -1680,16 +1740,16 @@ fn settings_lines(app: &App, iw: usize) -> Vec<Line<'static>> {
         .max()
         .unwrap_or(0)
         .min(iw.saturating_sub(kw + 14));
-    for ((label, path), k) in layers.into_iter().zip(['E', 't', 'e']) {
+    for (i, (label, path)) in layers.into_iter().enumerate() {
         let exists = path.exists();
         let p = pad(&trunc_left(&fmt::tilde(&path), pw), pw);
-        l.push(kv(
+        rows.push((l.len(), SettingsAction::Edit(i)));
+        l.push(kva(
+            SettingsAction::Edit(i),
             label,
             vec![
                 Span::styled(p, if exists { Style::new() } else { muted() }),
-                Span::styled(if exists { "        " } else { "  (none)" }, muted()),
-                Span::raw("  "),
-                Span::styled(k.to_string(), key()),
+                Span::styled(if exists { "" } else { "  (none)" }, muted()),
             ],
         ));
     }
@@ -1806,7 +1866,9 @@ fn settings_lines(app: &App, iw: usize) -> Vec<Line<'static>> {
     l.push(Line::from(""));
 
     l.push(section("this machine"));
-    l.push(kv(
+    rows.push((l.len(), SettingsAction::Service));
+    l.push(kva(
+        SettingsAction::Service,
         "service",
         vec![
             match app.service {
@@ -1814,45 +1876,46 @@ fn settings_lines(app: &App, iw: usize) -> Vec<Line<'static>> {
                 _ => Span::styled("○ off  ", muted()),
             },
             Span::styled(
-                "refreshes stale images when you pull, remounts clones at login  ",
+                "refreshes stale images when you pull, remounts clones at login",
                 muted(),
             ),
-            Span::styled("S", key()),
         ],
     ));
-    let active = std::env::var_os("CLOVE_CD_FILE").is_some();
+    let active = app.integrated;
     let in_rc = clove_core::shellrc::detect().is_some_and(clove_core::shellrc::installed);
-    l.push(kv(
-        "shell",
-        if active {
-            vec![
-                Span::styled("● on", fg(SAGE)),
-                Span::styled("   Enter cds into a clone", muted()),
-            ]
-        } else if in_rc {
-            vec![
-                Span::styled("◐ installed", fg(AMBER)),
-                Span::styled("   open a new terminal so Enter can cd", muted()),
-            ]
-        } else {
-            vec![
-                Span::styled("○ off  ", muted()),
-                Span::styled("i", key()),
-                Span::styled(" installs it so Enter can cd into a clone", muted()),
-            ]
-        },
-    ));
+    let shell_spans = if active {
+        vec![
+            Span::styled("● on", fg(SAGE)),
+            Span::styled("   Enter cds into a clone", muted()),
+        ]
+    } else if in_rc {
+        vec![
+            Span::styled("◐ installed", fg(AMBER)),
+            Span::styled("   open a new terminal so Enter can cd", muted()),
+        ]
+    } else {
+        vec![
+            Span::styled("○ off  ", muted()),
+            Span::styled("installs it so Enter can cd into a clone", muted()),
+        ]
+    };
+    if active {
+        l.push(kv("shell", shell_spans));
+    } else {
+        rows.push((l.len(), SettingsAction::Shell));
+        l.push(kva(SettingsAction::Shell, "shell", shell_spans));
+    }
     l.push(kv(
         "state",
         vec![Span::raw(fmt::tilde(&clove_core::state_home()))],
     ));
-    l
+    (l, rows)
 }
 
 fn draw_settings(f: &mut Frame, app: &mut App, area: Rect, v: SettingsView) {
     let w = 92.min(area.width.saturating_sub(4));
     let iw = w.saturating_sub(6) as usize;
-    let lines = settings_lines(app, iw);
+    let (lines, rows) = settings_lines(app, iw);
     let h = (lines.len() as u16 + 4).min(area.height.saturating_sub(2));
     let rect = centered(area, w, h);
     open_modal(f, &mut app.hits, area, rect);
@@ -1863,6 +1926,11 @@ fn draw_settings(f: &mut Frame, app: &mut App, area: Rect, v: SettingsView) {
     app.settings_height = view;
     let len = lines.len();
     let mut scroll = v.scroll;
+    if v.follow
+        && let Some((line, _)) = rows.get(v.cursor.min(rows.len().saturating_sub(1)))
+    {
+        scroll.follow(*line, view, len);
+    }
     scroll.clamp(view, len);
     let off = scroll.offset().min(len.saturating_sub(view));
     if let Some(Modal::Settings(sv)) = &mut app.modal {
@@ -1871,6 +1939,12 @@ fn draw_settings(f: &mut Frame, app: &mut App, area: Rect, v: SettingsView) {
     let visible: Vec<Line> = lines.into_iter().skip(off).take(view).collect();
     f.render_widget(Paragraph::new(visible), inner);
     app.hits.push((rect, Hit::ScrollSettings));
+    for (line, a) in rows {
+        if line >= off && line < off + view {
+            app.hits
+                .push((row(inner, (line - off) as u16), Hit::SettingsRow(a)));
+        }
+    }
     scrollbar(
         f,
         Rect::new(rect.right() - 1, inner.y, 1, inner.height),

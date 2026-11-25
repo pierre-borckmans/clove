@@ -34,6 +34,9 @@ pub enum Effect {
 pub enum Exit {
     Quit,
     Cd(PathBuf),
+    /// cd to the path, then run `clove <args>` there (removing the clone the
+    /// shell was standing in, which keeps its volume busy).
+    CdThen(PathBuf, Vec<String>),
 }
 
 pub const RELOAD_MS: u64 = 3000;
@@ -72,6 +75,10 @@ pub struct App {
     pending_select: Option<String>,
     last_click: Option<(u64, usize)>,
     pub log_height: usize,
+    /// Where `clove` was started: the shell's directory.
+    pub start_dir: PathBuf,
+    /// The shell integration is there to cd on exit.
+    pub integrated: bool,
     /// Launchd agents installed; None until the first load.
     pub service: Option<bool>,
     /// Lines the settings view showed last frame (for page up/down).
@@ -108,6 +115,8 @@ impl App {
             pending_select: None,
             last_click: None,
             log_height: 10,
+            start_dir: PathBuf::new(),
+            integrated: false,
             service: None,
             settings_height: 10,
         }
@@ -889,6 +898,7 @@ impl App {
             return;
         }
         let base = self.current().map(|d| d.status.base.clone()).unwrap_or_default();
+        let inside = c.path.parent().is_some_and(|m| self.start_dir.starts_with(m));
         self.modal = Some(Modal::Remove(RemoveForm {
             name: c.name,
             branch: c.branch,
@@ -900,7 +910,11 @@ impl App {
             delete_branch: false,
             force: c.dirty == Some(true),
             focus: 0,
+            inside,
         }));
+        if let Some(Modal::Remove(f)) = &mut self.modal {
+            f.focus_on(RemoveItem::Remove);
+        }
     }
 
     fn mount_selected(&mut self, after: After) -> Vec<Effect> {
@@ -1127,13 +1141,47 @@ impl App {
     fn remove_form_key(&mut self, mut f: RemoveForm, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
         match k.code {
             KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => return (None, vec![]),
-            KeyCode::Char('b') | KeyCode::Char(' ') if f.branch.is_some() => {
-                f.delete_branch = !f.delete_branch
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
+                let n = f.items().len();
+                f.focus = (f.focus + n - 1) % n;
             }
-            KeyCode::Char('f') => f.force = !f.force,
-            KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => f.focus = 1 - f.focus,
-            KeyCode::Enter | KeyCode::Char('y') => {
-                if k.code == KeyCode::Enter && f.focus == 1 {
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                f.focus = (f.focus + 1) % f.items().len();
+            }
+            // Between the two buttons.
+            KeyCode::Left | KeyCode::Right => match f.focused() {
+                RemoveItem::Remove => f.focus_on(RemoveItem::Cancel),
+                RemoveItem::Cancel => f.focus_on(RemoveItem::Remove),
+                _ => {}
+            },
+            KeyCode::Char(' ') if f.toggle(f.focused()) => {}
+            KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('y') => {
+                // Enter on a checkbox takes the default: remove.
+                if f.focused() == RemoveItem::Cancel && k.code != KeyCode::Char('y') {
+                    return (None, vec![]);
+                }
+                if f.inside {
+                    // The shell sits in this clone and holds its volume: quit,
+                    // move the shell to the main checkout, remove it from there.
+                    let Some(root) = self.root() else {
+                        return (None, vec![]);
+                    };
+                    if !self.integrated {
+                        self.toast(
+                            ToastKind::Err,
+                            "your shell is inside this clone: quit, cd out, then remove it (or `clove shell-init --install` so clove can do it)",
+                        );
+                        return (Some(Modal::Remove(f)), vec![]);
+                    }
+                    let mut args = vec!["rm".to_string()];
+                    if f.delete_branch {
+                        args.push("-D".into());
+                    }
+                    if f.force {
+                        args.push("--force".into());
+                    }
+                    args.push(f.name.clone());
+                    self.exit = Some(Exit::CdThen(root, args));
                     return (None, vec![]);
                 }
                 let task = Task::Remove {
@@ -1152,11 +1200,22 @@ impl App {
     }
 
     fn gc_key(&mut self, mut g: GcView, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
+        let can_apply = !g.running && !g.applied && g.result.as_ref().is_some_and(cleanup_has_work);
         match k.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('g') | KeyCode::Enter => (None, vec![]),
-            KeyCode::Char('a')
-                if !g.running && !g.applied && g.result.as_ref().is_some_and(cleanup_has_work) =>
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('g') => (None, vec![]),
+            KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::Tab
+            | KeyCode::BackTab
+                if can_apply =>
             {
+                g.focus_close = !g.focus_close;
+                (Some(Modal::Gc(g)), vec![])
+            }
+            KeyCode::Enter | KeyCode::Char(' ') if !can_apply || g.focus_close => (None, vec![]),
+            KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('a') if can_apply => {
                 g.running = true;
                 self.modal = Some(Modal::Gc(g));
                 let e = self.spawn(Task::Gc { apply: true }, After::Nothing);
@@ -1166,42 +1225,80 @@ impl App {
         }
     }
 
-    fn settings_key(&mut self, mut v: SettingsView, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
-        let page = self.settings_height.max(1);
-        let paths = self
-            .current()
-            .map(|d| clove_core::config::layer_paths(&d.root, &d.status.name));
-        let edit = |i: usize| -> Vec<Effect> {
-            paths
-                .as_ref()
-                .map(|p| vec![Effect::EditConfig(p[i].1.clone())])
-                .unwrap_or_default()
-        };
-        match k.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('s') | KeyCode::Char(',') => {
-                return (None, vec![]);
+    /// The settings rows Enter can act on, top to bottom.
+    pub fn settings_actions(&self) -> Vec<SettingsAction> {
+        let mut v = vec![
+            SettingsAction::Edit(0),
+            SettingsAction::Edit(1),
+            SettingsAction::Edit(2),
+            SettingsAction::Service,
+        ];
+        // Nothing to do once this shell has it.
+        if !self.integrated {
+            v.push(SettingsAction::Shell);
+        }
+        v
+    }
+
+    fn settings_act(&mut self, v: SettingsView, a: SettingsAction) -> (Option<Modal>, Vec<Effect>) {
+        match a {
+            SettingsAction::Edit(i) => {
+                let fx = self
+                    .current()
+                    .map(|d| clove_core::config::layer_paths(&d.root, &d.status.name))
+                    .map(|p| vec![Effect::EditConfig(p[i].1.clone())])
+                    .unwrap_or_default();
+                (Some(Modal::Settings(v)), fx)
             }
-            KeyCode::Up | KeyCode::Char('k') => v.scroll.set(v.scroll.target().saturating_sub(1)),
-            KeyCode::Down | KeyCode::Char('j') => v.scroll.set(v.scroll.target() + 1),
-            KeyCode::PageUp => v.scroll.set(v.scroll.target().saturating_sub(page)),
-            KeyCode::PageDown => v.scroll.set(v.scroll.target() + page),
-            KeyCode::Char('E') => return (Some(Modal::Settings(v)), edit(0)),
-            KeyCode::Char('t') => return (Some(Modal::Settings(v)), edit(1)),
-            KeyCode::Char('e') => return (Some(Modal::Settings(v)), edit(2)),
-            KeyCode::Char('i') => {
+            SettingsAction::Shell => {
                 self.modal = Some(Modal::Settings(v));
-                let fx = self.spawn(Task::ShellInstall, After::Nothing);
-                return (None, fx);
+                (None, self.spawn(Task::ShellInstall, After::Nothing))
             }
-            KeyCode::Char('S') => {
+            SettingsAction::Service => {
                 if self.running().any(|j| matches!(j.task, Task::Service { .. })) {
                     return (Some(Modal::Settings(v)), vec![]);
                 }
                 let install = !self.service.unwrap_or(false);
                 self.modal = Some(Modal::Settings(v));
-                let fx = self.spawn(Task::Service { install }, After::Nothing);
-                return (None, fx);
+                (None, self.spawn(Task::Service { install }, After::Nothing))
             }
+        }
+    }
+
+    fn settings_key(&mut self, mut v: SettingsView, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
+        let page = self.settings_height.max(1);
+        let actions = self.settings_actions();
+        let n = actions.len();
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('s') | KeyCode::Char(',') => {
+                return (None, vec![]);
+            }
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
+                v.cursor = (v.cursor + n - 1) % n;
+                v.follow = true;
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+                v.cursor = (v.cursor + 1) % n;
+                v.follow = true;
+            }
+            KeyCode::PageUp => {
+                v.follow = false;
+                v.scroll.set(v.scroll.target().saturating_sub(page));
+            }
+            KeyCode::PageDown => {
+                v.follow = false;
+                v.scroll.set(v.scroll.target() + page);
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                let a = actions[v.cursor.min(n - 1)];
+                return self.settings_act(v, a);
+            }
+            // Earlier single-letter shortcuts still work, unadvertised.
+            KeyCode::Char('E') => return self.settings_act(v, SettingsAction::Edit(0)),
+            KeyCode::Char('t') => return self.settings_act(v, SettingsAction::Edit(1)),
+            KeyCode::Char('e') => return self.settings_act(v, SettingsAction::Edit(2)),
+            KeyCode::Char('i') => return self.settings_act(v, SettingsAction::Shell),
+            KeyCode::Char('S') => return self.settings_act(v, SettingsAction::Service),
             _ => {}
         }
         (Some(Modal::Settings(v)), vec![])
@@ -1282,6 +1379,7 @@ impl App {
                     }
                     Some(Hit::ScrollSettings) => {
                         if let Some(Modal::Settings(v)) = &mut self.modal {
+                            v.follow = false;
                             let t = v.scroll.target() as isize + d * 2;
                             v.scroll.set(t.max(0) as usize);
                         }
@@ -1328,6 +1426,22 @@ impl App {
                     if let Some(Modal::New(f)) = &mut self.modal {
                         f.focus = i;
                         f.pick = None;
+                    }
+                    vec![]
+                }
+                Some(Hit::SettingsRow(a)) => {
+                    let actions = self.settings_actions();
+                    if let Some(Modal::Settings(v)) = &mut self.modal
+                        && let Some(i) = actions.iter().position(|x| *x == a)
+                    {
+                        v.cursor = i;
+                    }
+                    vec![]
+                }
+                Some(Hit::RemoveRow(item)) => {
+                    if let Some(Modal::Remove(f)) = &mut self.modal {
+                        f.focus_on(item);
+                        f.toggle(item);
                     }
                     vec![]
                 }

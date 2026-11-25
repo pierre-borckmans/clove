@@ -401,7 +401,10 @@ fn stacked_detail() {
 fn remove_dialog() {
     let mut app = app();
     key(&mut app, KeyCode::Char('d'));
-    key(&mut app, KeyCode::Char('b'));
+    // From the remove button, up twice reaches "also delete branch".
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Char(' '));
     let (s, _) = render(&mut app, 120, 28);
     insta::assert_snapshot!(s);
 }
@@ -524,6 +527,113 @@ fn quick_clone_without_output() {
         s.contains("– fetch ") && s.contains("fetched 3m ago (--fetch to force)"),
         "skipped step keeps its name:\n{s}"
     );
+}
+
+#[test]
+fn removing_the_clone_you_are_in_leaves_it_first() {
+    // Started from inside feat-login: the shell holds its volume, so the TUI
+    // quits, moves the shell to the main checkout and removes it from there.
+    let mut inside = app();
+    inside.start_dir = "/work/app.clove/feat-login/app/src".into();
+    inside.integrated = true;
+    assert_eq!(inside.selected_clone().unwrap().name, "feat-login");
+    key(&mut inside, KeyCode::Char('d'));
+    assert!(matches!(&inside.modal, Some(Modal::Remove(f)) if f.inside));
+    let (s, _) = render(&mut inside, 120, 30);
+    assert!(s.contains("you're in this clone"), "{s}");
+    key(&mut inside, KeyCode::Up);
+    key(&mut inside, KeyCode::Up);
+    key(&mut inside, KeyCode::Char(' '));
+    let fx = key(&mut inside, KeyCode::Char('y'));
+    assert!(fx.is_empty(), "nothing runs in the TUI: {fx:?}");
+    match &inside.exit {
+        Some(Exit::CdThen(root, args)) => {
+            assert_eq!(root, &PathBuf::from("/work/app"));
+            assert_eq!(args.join(" "), "rm -D --force feat-login");
+        }
+        e => panic!("{e:?}"),
+    }
+
+    // Without the shell integration it can't move the shell: it says so.
+    let mut other = app();
+    other.start_dir = "/work/app.clove/feat-login/app".into();
+    key(&mut other, KeyCode::Char('d'));
+    key(&mut other, KeyCode::Char('y'));
+    assert!(other.exit.is_none());
+    assert!(other.toasts.iter().any(|t| t.text.contains("inside this clone")));
+
+    // Another clone is removed in place as before.
+    let mut elsewhere = app();
+    elsewhere.start_dir = "/work/app".into();
+    key(&mut elsewhere, KeyCode::Char('d'));
+    let fx = key(&mut elsewhere, KeyCode::Char('y'));
+    assert!(matches!(&fx[..], [Effect::Spawn { .. }]));
+}
+
+#[test]
+fn dialogs_use_arrows_and_enter() {
+    // Settings: a cursor over the actionable rows; Enter acts on it.
+    let mut st = app();
+    st.service = Some(false);
+    key(&mut st, KeyCode::Char('s'));
+    let (s, _) = render(&mut st, 120, 60);
+    assert!(
+        s.contains("› all repos"),
+        "cursor starts on the first config file:\n{s}"
+    );
+    key(&mut st, KeyCode::Down);
+    key(&mut st, KeyCode::Down);
+    let fx = key(&mut st, KeyCode::Enter);
+    assert!(
+        matches!(&fx[..], [Effect::EditConfig(p)] if p.ends_with("repos/app.toml")),
+        "{fx:?}"
+    );
+    key(&mut st, KeyCode::Down);
+    let fx = key(&mut st, KeyCode::Enter);
+    assert!(
+        matches!(&fx[..], [Effect::Spawn { .. }]),
+        "service row toggles: {fx:?}"
+    );
+    assert!(matches!(
+        st.jobs.last().unwrap().task,
+        Task::Service { install: true }
+    ));
+
+    // Cleanup: Enter on the focused button; arrows move to close.
+    let mut gc = app();
+    gc.modal = Some(Modal::Gc(GcView {
+        result: Some(Cleanup {
+            leftovers: vec!["remove old golden gen-2".into()],
+            ..Default::default()
+        }),
+        ..Default::default()
+    }));
+    key(&mut gc, KeyCode::Right);
+    key(&mut gc, KeyCode::Enter);
+    assert!(gc.modal.is_none(), "close had focus");
+    gc.modal = Some(Modal::Gc(GcView {
+        result: Some(Cleanup {
+            leftovers: vec!["remove old golden gen-2".into()],
+            ..Default::default()
+        }),
+        ..Default::default()
+    }));
+    let fx = key(&mut gc, KeyCode::Enter);
+    assert!(matches!(&fx[..], [Effect::Spawn { .. }]));
+    assert!(matches!(gc.jobs.last().unwrap().task, Task::Gc { apply: true }));
+}
+
+#[test]
+fn toasts_sit_bottom_right() {
+    let mut app = app();
+    app.toast(ToastKind::Ok, "first");
+    app.toast(ToastKind::Err, "second, newest");
+    let (s, _) = render(&mut app, 120, 24);
+    let (x1, y1) = find(&s, "first");
+    let (x2, y2) = find(&s, "second, newest");
+    assert!(y2 > y1, "newest at the bottom:\n{s}");
+    assert!(y2 >= 18, "near the bottom of the screen:\n{s}");
+    assert!(x1 > 80 && x2 > 80, "on the right:\n{s}");
 }
 
 #[test]
@@ -679,7 +789,9 @@ fn remove_dirty_defaults_to_force() {
         panic!()
     };
     assert!(f.force, "dirty clone needs force to be removable");
-    key(&mut app, KeyCode::Char('b'));
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Char(' '));
     let fx = key(&mut app, KeyCode::Enter);
     let Some(Effect::Spawn { id, .. }) = fx.first().cloned() else {
         panic!("{fx:?}")

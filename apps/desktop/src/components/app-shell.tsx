@@ -70,7 +70,7 @@ export function AppShell() {
       <NewCloneDialog />
       <AddRepoDialog />
       <RemoveCloneDialog />
-      <Toaster position="bottom-left" offset={{ left: 252, bottom: 16 }} />
+      <Toaster position="bottom-right" offset={{ right: 16, bottom: 16 }} />
     </div>
   );
 }

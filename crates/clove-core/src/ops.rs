@@ -953,6 +953,7 @@ impl Clove {
             bail!("`{name}` has uncommitted changes; commit them, or `clove rm --force {name}` to discard");
         }
         let branch = git::current_branch(&meta.path).or(meta.branch.clone());
+        stop_fsmonitor(&meta.path);
         timed(r, &mut timings, "unmount", || {
             store.clone_detach(self, name, &meta.mount, opts.force)
         })?;
@@ -1005,6 +1006,7 @@ impl Clove {
                 "clones share the repo's volume; `clove unmount` without arguments unmounts it when nothing uses it"
             );
         }
+        stop_fsmonitor(&meta.path);
         self.store()?.clone_detach(self, name, &meta.mount, force)
     }
 
@@ -1237,6 +1239,14 @@ impl Clove {
             let _ = std::fs::remove_dir(&self.config.clone_root);
             Ok(())
         })
+    }
+}
+
+/// git's fsmonitor daemon (core.fsmonitor) keeps running in a worktree and
+/// holds its volume. It's a cache, so stop it before unmounting.
+fn stop_fsmonitor(wt: &Path) {
+    if wt.join(".git").exists() {
+        let _ = git::cmd(wt).args(["fsmonitor--daemon", "stop"]).output();
     }
 }
 
