@@ -4,6 +4,7 @@
 //! The UI draws on stderr, so `cd "$(clove)"` works even without the shell
 //! integration: the chosen path is printed on stdout after the screen closes.
 
+mod add_repo;
 mod app;
 mod fmt;
 mod model;
@@ -48,6 +49,10 @@ pub fn run(start_dir: &Path) -> Result<()> {
     let mut term = Term::enter()?;
     let start = Instant::now();
     let mut effects = vec![];
+    if app.repos.is_empty() {
+        // First run: nothing to show but the way to add a repo.
+        effects.extend(app.open_add_repo());
+    }
     let mut pointer_shown = false;
     // Without it (no inotify watches left, say) the TUI polls faster instead.
     let watcher = {
@@ -171,6 +176,8 @@ fn perform(e: Effect, app: &mut App, tx: &mpsc::Sender<Msg>, term: &mut Term) {
             Ok(what) => app.toast(model::ToastKind::Ok, format!("opened in {what}")),
             Err(e) => app.toast(model::ToastKind::Err, format!("{e:#}")),
         },
+        Effect::FindRepos => add_repo::find(tx.clone()),
+        Effect::PreviewInit(path) => add_repo::preview(tx.clone(), path),
         Effect::SetConfig(w) => match worker::write_config(&w) {
             Ok(msg) => app.toast(model::ToastKind::Ok, msg),
             Err(e) => app.toast(model::ToastKind::Err, format!("{e:#}")),

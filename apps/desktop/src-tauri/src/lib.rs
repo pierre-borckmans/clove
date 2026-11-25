@@ -115,6 +115,8 @@ pub fn run() {
             commands::mount_clone,
             commands::unmount_clone,
             commands::discover,
+            commands::repo_candidates,
+            commands::init_preview,
             commands::installed_apps,
             commands::open_in,
             commands::copy_text,

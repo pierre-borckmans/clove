@@ -10,7 +10,7 @@ expression: s
 │ ▌ app          0 ● ││                                                                                      │
 │   mono         2 ● ││                                                                                      │
 │   web       set up ││                                      ▄▄██████▄▄                                      │
-│                    ││                                     ███▀    ▀██▀                                     │
+│ + add repo         ││                                     ███▀    ▀██▀                                     │
 │                    ││                                     ███    ▄█                                        │
 │                    ││                                     ███   ██▀                                        │
 │                    ││                                     ███▄    ▄██▄                                     │
@@ -23,4 +23,4 @@ expression: s
 │ D doctor           ││                                                                                      │
 │ S service          ││                                                                                      │
 ╰────────────────────╯╰──────────────────────────────────────────────────────────────────────────────────────╯
- n new  r refresh  tab repo  s settings  g cleanup  D doctor  ? help  q quit
+ n new  r refresh  tab repo  s settings  g cleanup  D doctor  A add repo  ? help  q quit

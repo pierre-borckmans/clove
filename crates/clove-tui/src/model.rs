@@ -127,6 +127,13 @@ pub enum Msg {
     PrsChecked,
     Event(u64, clove_core::Event),
     Done(u64, Result<Outcome, String>),
+    /// Git repos clove could start managing (add-repo dialog).
+    ReposFound(Vec<clove_core::RepoCandidate>),
+    /// What `init` would do for a path (add-repo dialog).
+    InitPreview {
+        path: PathBuf,
+        result: Result<clove_core::InitPreview, String>,
+    },
 }
 
 /// A scroll offset that eases toward its target a few frames at a time.
@@ -511,6 +518,7 @@ pub enum Modal {
     Doctor(DoctorView),
     Settings(SettingsView),
     Job(u64),
+    AddRepo(Box<crate::add_repo::AddRepo>),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -574,6 +582,8 @@ pub enum Hit {
     SettingsRow(SettingsAction),
     /// A "save to" choice in settings.
     SettingsLayer(Layer),
+    /// A found repo in the add-repo dialog.
+    Candidate(usize),
     /// Swallows clicks (a modal's body over the click-to-close backdrop).
     Inert,
     /// Outside an open modal: a click closes it, hover shows nothing.

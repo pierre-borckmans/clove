@@ -10,7 +10,7 @@ expression: s
 │ ▌ app          5 ● ││   NAME                    BRANCH                     CHANGES       AGE    SIZE         ││                                              │
 │   mono         2 ● ││ ● feat-login              feat/login                 dirty ↑2       5m     14M         ││  branch  feat/login  ↑2                      │
 │   web       set up ││ ● fix-race                fix/race                   ↑1 ↓3          3h    230M         ││  head    9f8e7d6c5b                          │
-│                    ││ ○ spike-cache             spike/cache                unmounted      3h     14M         ││  status  ● mounted · dirty · 14M             │
+│ + add repo         ││ ○ spike-cache             spike/cache                unmounted      3h     14M         ││  status  ● mounted · dirty · 14M             │
 │                    ││ ● pierre-onboarding-flow  pierre/onboarding-flow-v2  clean          4d     14M         ││  from    gen 3 · 5m old                      │
 │                    ││ ● detached                detached @9f8e7d6          clean          3h     14M         ││  path    /work/app.clove/feat-login/app      │
 │                    ││                                                                                        ││                                              │
@@ -27,4 +27,4 @@ expression: s
 │ D doctor           ││                                                                                        ││                                              │
 │ S service     ● on ││                                                                                        ││                                              │
 ╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
- ⏎ cd  n new  d remove  u unmount  r refresh  o open  / filter  tab repo  s settings  g cleanup  D doctor  ? help  q quit
+ ⏎ cd  n new  d remove  u unmount  r refresh  o open  / filter  tab repo  s settings  g cleanup  D doctor  A add repo  ? help  q quit

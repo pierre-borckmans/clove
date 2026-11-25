@@ -1,0 +1,38 @@
+---
+source: crates/clove-tui/src/add_repo.rs
+expression: s
+---
+╭ clove ───────────────────────────────────────────────────────────────────────────────────────────╮
+│ app  /work/app                                                                                   │
+│ golden  ⠴ loading                                                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ repos ─────────────╮╭ clones ────────────────────────────────────────────────────────────────────╮
+│ ▌ app              ││                                                                            │
+│ + add repo         ││                                                                            │
+│          ╭ add web ───────────────────────────────────────────────────────────────────╮          │
+│          │                                                                            │          │
+│          │  web  /home/ada/code/web                                                   │          │
+│          │                                                                            │          │
+│          │  base    origin/main                                                       │          │
+│          │  steps   detected                                                          │          │
+│          │    pnpm             pnpm install --frozen-lockfile                         │          │
+│          │    cargo-src-tauri  cd src-tauri && cargo build --workspace --all-targets  │          │
+│          │  copy    .env.local                                                        │          │
+│          │  env     direnv                                                            │          │
+│          │  clones  /home/ada/code/web.clove/<name>                                   │          │
+│          │  image   /home/ada/.clove/repos/web-1a2b3c4d  sparse, up to 300G           │          │
+│          │  ! pnpm isn't on PATH; its step will fail                                  │          │
+│          │  ! disk images: falling back to hdiutil sparse images                      │──────────╯
+│          │                                                                            │──────────╮
+│          │  slow once (checkout, warm steps); then each clone takes about a second    │          │
+│          │                                                                            │          │
+│          │                                                           init    cancel   │          │
+│          │                                                                            │          │
+│          ╰────────────────────────────────────────────────────────────────────────────╯          │
+│ ────────────────── ││                                                                            │
+│ s settings         ││                                                                            │
+│ g cleanup          ││                                                                            │
+│ D doctor           ││                                                                            │
+│ S service          ││                                                                            │
+╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯
+ ⏎ init  ←→ move  esc back

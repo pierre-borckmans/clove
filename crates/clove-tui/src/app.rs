@@ -33,6 +33,10 @@ pub enum Effect {
     EditConfig(PathBuf),
     /// Write or remove one setting in one config file, then toast the result.
     SetConfig(ConfigWrite),
+    /// Look for git repos clove doesn't manage yet.
+    FindRepos,
+    /// Work out what `init` would do for this path.
+    PreviewInit(PathBuf),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -382,7 +386,7 @@ impl App {
         self.spawn_at(Some(repo.root), repo.name, task, after)
     }
 
-    fn spawn_at(
+    pub(crate) fn spawn_at(
         &mut self,
         root: Option<PathBuf>,
         repo_name: String,
@@ -717,6 +721,14 @@ impl App {
                 }
                 fx
             }
+            Msg::ReposFound(found) => {
+                self.on_repos_found(found);
+                vec![]
+            }
+            Msg::InitPreview { path, result } => {
+                self.on_init_preview(path, result);
+                vec![]
+            }
         }
     }
 
@@ -772,6 +784,8 @@ impl App {
                         f.field_mut().insert(c);
                     }
                     f.pick = None;
+                } else if let Some(Modal::AddRepo(_)) = &self.modal {
+                    self.add_repo_paste(&s);
                 } else if self.filtering {
                     self.filter.extend(s.chars().filter(|c| !c.is_control()));
                     self.selected = 0;
@@ -907,6 +921,7 @@ impl App {
             KeyCode::Char('u') => return self.unmount_selected(),
             KeyCode::Char('r') => return self.refresh(),
             KeyCode::Char('i') => return self.init(),
+            KeyCode::Char('A') | KeyCode::Char('+') => return self.open_add_repo(),
             KeyCode::Enter => return self.cd_selected(),
             KeyCode::Char('o') => return self.open_selected(),
             KeyCode::Char('/') => {
@@ -1100,6 +1115,7 @@ impl App {
             Modal::Doctor(d) => self.doctor_key(d, k),
             Modal::Settings(v) => self.settings_key(v, k),
             Modal::Job(id) => self.job_key(id, k),
+            Modal::AddRepo(v) => self.add_repo_key(v, k),
         };
         // A handler may have opened another modal (or exited); don't clobber it.
         if self.modal.is_none() {
@@ -1662,6 +1678,7 @@ impl App {
                     }
                     vec![]
                 }
+                Some(Hit::Candidate(i)) => self.add_repo_click(i),
                 Some(Hit::Toast(i)) => {
                     if i < self.toasts.len() {
                         self.toasts.remove(i);

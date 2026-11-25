@@ -21,6 +21,7 @@ Getting started:
   clove rm feat/login        unmount and delete it
   clove prune                remove clones whose PR is merged
   clove repos                every repo clove manages
+  clove repos --candidates   repos you could add (then clove init -C <path>)
   clove                      all of the above, interactively (also: clove tui)
 
 Shell integration (cd into new clones, completions):
@@ -47,8 +48,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Build the golden image: checkout of the base branch, warmed.
-    Init,
+    /// Build the golden image: checkout of the base branch, warmed. Shows what
+    /// it will do and asks first in a terminal.
+    Init {
+        /// Don't ask; start right away.
+        #[arg(short, long)]
+        yes: bool,
+    },
     /// Create a clone on a branch (new, local, or from origin).
     #[command(visible_alias = "add")]
     New(NewArgs),
@@ -153,7 +159,12 @@ enum Cmd {
         edit: Option<Layer>,
     },
     /// Every repo clove manages: clones, golden image state, merged clones.
-    Repos,
+    Repos {
+        /// Instead, git repos on this machine clove doesn't manage yet, most
+        /// recently used first (looks in the usual code folders).
+        #[arg(long)]
+        candidates: bool,
+    },
     /// Refresh the PR cache `clove ls` shows (run in the background by ls).
     #[command(hide = true)]
     CheckPrs,
@@ -329,16 +340,38 @@ fn run(cli: Cli) -> Result<()> {
         // In a terminal, the bare command is the TUI (like lazygit, k9s); piped,
         // it prints help. stdout may be captured: `cd "$(clove)"`.
         let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
-        if interactive && !cli.json && has_somewhere_to_go(&cli) {
+        // With no repo to show, the TUI opens on its add-repo screen.
+        if interactive && !cli.json {
             return run_tui(&cli);
         }
         return home(&cli);
     };
     match cmd {
-        Cmd::Init => {
-            let c = repo(&cli)?;
+        Cmd::Init { yes } => {
+            let c = repo(&cli).map_err(|e| {
+                anyhow::anyhow!(
+                    "{e:#}\n  `clove init -C <dir>` sets up another repo; `clove repos --candidates` lists them"
+                )
+            })?;
+            let preview = clove_core::preview::preview_of(&c, doctor::machine());
             if !cli.json {
-                print_plan(&c);
+                print_plan(&preview);
+            }
+            let interactive = !cli.json && std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+            let asking = interactive && !yes && !preview.initialized;
+            if !cli.json && !asking {
+                eprintln!();
+            }
+            if asking {
+                let go = ask(
+                    "Build the golden image now?",
+                    &["Runs the warm steps once; every clone after it takes about a second.".to_string()],
+                    true,
+                )?;
+                if !go {
+                    eprintln!("{} nothing changed", paint(DIM, "·"));
+                    return Ok(());
+                }
             }
             fstab_prompt(&c, cli.json)?;
             let meta = c.init(r)?;
@@ -628,7 +661,8 @@ fn run(cli: Cli) -> Result<()> {
                 eprintln!("\nrun {} to remove them", paint(BOLD, "clove gc --apply"));
             }
         }
-        Cmd::Repos => cmd_repos(&cli)?,
+        Cmd::Repos { candidates: true } => cmd_candidates(&cli)?,
+        Cmd::Repos { candidates: false } => cmd_repos(&cli)?,
         Cmd::CheckPrs => {
             repo(&cli)?.merge_checks(false)?;
         }
@@ -887,41 +921,84 @@ fn fstab_prompt(c: &Clove, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn print_plan(c: &Clove) {
+fn print_plan(p: &clove_core::InitPreview) {
     eprintln!(
         "{} {}  {}",
         paint(BOLD, "clove init"),
-        c.name,
-        paint(DIM, tilde(&c.root))
+        p.name,
+        paint(DIM, tilde(&p.root))
     );
-    eprintln!("  base   {}", c.config.base);
-    if c.config.steps.is_empty() {
+    if p.initialized {
         eprintln!(
-            "  steps  {}",
-            paint(DIM, "none detected (add [[step]] to .clove.toml)")
+            "  {}",
+            paint(DIM, "already has a golden image; `clove refresh` updates it")
+        );
+        eprintln!();
+        return;
+    }
+    if p.base_found {
+        eprintln!("  base    {}", p.base);
+    } else {
+        eprintln!(
+            "  base    {} {}",
+            p.base,
+            paint(YELLOW, "(not found yet; init fetches it)")
+        );
+    }
+    if p.steps.is_empty() {
+        eprintln!(
+            "  steps   {}",
+            paint(
+                DIM,
+                "none detected: clones get the checkout only (add [[step]] to .clove.toml)"
+            )
         );
     } else {
-        let names: Vec<_> = c.config.steps.iter().map(|s| s.name.as_str()).collect();
-        let src = if c.config.steps_detected {
-            " (detected)"
+        let src = if p.steps_detected {
+            "detected"
         } else {
-            ""
+            "from config"
         };
-        eprintln!("  steps  {}{}", names.join(", "), paint(DIM, src));
+        eprintln!("  steps   {}", paint(DIM, src));
+        let w = p.steps.iter().map(|s| s.name.len()).max().unwrap_or(0);
+        for s in &p.steps {
+            let cmd = s.warm.as_deref().unwrap_or("(setup only)");
+            eprintln!("    {:<w$}  {}", s.name, paint(DIM, cmd));
+        }
     }
-    let copy = c.resolve_copy();
-    if !copy.is_empty() {
-        let src = if c.config.copy.is_none() {
-            " (detected, not in git)"
-        } else {
-            ""
-        };
-        eprintln!("  copy   {}{}", copy.join(", "), paint(DIM, src));
+    if !p.nested_skipped.is_empty() {
+        let shown: Vec<_> = p.nested_skipped.iter().take(4).map(String::as_str).collect();
+        let more = p.nested_skipped.len() - shown.len();
+        eprintln!(
+            "  nested  {} projects not warmed: {}{}",
+            p.nested_skipped.len(),
+            shown.join(", "),
+            if more > 0 {
+                format!(" and {more} more")
+            } else {
+                String::new()
+            }
+        );
     }
-    if c.config.exec != Exec::None {
-        eprintln!("  env    {}", format!("{:?}", c.config.exec).to_lowercase());
+    if !p.copy.is_empty() {
+        eprintln!("  copy    {}", p.copy.join(", "));
     }
-    eprintln!();
+    if p.exec != Exec::None {
+        eprintln!("  env     {}", format!("{:?}", p.exec).to_lowercase());
+    }
+    eprintln!("  clones  {}", tilde(&p.clone_root.join("<name>")));
+    eprintln!(
+        "  image   {} {}",
+        tilde(&p.state),
+        paint(DIM, format!("(sparse, up to {})", p.image_size))
+    );
+    for t in &p.missing_tools {
+        eprintln!("  {} {t} isn't on PATH; its step will fail", paint(YELLOW, "!"));
+    }
+    for m in &p.machine {
+        let color = if m.level == Level::Fail { RED } else { YELLOW };
+        eprintln!("  {} {}: {}", paint(color, "!"), m.name, m.detail);
+    }
 }
 
 fn cmd_new(cli: &Cli, a: &NewArgs, r: &dyn clove_core::Reporter) -> Result<()> {
@@ -1518,6 +1595,45 @@ fn cmd_repos(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
+fn cmd_candidates(cli: &Cli) -> Result<()> {
+    let found = clove_core::candidates::find();
+    if cli.json {
+        return emit(&found);
+    }
+    if found.is_empty() {
+        let roots: Vec<String> = clove_core::candidates::default_roots()
+            .iter()
+            .map(|r| tilde(r))
+            .collect();
+        eprintln!(
+            "no unmanaged git repos found in {}. {} sets one up",
+            if roots.is_empty() {
+                "the usual folders".to_string()
+            } else {
+                roots.join(", ")
+            },
+            paint(BOLD, "clove init -C <dir>")
+        );
+        return Ok(());
+    }
+    let now = clove_core::util::now_unix();
+    let mut t = Table::new(&["REPO", "BRANCH", "ACTIVE", "PATH"]);
+    for c in &found {
+        t.row(vec![
+            styled(BOLD, c.name.clone()),
+            match &c.branch {
+                Some(b) => styled(MAGENTA, b.clone()),
+                None => styled(DIM, "(detached)"),
+            },
+            cell(clove_core::util::human_age(now.saturating_sub(c.active))),
+            styled(DIM, tilde(&c.root)),
+        ]);
+    }
+    t.print();
+    eprintln!("\n{} sets one up", paint(BOLD, "clove init -C <path>"));
+    Ok(())
+}
+
 fn cmd_status(cli: &Cli) -> Result<()> {
     let c = repo(cli)?;
     let s = c.status()?;
@@ -1695,12 +1811,6 @@ fn tui_dir(cli: &Cli) -> Result<PathBuf> {
 
 fn run_tui(cli: &Cli) -> Result<()> {
     clove_tui::run(&tui_dir(cli)?)
-}
-
-/// The TUI has something to show: a repo clove manages, or a git repo here
-/// that it can set up. Otherwise the banner explains how to start.
-fn has_somewhere_to_go(cli: &Cli) -> bool {
-    !clove_core::known_repos().is_empty() || tui_dir(cli).is_ok_and(|d| Clove::discover(&d).is_ok())
 }
 
 fn home(cli: &Cli) -> Result<()> {

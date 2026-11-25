@@ -195,6 +195,22 @@ pub async fn discover(dir: PathBuf) -> CmdResult<Discovered> {
     .await
 }
 
+/// Git repos clove doesn't manage yet, found in the usual code folders.
+#[tauri::command]
+pub async fn repo_candidates() -> CmdResult<Vec<clove_core::RepoCandidate>> {
+    block(|| Ok(clove_core::candidates::find())).await
+}
+
+/// What `init` would do for the repo containing `dir`, without changing anything.
+#[tauri::command]
+pub async fn init_preview(dir: PathBuf) -> CmdResult<clove_core::InitPreview> {
+    let dir = match dir.strip_prefix("~") {
+        Ok(rest) => clove_core::util::home().join(rest),
+        Err(_) => dir,
+    };
+    block(move || clove_core::preview::init_preview(&dir)).await
+}
+
 /// Apps the "Open in" actions can target, by bundle name under /Applications.
 const APPS: &[(&str, &str)] = &[
     ("terminal", "Terminal"),

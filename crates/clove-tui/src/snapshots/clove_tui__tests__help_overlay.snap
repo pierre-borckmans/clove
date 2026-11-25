@@ -10,7 +10,7 @@ expression: s
 │ ▌ app          5 ● ││             ⏎   cd into it and quit                  │       AGE    SIZE   │
 │   mono         2 ● ││             n   new clone on a branch                │2       5m     14M   │
 │   web       set up ││             d   remove (asks first)                  │        3h    230M   │
-│                    ││         m / u   mount / unmount                      │ed      3h     14M   │
+│ + add repo         ││         m / u   mount / unmount                      │ed      3h     14M   │
 │                    ││             o   open in $EDITOR                      │        4d     14M   │
 │                    ││             /   filter by name or branch             │        3h     14M   │
 │                    ││         ↑↓ jk   move · wheel scrolls                 │                     │
@@ -22,15 +22,15 @@ expression: s
 │                    ││                                                      │                     │
 │                    ││  ANYWHERE                                            │─────────────────────╯
 │                    ││   tab [ ] 1-9   switch repository                    │─────────────────────╮
+│                    ││             A   add a repo clove doesn't manage yet  │                     │
 │                    ││             s   settings, service                    │                     │
 │                    ││             g   cleanup: merged clones, leftovers    │                     │
 │                    ││             D   doctor                               │                     │
 │                    ││        ctrl-r   reload now                           │                     │
-│                    ││         q esc   quit                                 │                     │
-│ ────────────────── ││                                                      │                     │
-│ s settings         ││  rows, tabs, buttons and hints are clickable         │                     │
-│ g cleanup          ││                                                      │               3.2s  │
-│ D doctor           │╰──────────────────────────────────────────────────────╯                6ms  │
-│ S service          ││                                                                            │
+│ ────────────────── ││         q esc   quit                                 │                     │
+│ s settings         ││                                                      │                     │
+│ g cleanup          ││  rows, tabs, buttons and hints are clickable         │               3.2s  │
+│ D doctor           ││                                                      │                6ms  │
+│ S service          │╰──────────────────────────────────────────────────────╯                     │
 ╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯
  esc close

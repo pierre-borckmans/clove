@@ -13,9 +13,11 @@ import type {
   FieldKind,
   FieldState,
   GoldenStatus,
+  InitPreview,
   Layer,
   OpRequest,
   Refs,
+  RepoCandidate,
   RepoConfig,
   RepoStatus,
   RepoSummary,
@@ -417,6 +419,50 @@ const commands: Record<string, (a: Args) => unknown> = {
     const root = (a.dir as string).replace(/\/$/, "");
     return { root, name: repoName(root), initialized: repos.has(root), base: "origin/main", steps: ["pnpm"] };
   },
+  repo_candidates: (): RepoCandidate[] =>
+    MOCK_CANDIDATES.filter(([root]) => !repos.has(root)).map(([root, branch, ago]) => ({
+      root,
+      name: repoName(root),
+      branch,
+      active: now() - ago,
+    })),
+  init_preview: (a): InitPreview => {
+    const root = (a.dir as string).replace(/^~/, "/Users/ada").replace(/\/$/, "");
+    if (root.split("/").length < 4) throw new Error(`not inside a git repository: ${root}`);
+    const name = repoName(root);
+    const tauri = name === "desk";
+    return {
+      root,
+      name,
+      initialized: repos.has(root),
+      base: "origin/main",
+      base_found: true,
+      steps: [
+        { name: "mise-trust", warm: "mise trust --quiet --yes .", setup: "mise trust --quiet --yes .", tool: "mise" },
+        { name: "mise", warm: "mise install --yes", setup: null, tool: "mise" },
+        { name: "pnpm", warm: "pnpm install --frozen-lockfile", setup: null, tool: "pnpm" },
+        ...(tauri
+          ? [
+              {
+                name: "cargo-src-tauri",
+                warm: "cd src-tauri && cargo build --workspace --all-targets",
+                setup: null,
+                tool: "cargo",
+              },
+            ]
+          : []),
+      ],
+      steps_detected: true,
+      nested_skipped: name === "monorepo" ? ["apps/a", "apps/b", "apps/c", "packages/ui", "packages/db"] : [],
+      copy: [".env.local"],
+      exec: "mise",
+      image_size: "300G",
+      clone_root: `${root}.clove`,
+      state: `/Users/ada/.clove/repos/${name}-5d1e0c9a`,
+      missing_tools: tauri ? ["cargo"] : [],
+      machine: [],
+    };
+  },
   repo_config: (a): RepoConfig => {
     const r = get(a.root as string);
     const g = r.status.golden;
@@ -501,11 +547,27 @@ const commands: Record<string, (a: Args) => unknown> = {
   quit: () => null,
 };
 
+// Repos "on disk" the add-repo dialog offers: root, branch, seconds since last use.
+const MOCK_CANDIDATES: [string, string | null, number][] = [
+  ["/Users/ada/src/api", "main", 900],
+  ["/Users/ada/code/desk", "feat/tray-menu", 3 * 3600],
+  ["/Users/ada/Documents/Dev/monorepo", "main", 2 * 86_400],
+  ["/Users/ada/projects/notes", null, 40 * 86_400],
+];
+
 export const mockBackend = {
   async invoke<T>(cmd: string, args: Args = {}): Promise<T> {
     const f = commands[cmd];
     if (!f) throw new Error(`mock: unknown command ${cmd}`);
-    await sleep(cmd === "clones" || cmd === "doctor_repo" ? 90 : cmd === "cleanup" ? 400 : 25);
+    await sleep(
+      cmd === "clones" || cmd === "doctor_repo"
+        ? 90
+        : cmd === "cleanup" || cmd === "repo_candidates"
+          ? 400
+          : cmd === "init_preview"
+            ? 150
+            : 25,
+    );
     return (await f(args)) as T;
   },
   async listen<T>(event: string, cb: (p: T) => void) {

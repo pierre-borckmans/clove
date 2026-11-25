@@ -114,8 +114,41 @@ fn full_lifecycle() {
     let c = Clove::discover(&root).unwrap();
     assert_eq!(c.config.base, "origin/main");
 
+    // the preview reads only
+    let p = clove_core::preview::init_preview(&root).unwrap();
+    assert!(!p.initialized);
+    assert_eq!(p.base, "origin/main");
+    assert!(p.base_found);
+    assert_eq!(p.steps.len(), 1);
+    assert!(!p.steps_detected);
+    assert_eq!(p.copy, vec![".env".to_string()]);
+    assert_eq!(p.image_size, "2G");
+    assert!(!c.state.exists());
+    let offered = |exclude| {
+        clove_core::candidates::scan(&clove_core::candidates::ScanOptions {
+            roots: vec![t.clone()],
+            max_depth: 1,
+            budget: std::time::Duration::from_secs(10),
+            exclude,
+        })
+        .into_iter()
+        .map(|c| c.name)
+        .collect::<Vec<_>>()
+    };
+    let managed = || {
+        clove_core::known_repos()
+            .into_iter()
+            .map(|r| r.root)
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let mut before = offered(managed());
+    before.sort();
+    assert_eq!(before, ["app", "seed"], "remote.git is bare");
+
     // init
     let g = c.init(&Silent).expect("init");
+    assert!(clove_core::preview::init_preview(&root).unwrap().initialized);
+    assert_eq!(offered(managed()), ["seed"], "managed repos aren't offered");
     assert_eq!(g.generation, 1);
     assert!(!g.dirty, "golden should be clean");
     assert_eq!(g.copied, vec![".env".to_string()]);

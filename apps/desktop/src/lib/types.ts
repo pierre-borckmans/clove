@@ -86,6 +86,30 @@ export type Check = { name: string; level: CheckLevel; detail: string; fix: stri
 export type GitRef = { name: string; kind: "local" | "remote" | "tag"; date: number; subject: string };
 export type Refs = { base: string; refs: GitRef[] };
 
+/** A git repo clove doesn't manage yet (`clove repos --candidates`). */
+export type RepoCandidate = { root: string; name: string; branch: string | null; active: number };
+
+export type PreviewStep = { name: string; warm: string | null; setup: string | null; tool: string | null };
+
+/** What `clove init` would do for a repo, computed without changing anything. */
+export type InitPreview = {
+  root: string;
+  name: string;
+  initialized: boolean;
+  base: string;
+  base_found: boolean;
+  steps: PreviewStep[];
+  steps_detected: boolean;
+  nested_skipped: string[];
+  copy: string[];
+  exec: "auto" | "direnv" | "mise" | "none";
+  image_size: string;
+  clone_root: string;
+  state: string;
+  missing_tools: string[];
+  machine: Check[];
+};
+
 export type Discovered = {
   root: string;
   name: string;

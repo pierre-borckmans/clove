@@ -10,7 +10,7 @@ expression: s
 │ ▌ app       set up ││                                                                            │
 │   mono         2 ● ││                                 ▄▄██████▄▄                                 │
 │   web       set up ││                                ███▀    ▀██▀                                │
-│                    ││                                ███    ▄█                                   │
+│ + add repo         ││                                ███    ▄█                                   │
 │                    ││                                ███   ██▀                                   │
 │                    ││                                ███▄    ▄██▄                                │
 │                    ││                                 ▀▀██████▀▀                                 │
@@ -21,4 +21,4 @@ expression: s
 │ D doctor           ││            slow once, then every new clone takes about a second            │
 │ S service          ││                                                                            │
 ╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯
- i init  tab repo  s settings  g cleanup  D doctor  ? help  q quit
+ i init  tab repo  s settings  g cleanup  D doctor  A add repo  ? help  q quit

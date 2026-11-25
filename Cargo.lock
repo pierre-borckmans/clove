@@ -313,6 +313,7 @@ dependencies = [
  "clove-core",
  "insta",
  "ratatui",
+ "tempfile",
  "unicode-width",
 ]
 

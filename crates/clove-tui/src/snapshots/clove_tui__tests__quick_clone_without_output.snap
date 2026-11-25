@@ -10,7 +10,7 @@ expression: s
 │ ▌ app          5 ● ││   NA╭ ✓ new clone  app · 0ms ──────────────────────────────────────╮GE    SIZE  PATH           │
 │   mono         2 ● ││ ● fe│                                                              │5m     14M  …eat-login/app │
 │   web       set up ││ ● fi│  ✓ clone image                                          0ms  │3h    230M  …/fix-race/app │
-│                    ││ ○ sp│  ✓ mount                                              646ms  │3h     14M  …ike-cache/app │
+│ + add repo         ││ ○ sp│  ✓ mount                                              646ms  │3h     14M  …ike-cache/app │
 │                    ││ ● pi│  – fetch                  fetched 3m ago (--fetch to force)  │4d     14M  …ding-flow/app │
 │                    ││ ● de│  – setup pnpm                        unchanged since golden  │3h     14M  …/detached/app │
 │                    ││     │                                                              │                           │

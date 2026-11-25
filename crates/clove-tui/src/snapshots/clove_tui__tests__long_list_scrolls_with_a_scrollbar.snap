@@ -10,7 +10,7 @@ expression: s
 │ ▌ app         40 ● ││   NAME     BRANCH         CHANGES       AGE    SIZE  PATH                  │
 │   mono         2 ● ││ ● task-10  agent/task-10  ↑2             3h     14M  …pp.clove/task-10/app │
 │   web       set up ││ ● task-11  agent/task-11  ↑3             3h     14M  …pp.clove/task-11/app │
-│                    ││ ○ task-12  agent/task-12  unmounted      3h     14M  …pp.clove/task-12/app │
+│ + add repo         ││ ○ task-12  agent/task-12  unmounted      3h     14M  …pp.clove/task-12/app │
 │                    ││ ● task-13  agent/task-13  ↑1             3h     14M  …pp.clove/task-13/app │
 │                    ││ ● task-14  agent/task-14  ↑2             3h     14M  …pp.clove/task-14/app ┃
 │                    ││ ○ task-15  agent/task-15  unmounted      3h     14M  …pp.clove/task-15/app ┃
