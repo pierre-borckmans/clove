@@ -55,9 +55,11 @@ Linux needs btrfs-progs (`sudo apt install btrfs-progs`) and loop devices. The h
 With it, clove mounts the image as you, at `<repo>.clove`, from a desktop or over SSH. Without it, clove mounts through udisks2 if it's installed, which works only from a desktop session and puts clones under `/run/media/$USER/` (or `/media/$USER/`). `sudo -n` is the last resort. `clove doctor` says which one a repo uses.
 
 ```
-cargo install --git https://github.com/pierre-borckmans/clove clove-cli
+brew install pierre-borckmans/tap/clove
 clove shell-init --install         # adds the shell integration to ~/.zshrc (bash and fish too)
 ```
+
+Homebrew works on macOS and Linux. Prebuilt binaries for both are on the [releases page](https://github.com/pierre-borckmans/clove/releases). From source: `cargo install --git https://github.com/pierre-borckmans/clove clove-cli`.
 
 Shell integration lets `clove new` and `clove cd` change your directory, and adds completions for clone and branch names.
 

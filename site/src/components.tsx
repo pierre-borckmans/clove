@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 export const REPO = "https://github.com/pierre-borckmans/clove";
-export const INSTALL = "cargo install --git https://github.com/pierre-borckmans/clove clove-cli";
+export const INSTALL = "brew install pierre-borckmans/tap/clove";
 
 /** Formats milliseconds like the CLI does (`secs` in render.rs). */
 export function secs(ms: number): string {

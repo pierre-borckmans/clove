@@ -1,0 +1,98 @@
+name: release
+# Push a tag like v0.2.0: builds the CLI for macOS and Linux, publishes a
+# GitHub release with checksums, and updates the formula in
+# pierre-borckmans/homebrew-tap.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, os: macos-15 }
+          - { target: x86_64-apple-darwin, os: macos-15 }
+          # 22.04 for an older glibc, so the binary runs on more distributions.
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Check the tag matches the crate version
+        shell: bash
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          have=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          [ "$want" = "$have" ] || { echo "tag $GITHUB_REF_NAME but Cargo.toml says $have"; exit 1; }
+      - run: cargo build --release --locked -p clove-cli --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          name="clove-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir "$name"
+          cp "target/${{ matrix.target }}/release/clove" LICENSE README.md "$name/"
+          tar -czf "$name.tar.gz" "$name"
+          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: clove-*.tar.gz*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat clove-*.sha256 > checksums.txt
+          gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" --generate-notes \
+            clove-*.tar.gz checksums.txt
+
+  tap:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: clove
+      - uses: actions/checkout@v4
+        with:
+          repository: pierre-borckmans/homebrew-tap
+          ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
+          path: tap
+      - name: Render the formula
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p checksums.txt
+          sha() { grep "$1.tar.gz\$" checksums.txt | cut -d' ' -f1; }
+          mkdir -p tap/Formula
+          sed -e "s/@VERSION@/${GITHUB_REF_NAME#v}/g" \
+              -e "s/@SHA_MAC_ARM@/$(sha aarch64-apple-darwin)/" \
+              -e "s/@SHA_MAC_INTEL@/$(sha x86_64-apple-darwin)/" \
+              -e "s/@SHA_LINUX_ARM@/$(sha aarch64-unknown-linux-gnu)/" \
+              -e "s/@SHA_LINUX_INTEL@/$(sha x86_64-unknown-linux-gnu)/" \
+              clove/packaging/homebrew/clove.rb.in > tap/Formula/clove.rb
+          ! grep -q "@[A-Z_]*@" tap/Formula/clove.rb
+      - name: Push
+        working-directory: tap
+        run: |
+          git config user.name "clove release"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/clove.rb
+          git diff --cached --quiet && exit 0
+          git commit -m "clove ${GITHUB_REF_NAME#v}"
+          git push
