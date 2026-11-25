@@ -80,6 +80,25 @@ export type CloneInfo = {
   removing_when_free?: boolean;
 };
 
+/** A plain git worktree clove didn't make (clove_core::OtherWorktree). */
+export type OtherWorktree = {
+  name: string;
+  path: string;
+  branch: string | null;
+  head: string | null;
+  locked: boolean;
+  lock_reason: string | null;
+  /** git's reason when it would prune the registration (folder gone). */
+  prunable: string | null;
+  missing: boolean;
+  dirty: boolean | null;
+  /** Detached only: commits on no branch, which removing it would orphan. */
+  detached_commits: number | null;
+  pr: Pr | null;
+  /** Why clove won't remove or adopt it. */
+  blocker: string | null;
+};
+
 export type CheckLevel = "ok" | "warn" | "fail";
 export type Check = { name: string; level: CheckLevel; detail: string; fix: string | null };
 
@@ -109,6 +128,8 @@ export type OpRequest =
       detach?: boolean;
     }
   | { kind: "remove"; root: string; name: string; force?: boolean; delete_branch?: boolean }
+  | { kind: "remove_worktree"; root: string; path: string; delete_branch?: boolean }
+  | { kind: "adopt"; root: string; path: string; name?: string | null }
   | { kind: "deinit"; root: string };
 
 export type CloveEvent =
@@ -196,11 +217,23 @@ export type MergeCheck = {
   own_bytes: number;
 };
 
+export type WorktreeCheck = {
+  name: string;
+  path: string;
+  branch: string | null;
+  head: string | null;
+  pr: Pr | null;
+  verdict: Verdict;
+  reason: string;
+};
+
 export type Cleanup = {
   leftovers: string[];
   checks: MergeCheck[];
+  worktrees: WorktreeCheck[];
   warning: string | null;
   removed: string[];
+  removed_worktrees: string[];
   kept: string[];
 };
 

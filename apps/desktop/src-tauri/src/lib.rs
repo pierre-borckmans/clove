@@ -108,6 +108,7 @@ pub fn run() {
             commands::repos,
             commands::repo_status,
             commands::clones,
+            commands::worktrees,
             commands::refs,
             commands::doctor_machine,
             commands::doctor_repo,

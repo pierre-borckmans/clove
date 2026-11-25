@@ -61,6 +61,7 @@ pub fn load(tx: Sender<Msg>, root: PathBuf) {
             let c = Clove::open(&root).map_err(|e| format!("{e:#}"))?;
             let status = c.status().map_err(|e| format!("{e:#}"))?;
             let clones = c.list(true).map_err(|e| format!("{e:#}"))?;
+            let worktrees = c.other_worktrees(true).unwrap_or_default();
             let prs = c
                 .prune_cache()
                 .map(|p| p.checks.into_iter().map(|m| (m.clone.clone(), m)).collect())
@@ -70,6 +71,7 @@ pub fn load(tx: Sender<Msg>, root: PathBuf) {
                 summary: c.summary(),
                 status,
                 clones,
+                worktrees,
                 fields: clove_core::settings::fields(&c.root, &c.name, &c.config).unwrap_or_default(),
                 config: c.config.clone(),
                 prs,
@@ -198,40 +200,26 @@ fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Res
                 Ok(Outcome::RemovedWhenFree(users))
             }
         },
+        Task::RemoveWorktree {
+            path, delete_branch, ..
+        } => {
+            let opts = clove_core::RemoveOptions {
+                delete_branch,
+                ..Default::default()
+            };
+            c.remove_worktree(&path, &opts, r)
+                .map(|_| Outcome::Removed)
+                .map_err(e)
+        }
+        Task::Adopt { path, .. } => c
+            .adopt(&path, &clove_core::AdoptOptions::default(), r)
+            .map(Outcome::Clone)
+            .map_err(e),
         Task::Mount { name } => c.mount(&name).map(Outcome::Mounted).map_err(e),
         Task::Unmount { name } => c.unmount(&name, false).map(|_| Outcome::Unmounted).map_err(e),
-        Task::Gc { apply } => cleanup(&c, apply, r).map(Outcome::Gc).map_err(e),
+        Task::Gc { apply } => c.cleanup(apply, r).map(Outcome::Gc).map_err(e),
         Task::Doctor | Task::Service { .. } | Task::ShellInstall => unreachable!("handled above"),
     }
-}
-
-/// Leftovers from interrupted runs plus clones whose PR is merged. Applying
-/// removes both; a merged clone that can't go (busy, say) becomes a warning.
-fn cleanup(c: &Clove, apply: bool, r: &dyn clove_core::Reporter) -> anyhow::Result<Cleanup> {
-    let leftovers = c.gc(apply)?;
-    let (checks, warning) = c.merge_checks(true)?;
-    let mut removed = vec![];
-    if apply {
-        for m in checks.iter().filter(|m| m.verdict == clove_core::Verdict::Prune) {
-            let opts = clove_core::RemoveOptions {
-                force: false,
-                delete_branch: true,
-                branch_merged: true,
-            };
-            match c.remove(&m.clone, &opts, r) {
-                Ok(()) => removed.push(m.clone.clone()),
-                Err(err) => r.event(Event::Warn {
-                    message: format!("kept {}: {err:#}", m.clone),
-                }),
-            }
-        }
-    }
-    Ok(Cleanup {
-        leftovers,
-        checks,
-        warning,
-        removed,
-    })
 }
 
 /// A detached `clove remove-pending` (this binary), outside any clone, that

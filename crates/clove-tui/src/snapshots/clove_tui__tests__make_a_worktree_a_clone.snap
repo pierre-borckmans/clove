@@ -1,0 +1,32 @@
+---
+source: crates/clove-tui/src/tests.rs
+expression: s
+---
+╭ clove ───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ app  /work/app                                                                                  5 clones · 4 mounted │
+│ golden  ● gen 3 · a1b2c3d4e5 · 2h old · ↓4 behind origin/main · 1.3G                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ repos ─────────────╮╭ clones 5 · 3 git worktrees ────────────────────────────────────────────────────────────────────╮
+│ ▌ app          5 ● ││   NAME                    BRANCH                     CHANGES       AGE    SIZE  PATH           │
+│   mono         2 ● ││ ● feat-login              feat/login                 dirty ↑2       5m     14M  …eat-login/app │
+│   web       set up ││ ● fi╭ make a clone of app-docs ────────────────────────────────────╮3h    230M  …/fix-race/app │
+│                    ││ ○ sp│                                                              │3h     14M  …ike-cache/app │
+│                    ││ ● pi│  app-docs  on pierre/docs                                    │4d     14M  …ding-flow/app │
+│                    ││ ● de│  /work/app-docs                                              │3h     14M  …/detached/app │
+│                    ││     │                                                              │                           │
+│                    ││   OT│  makes a clove clone on the same branch, then removes this   │                           │
+│                    ││ ◇ ap│  worktree with `git worktree remove`. Ignored files in it    │            /work/app-docs │
+│                    ││ ◇ ap│  (build output, .env) go with it. If the clone fails, the    │            …ork/app-agent │
+│                    ││ ◇ ap│  worktree stays as it was.                                   │            /work/app-use  │
+│                    ││     │                                                              │                           │
+│                    ││     │                                       make clone    cancel   │                           │
+│                    ││     │                                                              │                           │
+│                    ││     ╰──────────────────────────────────────────────────────────────╯                           │
+│                    ││                                                                                                │
+│ ────────────────── ││                                                                                                │
+│ s settings         ││                                                                                                │
+│ g cleanup          ││                                                                                                │
+│ D doctor           ││                                                                                                │
+│ S service          ││                                                                                                │
+╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ⏎ make clone  ←→ move  esc cancel

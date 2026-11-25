@@ -73,6 +73,10 @@ export function describe(req: OpRequest): { title: string; subject: string } {
       };
     case "remove":
       return { title: "Remove clone", subject: req.name };
+    case "remove_worktree":
+      return { title: "Remove git worktree", subject: repoName(req.path) };
+    case "adopt":
+      return { title: "Make a clone", subject: repoName(req.path) };
     case "deinit":
       return { title: "Delete golden image", subject: repo };
   }
@@ -187,7 +191,7 @@ export function wireOps(qc: QueryClient, hooks: Hooks) {
         description: `By ${later.join(", ")}. clove removes it as soon as ${later.length === 1 ? "it exits" : "they exit"}.`,
       });
     } else if (op.status === "ok") {
-      const clone = op.req.kind === "new" ? (op.result as CloneInfo | null) : null;
+      const clone = op.req.kind === "new" || op.req.kind === "adopt" ? (op.result as CloneInfo | null) : null;
       toast.success(doneTitle(op), {
         id: op.id,
         description:
@@ -211,7 +215,12 @@ function doneTitle(op: Op): string {
       return `Clone ${c?.name ?? op.subject} is ready`;
     }
     case "remove":
+    case "remove_worktree":
       return `Removed ${op.subject}`;
+    case "adopt": {
+      const c = op.result as CloneInfo | null;
+      return `${op.subject} is now clone ${c?.name ?? ""}`;
+    }
     case "deinit":
       return `Deleted the golden image of ${op.subject}`;
   }

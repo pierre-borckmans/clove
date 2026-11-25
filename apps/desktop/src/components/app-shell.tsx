@@ -11,6 +11,7 @@ import { NewCloneDialog } from "./new-clone-dialog";
 import { OpsPanel } from "./ops-panel";
 import { RemoveCloneDialog } from "./remove-clone-dialog";
 import { Sidebar } from "./sidebar";
+import { AdoptDialog, RemoveWorktreeDialog } from "./worktree-dialogs";
 
 export function AppShell() {
   const navigate = useNavigate();
@@ -71,6 +72,8 @@ export function AppShell() {
       <NewCloneDialog />
       <AddRepoDialog />
       <RemoveCloneDialog />
+      <RemoveWorktreeDialog />
+      <AdoptDialog />
       <Toaster position="bottom-right" offset={{ right: 16, bottom: 16 }} />
     </div>
   );

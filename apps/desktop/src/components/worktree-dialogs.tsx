@@ -1,0 +1,126 @@
+import { TriangleAlert } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Switch } from "@/components/ui/switch";
+import { tildify } from "@/lib/format";
+import { startOp } from "@/lib/ops";
+import { setUi, useUi } from "@/lib/ui";
+
+function Blocker({ text }: { text: string }) {
+  return (
+    <div className="flex gap-2.5 rounded-lg border border-amber/30 bg-amber/[0.07] px-3 py-2.5 text-[12.5px] leading-relaxed">
+      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber" />
+      <div className="selectable">{text}</div>
+    </div>
+  );
+}
+
+/** Removes a plain git worktree with `git worktree remove`, never forced. */
+export function RemoveWorktreeDialog() {
+  const { removeWorktree } = useUi();
+  const [deleteBranch, setDeleteBranch] = useState(false);
+  const w = removeWorktree?.worktree;
+
+  useEffect(() => {
+    if (removeWorktree) setDeleteBranch(false);
+  }, [removeWorktree]);
+
+  return (
+    <AlertDialog open={!!removeWorktree} onOpenChange={(o) => !o && setUi({ removeWorktree: null })}>
+      <AlertDialogContent className="max-w-[440px] gap-5 rounded-xl sm:max-w-[440px]">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="text-[15px]">
+            Remove worktree <span className="font-mono">{w?.name}</span>?
+          </AlertDialogTitle>
+          <AlertDialogDescription className="text-[13px] leading-relaxed">
+            A plain git worktree at <span className="font-mono text-[12px]">{w ? tildify(w.path) : ""}</span>. clove
+            runs <span className="font-mono text-[12px]">git worktree remove</span> without force, so locked or modified
+            worktrees stay. Commits on the branch stay in the repository.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+
+        {w?.blocker && <Blocker text={w.blocker} />}
+
+        {w?.branch && !w.blocker && (
+          <label className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5">
+            <span className="text-[13px]">
+              Also delete branch <span className="font-mono text-[12.5px]">{w.branch}</span>
+              <span className="block text-[12px] text-muted-foreground">
+                Only if it is merged; otherwise clove keeps it.
+              </span>
+            </span>
+            <Switch checked={deleteBranch} onCheckedChange={setDeleteBranch} />
+          </label>
+        )}
+
+        <AlertDialogFooter>
+          <AlertDialogCancel className="h-8 text-[13px]">Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={!!w?.blocker}
+            className="h-8 bg-destructive text-[13px] text-white hover:bg-destructive/90"
+            onClick={() => {
+              if (!removeWorktree) return;
+              void startOp({
+                kind: "remove_worktree",
+                root: removeWorktree.root,
+                path: removeWorktree.worktree.path,
+                delete_branch: deleteBranch,
+              });
+            }}
+          >
+            Remove worktree
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+/** Turns a plain git worktree into a clone on the same branch. */
+export function AdoptDialog() {
+  const { adopt } = useUi();
+  const w = adopt?.worktree;
+  const blocker = w?.blocker ?? (w && !w.branch ? `${w.name} is detached; a clone takes a branch` : null);
+  return (
+    <AlertDialog open={!!adopt} onOpenChange={(o) => !o && setUi({ adopt: null })}>
+      <AlertDialogContent className="max-w-[460px] gap-5 rounded-xl sm:max-w-[460px]">
+        <AlertDialogHeader>
+          <AlertDialogTitle className="text-[15px]">
+            Make <span className="font-mono">{w?.name}</span> a clone?
+          </AlertDialogTitle>
+          <AlertDialogDescription className="text-[13px] leading-relaxed">
+            clove makes a clone on <span className="font-mono text-[12px]">{w?.branch ?? "its branch"}</span>, with the
+            golden image's warm dependencies, then removes this worktree with{" "}
+            <span className="font-mono text-[12px]">git worktree remove</span>. Ignored files in it (build output, .env)
+            go with it. If the clone fails, the worktree stays as it was.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+
+        {blocker && <Blocker text={blocker} />}
+
+        <AlertDialogFooter>
+          <AlertDialogCancel className="h-8 text-[13px]">Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={!!blocker}
+            className="h-8 text-[13px]"
+            onClick={() => {
+              if (!adopt) return;
+              void startOp({ kind: "adopt", root: adopt.root, path: adopt.worktree.path });
+            }}
+          >
+            Make clone
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}

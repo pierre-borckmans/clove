@@ -5,10 +5,11 @@
 use crate::git;
 use crate::repo::{CloneInfo, Clove, read_json, write_json};
 use crate::util::now_unix;
+use crate::worktrees::OtherWorktree;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -50,14 +51,92 @@ pub struct MergeCheck {
     pub own_bytes: u64,
 }
 
+/// A plain git worktree (not a clone) judged the same way: `Prune` means
+/// `git worktree remove` loses nothing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeCheck {
+    pub name: String,
+    pub path: PathBuf,
+    pub branch: Option<String>,
+    pub head: Option<String>,
+    pub pr: Option<Pr>,
+    pub verdict: Verdict,
+    pub reason: String,
+}
+
 /// Last check, so `clove ls` can show PRs without asking GitHub.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PruneCache {
     pub checked_at: u64,
     pub checks: Vec<MergeCheck>,
+    #[serde(default)]
+    pub worktrees: Vec<WorktreeCheck>,
+}
+
+/// Clones and plain worktrees from one PR check.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Checks {
+    pub clones: Vec<MergeCheck>,
+    pub worktrees: Vec<WorktreeCheck>,
+    /// GitHub could not be asked; only local proofs counted.
+    pub warning: Option<String>,
+}
+
+/// What cleanup found and, when applied, did: leftovers from interrupted
+/// runs, merged clones and merged plain worktrees.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Cleanup {
+    pub leftovers: Vec<String>,
+    pub checks: Vec<MergeCheck>,
+    pub worktrees: Vec<WorktreeCheck>,
+    /// GitHub could not be asked; only local proofs counted.
+    pub warning: Option<String>,
+    /// Clones removed.
+    pub removed: Vec<String>,
+    /// Plain worktrees removed.
+    pub removed_worktrees: Vec<PathBuf>,
+    /// Merged ones that could not be removed, with why.
+    pub kept: Vec<String>,
 }
 
 impl Clove {
+    /// Finds leftovers and merged clones and worktrees. `apply` removes the
+    /// leftovers and every `Prune` one, with its branch; a failure becomes a
+    /// warning and a `kept` line. Shared by the TUI and the app.
+    pub fn cleanup(&self, apply: bool, r: &dyn crate::events::Reporter) -> Result<Cleanup> {
+        let leftovers = self.gc(apply)?;
+        let checks = self.all_merge_checks(true)?;
+        let mut out = Cleanup {
+            leftovers,
+            checks: checks.clones,
+            worktrees: checks.worktrees,
+            warning: checks.warning,
+            ..Default::default()
+        };
+        if !apply {
+            return Ok(out);
+        }
+        let opts = crate::ops::RemoveOptions {
+            force: false,
+            delete_branch: true,
+            branch_merged: true,
+        };
+        for m in out.checks.iter().filter(|m| m.verdict == Verdict::Prune) {
+            match self.remove(&m.clone, &opts, r) {
+                Ok(()) => out.removed.push(m.clone.clone()),
+                Err(e) => {
+                    let msg = format!("kept {}: {e:#}", m.clone);
+                    r.event(crate::events::Event::Warn { message: msg.clone() });
+                    out.kept.push(msg);
+                }
+            }
+        }
+        let (removed, kept) = self.remove_merged_worktrees(&out.worktrees, r);
+        out.removed_worktrees = removed;
+        out.kept.extend(kept);
+        Ok(out)
+    }
+
     fn prune_cache_path(&self) -> std::path::PathBuf {
         self.state.join("prune.json")
     }
@@ -71,6 +150,13 @@ impl Clove {
     /// Returns the checks and a warning when GitHub could not be asked (then
     /// only local proofs count, and nothing is called merged without one).
     pub fn merge_checks(&self, mount: bool) -> Result<(Vec<MergeCheck>, Option<String>)> {
+        let c = self.all_merge_checks(mount)?;
+        Ok((c.clones, c.warning))
+    }
+
+    /// [`Clove::merge_checks`] plus the repo's plain git worktrees, in the
+    /// same GitHub request. Both land in the prune cache.
+    pub fn all_merge_checks(&self, mount: bool) -> Result<Checks> {
         let mut infos = vec![];
         for name in self.clone_names()? {
             let was_mounted = self.info(&name, false).is_ok_and(|i| i.mounted);
@@ -84,8 +170,23 @@ impl Clove {
                 let _ = self.unmount(&name, false);
             }
         }
+        let others = self.other_worktrees(true).unwrap_or_default();
+        let base_short = self
+            .config
+            .base
+            .split_once('/')
+            .map_or(self.config.base.as_str(), |(_, b)| b);
+        let mut asks: Vec<(String, String)> = infos
+            .iter()
+            .filter_map(|i| Some((i.name.clone(), i.branch.clone()?)))
+            .collect();
+        // A worktree on the base branch has no PR of its own.
+        asks.extend(others.iter().filter_map(|w| {
+            let b = w.branch.clone().filter(|b| b != base_short)?;
+            Some((wt_key(&w.path), b))
+        }));
         let (prs, warning) = match github_repo(&self.root, &self.config.base) {
-            Some((owner, repo)) => match lookup_prs(&self.root, &owner, &repo, &infos) {
+            Some((owner, repo)) => match lookup_prs(&self.root, &owner, &repo, &asks) {
                 Ok(p) => (p, None),
                 Err(e) => (
                     BTreeMap::new(),
@@ -101,14 +202,74 @@ impl Clove {
             .iter()
             .map(|i| self.classify(i, prs.get(&i.name).cloned()))
             .collect();
+        let worktrees: Vec<WorktreeCheck> = others
+            .iter()
+            .map(|w| self.classify_worktree(w, prs.get(&wt_key(&w.path)).cloned()))
+            .collect();
         let _ = write_json(
             &self.prune_cache_path(),
             &PruneCache {
                 checked_at: now_unix(),
                 checks: checks.clone(),
+                worktrees: worktrees.clone(),
             },
         );
-        Ok((checks, warning))
+        Ok(Checks {
+            clones: checks,
+            worktrees,
+            warning,
+        })
+    }
+
+    /// Plain worktrees only go on a merged PR's proof: no PR (a detached
+    /// checkout, another tool's worktree) always stays.
+    pub(crate) fn classify_worktree(&self, w: &OtherWorktree, pr: Option<Pr>) -> WorktreeCheck {
+        let mk = |verdict, reason: String, pr: Option<Pr>| WorktreeCheck {
+            name: w.name.clone(),
+            path: w.path.clone(),
+            branch: w.branch.clone(),
+            head: w.head.clone(),
+            pr,
+            verdict,
+            reason,
+        };
+        if w.missing {
+            return mk(Verdict::Keep, "folder is gone".into(), pr);
+        }
+        let (Some(_), Some(head)) = (&w.branch, w.head.clone()) else {
+            return mk(Verdict::Keep, "detached, no PR".into(), pr);
+        };
+        let proven = match &pr {
+            Some(p) if p.state == PrState::Merged => {
+                match merged_proof(&self.root, &self.config.base, &head, p) {
+                    Ok(r) => r,
+                    Err(r) => return mk(Verdict::Review, r, pr),
+                }
+            }
+            Some(p) => return mk(Verdict::Keep, pr_word(p), pr),
+            None => return mk(Verdict::Keep, "no PR".into(), pr),
+        };
+        if w.locked {
+            let why = w
+                .lock_reason
+                .as_deref()
+                .map(|r| format!(" ({r})"))
+                .unwrap_or_default();
+            return mk(Verdict::Review, format!("{proven}, but locked{why}"), pr);
+        }
+        match w.dirty {
+            Some(true) => mk(
+                Verdict::Review,
+                format!("{proven}, but has uncommitted changes"),
+                pr,
+            ),
+            None => mk(
+                Verdict::Review,
+                format!("{proven}, but couldn't check for changes"),
+                pr,
+            ),
+            Some(false) => mk(Verdict::Prune, proven, pr),
+        }
     }
 
     fn classify(&self, i: &CloneInfo, pr: Option<Pr>) -> MergeCheck {
@@ -128,35 +289,11 @@ impl Clove {
         };
         let in_base = git::ok(root, &["merge-base", "--is-ancestor", &head, base]);
         let proven = match &pr {
-            Some(p) if p.state == PrState::Merged => {
-                ensure_object(root, &p.head_oid, p.number);
-                if p.head_oid.starts_with(&head) || head.starts_with(&p.head_oid) {
-                    Some(format!("PR #{} merged", p.number))
-                } else if git::ok(root, &["merge-base", "--is-ancestor", &head, &p.head_oid]) {
-                    Some(format!("PR #{} merged (contains this tip)", p.number))
-                } else if in_base || merge_is_noop(root, base, &head) {
-                    Some(format!("PR #{} merged, nothing left that {base} lacks", p.number))
-                } else {
-                    let extra = git::count_commits(root, &format!("{}..{head}", p.head_oid)).unwrap_or(0);
-                    return mk(
-                        Verdict::Review,
-                        format!(
-                            "PR #{} merged, but {extra} commit{} after it",
-                            p.number,
-                            if extra == 1 { "" } else { "s" }
-                        ),
-                        pr,
-                    );
-                }
-            }
-            Some(p) => {
-                let s = if p.state == PrState::Open {
-                    "open"
-                } else {
-                    "closed, not merged"
-                };
-                return mk(Verdict::Keep, format!("PR #{} {s}", p.number), pr);
-            }
+            Some(p) if p.state == PrState::Merged => match merged_proof(root, base, &head, p) {
+                Ok(r) => Some(r),
+                Err(r) => return mk(Verdict::Review, r, pr),
+            },
+            Some(p) => return mk(Verdict::Keep, pr_word(p), pr),
             // No PR: a branch may be fresh work or a pulled base, which look the
             // same, so it stays. A detached checkout of base history holds nothing.
             None if in_base && i.branch.is_none() => Some(format!("detached, already in {base}")),
@@ -176,6 +313,41 @@ impl Clove {
             ),
             Some(false) => mk(Verdict::Prune, reason, pr),
         }
+    }
+}
+
+/// Key for a plain worktree among the clone names in a PR lookup.
+fn wt_key(path: &Path) -> String {
+    format!("worktree:{}", path.display())
+}
+
+fn pr_word(p: &Pr) -> String {
+    let s = if p.state == PrState::Open {
+        "open"
+    } else {
+        "closed, not merged"
+    };
+    format!("PR #{} {s}", p.number)
+}
+
+/// Whether merged PR `p` covers `head`: Ok with the proof, or Err saying
+/// what came after it.
+fn merged_proof(root: &Path, base: &str, head: &str, p: &Pr) -> Result<String, String> {
+    ensure_object(root, &p.head_oid, p.number);
+    let in_base = git::ok(root, &["merge-base", "--is-ancestor", head, base]);
+    if p.head_oid.starts_with(head) || head.starts_with(&p.head_oid) {
+        Ok(format!("PR #{} merged", p.number))
+    } else if git::ok(root, &["merge-base", "--is-ancestor", head, &p.head_oid]) {
+        Ok(format!("PR #{} merged (contains this tip)", p.number))
+    } else if in_base || merge_is_noop(root, base, head) {
+        Ok(format!("PR #{} merged, nothing left that {base} lacks", p.number))
+    } else {
+        let extra = git::count_commits(root, &format!("{}..{head}", p.head_oid)).unwrap_or(0);
+        Err(format!(
+            "PR #{} merged, but {extra} commit{} after it",
+            p.number,
+            if extra == 1 { "" } else { "s" }
+        ))
     }
 }
 
@@ -220,14 +392,18 @@ fn which(bin: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file()))
 }
 
-/// One GraphQL request for every clone: PRs whose head is the clone's branch
+/// One GraphQL request for every (id, branch): PRs whose head is the branch
 /// (newest first, same repo only), or the PR itself for `pr/N` branches.
-fn lookup_prs(root: &Path, owner: &str, repo: &str, infos: &[CloneInfo]) -> Result<BTreeMap<String, Pr>> {
+fn lookup_prs(
+    root: &Path,
+    owner: &str,
+    repo: &str,
+    asks: &[(String, String)],
+) -> Result<BTreeMap<String, Pr>> {
     const FIELDS: &str = "number state headRefOid title url isCrossRepository";
     let mut parts = vec![];
     let mut keys = BTreeMap::new();
-    for (n, i) in infos.iter().enumerate() {
-        let Some(b) = &i.branch else { continue };
+    for (n, (id, b)) in asks.iter().enumerate() {
         let key = format!("c{n}");
         let pr_number = b.strip_prefix("pr/").and_then(|s| s.parse::<u32>().ok());
         parts.push(match pr_number {
@@ -237,7 +413,7 @@ fn lookup_prs(root: &Path, owner: &str, repo: &str, infos: &[CloneInfo]) -> Resu
                 serde_json::to_string(b)?
             ),
         });
-        keys.insert(key, i.name.clone());
+        keys.insert(key, id.clone());
     }
     if parts.is_empty() {
         return Ok(BTreeMap::new());

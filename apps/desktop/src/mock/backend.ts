@@ -20,7 +20,7 @@ import type {
   RepoStatus,
   RepoSummary,
 } from "@/lib/types";
-import { CARGO_OUTPUT, type MockRepo, machineChecks, PNPM_OUTPUT, seed } from "./fixtures";
+import { CARGO_OUTPUT, type MockRepo, machineChecks, PNPM_OUTPUT, seed, worktreeCheck } from "./fixtures";
 
 const repos = seed();
 let serviceOn = true;
@@ -225,6 +225,59 @@ async function runOp(id: string, op: OpRequest): Promise<unknown> {
       if (op.delete_branch && c.branch) r.refs = r.refs.filter((x) => !(x.kind === "local" && x.name === c.branch));
       return null;
     }
+    case "remove_worktree": {
+      const r = get(op.root);
+      const w = r.worktrees.find((x) => x.path === op.path);
+      if (!w) throw new Error(`${op.path} is not a plain git worktree of ${r.status.name}`);
+      if (w.blocker) {
+        await sleep(120);
+        throw new Error(w.blocker);
+      }
+      await play(id, [{ step: "git worktree remove", ms: 260 }]);
+      r.worktrees = r.worktrees.filter((x) => x.path !== op.path);
+      if (op.delete_branch && w.branch) r.refs = r.refs.filter((x) => !(x.kind === "local" && x.name === w.branch));
+      return null;
+    }
+    case "adopt": {
+      const r = get(op.root);
+      const w = r.worktrees.find((x) => x.path === op.path);
+      if (!w) throw new Error(`${op.path} is not a plain git worktree of ${r.status.name}`);
+      if (w.blocker || !w.branch) {
+        await sleep(120);
+        throw new Error(w.blocker ?? `${w.name} is detached; a clone takes a branch`);
+      }
+      const name = op.name?.trim() || sanitize(w.branch);
+      emit("op-event", {
+        id,
+        at: Date.now(),
+        event: { event: "info", message: `detaching ${w.name} so the clone can take ${w.branch}` },
+      });
+      await play(id, [
+        { step: "fetch", ms: 380 },
+        { step: "clone image", ms: 24 },
+        { step: "mount", ms: 290 },
+        { step: "checkout", ms: 170 },
+        ...r.status.steps.map((s) => ({ step: `setup ${s.name}`, ms: 0, skip: "unchanged since golden" })),
+      ]);
+      const info: CloneInfo = {
+        name,
+        path: `${r.status.clone_root}/${name}/${r.status.name}`,
+        mounted: true,
+        branch: w.branch,
+        head: w.head,
+        dirty: false,
+        ahead: 0,
+        behind: 0,
+        image_bytes: 6 * MB,
+        created_at: now(),
+        golden_generation: r.status.golden?.generation ?? 1,
+        timings: [],
+        failed_steps: [],
+      };
+      r.clones.unshift(info);
+      r.worktrees = r.worktrees.filter((x) => x.path !== op.path);
+      return info;
+    }
     case "refresh": {
       const r = get(op.root);
       const g = r.status.golden as GoldenStatus;
@@ -279,6 +332,7 @@ async function runOp(id: string, op: OpRequest): Promise<unknown> {
         clones: [],
         gc: [],
         prs: [],
+        worktrees: [],
         stale: null,
         layers: [],
         refs: [{ name: "origin/main", kind: "remote", age: 600, subject: "initial commit" }],
@@ -362,6 +416,7 @@ const commands: Record<string, (a: Args) => unknown> = {
   repo_status: (a) => status(get(a.root as string)),
   clones: (a) =>
     get(a.root as string).clones.map((c) => (c.mounted ? c : { ...c, dirty: null, ahead: null, behind: null })),
+  worktrees: (a) => get(a.root as string).worktrees,
   refs: (a): Refs => {
     const r = get(a.root as string);
     return {
@@ -482,15 +537,21 @@ const commands: Record<string, (a: Args) => unknown> = {
     const r = get(a.root as string);
     const leftovers = [...r.gc];
     const checks = r.prs.filter((m) => r.clones.some((c) => c.name === m.clone));
+    const worktrees = r.worktrees.map(worktreeCheck);
     const removed: string[] = [];
+    const removed_worktrees: string[] = [];
     if (a.apply) {
       r.gc = [];
       for (const m of checks.filter((m) => m.verdict === "prune")) {
         r.clones = r.clones.filter((c) => c.name !== m.clone);
         removed.push(m.clone);
       }
+      for (const m of worktrees.filter((m) => m.verdict === "prune")) {
+        r.worktrees = r.worktrees.filter((w) => w.path !== m.path);
+        removed_worktrees.push(m.path);
+      }
     }
-    return { leftovers, checks, warning: null, removed, kept: [] };
+    return { leftovers, checks, worktrees, warning: null, removed, removed_worktrees, kept: [] };
   },
   installed_apps: (): AppId[] => ["terminal", "ghostty", "vscode", "cursor", "zed"],
   open_in: () => null,

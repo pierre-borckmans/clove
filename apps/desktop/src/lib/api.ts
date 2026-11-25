@@ -8,6 +8,7 @@ import type {
   Layer,
   MergeCheck,
   OpRequest,
+  OtherWorktree,
   Refs,
   RepoConfig,
   RepoStatus,
@@ -30,6 +31,7 @@ export const api = {
   status: (root: string) =>
     invoke<RepoStatus>("repo_status", { root }).then((s) => ({ ...s, steps: s.steps.map(normStep) })),
   clones: (root: string, status: boolean) => invoke<CloneInfo[]>("clones", { root, status }),
+  worktrees: (root: string, status: boolean) => invoke<OtherWorktree[]>("worktrees", { root, status }),
   refs: (root: string) => invoke<Refs>("refs", { root }),
   doctorMachine: () => invoke<Check[]>("doctor_machine"),
   doctorRepo: (root: string) => invoke<Check[]>("doctor_repo", { root }),
