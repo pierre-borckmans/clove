@@ -59,7 +59,11 @@ const total = lengths.reduce((a, l) => a + l.frames, 0) - XFADE * (lengths.lengt
 
 function Intro() {
   return (
-    <AbsoluteFill>
+    <AbsoluteFill
+      style={{
+        translate: "-3px 0px"
+      }}
+    >
       <Backdrop />
       <TransitionSeries>
         {lengths.flatMap(({ id, frames }, i) => {

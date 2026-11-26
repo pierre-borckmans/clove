@@ -205,7 +205,7 @@ export function Clash() {
         </div>
         <div style={{ fontSize: 19, marginTop: 18, lineHeight: 1.7 }}>
           <Out at={sw} color={c.muted}>codex ❯ git checkout fix/race</Out>
-          <Out at={k("edits", 0, -2)} color={c.red}>✗ claude's login edits, now on fix/race</Out>
+          <Out at={k("login", 0, -2)} color={c.red}>✗ claude's login fix, now in codex's PR</Out>
         </div>
       </Glass>
     </Stage>
@@ -221,8 +221,8 @@ function Quote({ at }: { at: number }) {
     <div
       style={{
         position: "absolute",
-        top: 150,
-        left: 230,
+        top: 280,
+        left: 370,
         opacity: p,
         transform: `translateY(${(1 - p) * 20}px) rotate(${(1 - p) * -3}deg)`,
         transformOrigin: "bottom left",
@@ -267,7 +267,7 @@ function Missing({ label, hint, at }: { label: string; hint: string; at: number 
           <span style={{ position: "absolute", left: 0, top: "54%", height: 3, width: `${strike * 100}%`, background: c.red, borderRadius: 2 }} />
         </span>
       </div>
-      <div style={{ fontFamily: mono, fontSize: 18, color: c.dim, marginTop: 8, marginLeft: 44 }}>{hint}</div>
+      <div style={{ fontFamily: mono, fontSize: 18, color: c.muted, marginTop: 8, marginLeft: 44 }}>{hint}</div>
     </Glass>
   );
 }
@@ -292,6 +292,9 @@ export function Empty() {
             </Out>
             <Out at={cue("empty", "empty", 0, 10)} color={c.red}>
               protoc: command not found
+            </Out>
+            <Out at={cue("empty", "vibes", 0, -4)} color={c.bottle}>
+              ✓ vibes
             </Out>
           </Terminal>
         </div>
@@ -329,7 +332,11 @@ function Ring({ value, size = 360, stroke = 14, color = c.peel }: { value: numbe
 
 /** 3. Getting ready: over a minute, gigabytes, every time. */
 export function Cost() {
+  const frame = useCurrentFrame();
   const durationInFrames = useSceneLength();
+  const fanAt = cue("cost", "fan", 0, -6);
+  const fan = useIn(fanAt, 14);
+  const rpm = Math.round(interpolate(frame, [fanAt, fanAt + 30], [2400, 6800], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) + Math.sin(frame * 1.7) * 60);
   const k = useRamp(10, durationInFrames - 34, Easing.inOut(Easing.quad));
   const t = k * 72;
   const rows: [string, number, number][] = [
@@ -374,6 +381,9 @@ export function Cost() {
           <Ring value={k} />
           <div style={{ fontFamily: serif, fontSize: 132, letterSpacing: -4, lineHeight: 1 }}>{Math.round(t)}s</div>
           <div style={{ fontFamily: mono, fontSize: 28, color: c.peel, marginTop: 12 }}>+{(k * 3.1).toFixed(1)} GB</div>
+          <div style={{ position: "absolute", top: 400, width: 400, textAlign: "center", fontFamily: mono, fontSize: 22, color: c.red, opacity: fan, transform: `translateX(${Math.sin(frame * 2.3) * 1.5 * fan}px)` }}>
+            fan · {rpm.toLocaleString("en-US")} rpm
+          </div>
         </div>
       </div>
     </Stage>
@@ -806,6 +816,9 @@ export function Fast() {
             <span style={{ color: c.bottle, fontStyle: "italic" }}>70×</span> faster,{" "}
             <span style={{ color: c.bottle, fontStyle: "italic" }}>500×</span> less disk
           </div>
+          <div style={{ fontFamily: mono, fontSize: 20, color: c.muted, marginTop: 18, opacity: useIn(cue("fast", "fan", 0, -4), 14) }}>
+            fan · 1,200 rpm · idle
+          </div>
         </Glass>
       </div>
     </Stage>
@@ -1221,7 +1234,7 @@ export function Features() {
         at={d}
         kicker="clove agents install"
         shot={
-          <Terminal title="~" width={720}>
+          <Terminal title="~/src/mono" width={720}>
             <Typed text="clove agents install" start={d + 8} cps={28} />
             <Out at={d + 30} color={c.bottle}>
               ✓ Claude Code skill

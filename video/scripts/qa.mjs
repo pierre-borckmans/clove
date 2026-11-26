@@ -3,7 +3,7 @@
 import { bundle } from "@remotion/bundler";
 import { renderStill, selectComposition } from "@remotion/renderer";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 
 const script = JSON.parse(readFileSync("src/script.json", "utf8"));
 const { durations } = JSON.parse(readFileSync("src/durations.json", "utf8"));
@@ -12,6 +12,7 @@ const TAIL = Object.fromEntries([...root.matchAll(/^\s+(\w+): ([\d.]+),$/gm)].ma
 const LEAD = 10, XFADE = 14, FPS = 30;
 const only = process.argv.slice(2);
 
+if (!process.argv[2]) rmSync("out/qa", { recursive: true, force: true });
 mkdirSync("out/qa", { recursive: true });
 const serveUrl = await bundle({ entryPoint: "src/index.ts" });
 const composition = await selectComposition({ serveUrl, id: "Intro" });

@@ -9,7 +9,7 @@
   },
   {
     "id": "clash",
-    "say": "But in one checkout, they clash. One switches branches under another, and edits land in the wrong place."
+    "say": "But in one checkout, they clash. One switches branches under another, and your login fix ends up in somebody else's pull request."
   },
   {
     "id": "worktree",
@@ -17,7 +17,7 @@
   },
   {
     "id": "empty",
-    "say": "But it starts empty. No dependencies, no dev shell, and none of your local files."
+    "say": "But it starts empty. No dependencies, no dev shell, none of your local files. Just vibes."
   },
   {
     "id": "hacks",
@@ -29,7 +29,7 @@
   },
   {
     "id": "cost",
-    "say": "On a big monorepo, that's over a minute and gigabytes of disk, per worktree."
+    "say": "On a big monorepo, that's over a minute and gigabytes of disk, per worktree. Your laptop fan has opinions."
   },
   {
     "id": "logo",
@@ -53,7 +53,7 @@
   },
   {
     "id": "fast",
-    "say": "So a new worktree is ready in about a second. Everything is already there, and it takes almost no disk."
+    "say": "So a new worktree is ready in about a second. Everything is already there, it takes almost no disk, and your fan can finally relax."
   },
   {
     "id": "steps",
@@ -65,7 +65,7 @@
   },
   {
     "id": "features",
-    "say": "It brings your clones up to date, with Claude resolving the conflicts. It cleans up after merged pull requests. And it teaches your agents to use it."
+    "say": "It brings your clones up to date, with Claude resolving the conflicts. It cleans up after merged pull requests. And it teaches your agents to use it, so you don't have to."
   },
   {
     "id": "outro",
