@@ -260,4 +260,65 @@ impl Clove {
             failed_steps: info.failed_steps,
         })
     }
+
+    /// What the resolver is told: where things stand and what it may do.
+    pub fn resolve_prompt(&self, name: &str) -> Result<String> {
+        let (wt, admin) = self.update_target(name)?;
+        let strategy =
+            operation(&admin).with_context(|| format!("`{name}` has no update stopped on conflicts"))?;
+        let branch = git::current_branch(&wt).unwrap_or_else(|| "the branch".into());
+        let base = &self.config.base;
+        let files = conflicted(&wt);
+        let what = match strategy {
+            Strategy::Rebase => format!("A rebase of {branch} onto {base}"),
+            Strategy::Merge => format!("A merge of {base} into {branch}"),
+        };
+        Ok(format!(
+            "{what} stopped on conflicts in: {files}.\n\
+             Resolve them where both sides' intent is clear. Regenerate lockfiles and generated code \
+             (pnpm install, the repo's codegen) instead of merging them by hand. If it's cheap, build or \
+             test what you touched.\n\
+             Then `git add` the files and run `clove update --continue {name}`. It may stop again on the next \
+             commit's conflicts; resolve those the same way.\n\
+             If a conflict needs a decision only the user can make, stop and explain it instead. Never push, \
+             and never abort the {op}.",
+            files = if files.is_empty() {
+                "(none left: just continue)".to_string()
+            } else {
+                files.join(", ")
+            },
+            op = strategy.word(),
+        ))
+    }
+
+    /// The configured resolver, ready to run interactively in the clone with
+    /// the prompt as its last argument, and the name to show for it.
+    pub fn resolver_command(&self, name: &str) -> Result<(String, std::process::Command)> {
+        let resolver = self
+            .config
+            .update
+            .resolver
+            .clone()
+            .context("no resolver configured (update.resolver is off)")?;
+        let prompt = self.resolve_prompt(name)?;
+        let (wt, _) = self.update_target(name)?;
+        let mut cmd = std::process::Command::new("sh");
+        // The setting may carry flags (`claude --model opus`): the shell splits it.
+        cmd.arg("-c")
+            .arg(format!("{resolver} \"$1\""))
+            .arg("sh")
+            .arg(prompt)
+            .current_dir(wt);
+        Ok((resolver_name(&resolver), cmd))
+    }
+}
+
+/// "Claude" for `claude --model opus`.
+pub fn resolver_name(resolver: &str) -> String {
+    let word = resolver.split_whitespace().next().unwrap_or("resolver");
+    let word = word.rsplit('/').next().unwrap_or(word);
+    let mut c = word.chars();
+    c.next()
+        .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+        .unwrap_or_default()
 }

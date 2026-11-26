@@ -168,6 +168,7 @@ pub fn run() {
             commands::installed_apps,
             commands::open_in,
             commands::copy_text,
+            commands::resolve_in_terminal,
             commands::repo_config,
             commands::edit_config,
             commands::config_set,

@@ -1271,7 +1271,7 @@ fn changes_tip(app: &App, c: &CloneInfo, base: &str) -> Option<Tip> {
         out.push(format!("{issue}: g finishes removing it"));
     } else if let Some(op) = c.operation {
         out.push(format!(
-            "{}: stopped on conflicts; fix them and git add them, then U continues, X aborts",
+            "{}: stopped on conflicts; R resolves them with the resolver, or fix and git add them, then U continues, X aborts",
             op.word()
         ));
     } else if c.removing_when_free {
@@ -1804,6 +1804,7 @@ fn hints(app: &App) -> Vec<Hint> {
             ("⇧tab", "field", BackTab),
             ("esc", "cancel", Esc),
         ],
+        Some(Modal::ResolveOffer(_)) => vec![("y", "resolve", Char('y')), ("esc", "no", Esc)],
         Some(Modal::Adopt(a)) => vec![
             if a.focus_cancel {
                 ("⏎", "cancel", Enter)
@@ -1919,7 +1920,11 @@ fn hints(app: &App) -> Vec<Hint> {
                     ("m", "mount", Char('m'))
                 });
                 if c.operation.is_some() {
-                    v.extend([("U", "continue", Char('U')), ("X", "abort", Char('X'))]);
+                    v.extend([
+                        ("R", "resolve", Char('R')),
+                        ("U", "continue", Char('U')),
+                        ("X", "abort", Char('X')),
+                    ]);
                 } else {
                     v.push(("U", "update", Char('U')));
                 }
@@ -2058,6 +2063,9 @@ fn hint_tip(k: &str, label: &str) -> Option<&'static str> {
         ("u", "unmount") => "unmount the clone; its files stay in the image",
         ("U", "update") => "bring the clone onto the latest base, then rerun changed setup steps",
         ("U", "continue") => "finish the update once the conflicts are fixed and added",
+        ("R", "resolve") => {
+            "hand the conflicts to the resolver (update.resolver, claude by default), in this terminal"
+        }
         ("X", "abort") => "undo the stopped update: the branch goes back where it was",
         ("r", "refresh") => "refresh the golden image to the latest base",
         ("o", "open") => "open the clone in $EDITOR",
@@ -2149,6 +2157,7 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect, list: Rect) {
         Modal::Help => draw_help(f, app, area),
         Modal::Remove(r) => draw_remove(f, app, area, &r),
         Modal::Adopt(a) => draw_adopt(f, app, area, &a),
+        Modal::ResolveOffer(o) => draw_resolve_offer(f, app, area, &o),
         Modal::Gc(g) => draw_gc(f, app, area, &g),
         Modal::Doctor(d) => draw_doctor(f, app, area, d),
         Modal::Removals(v) => draw_removals(f, app, area, v),
@@ -2626,6 +2635,68 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
     for (i, item) in toggles {
         app.hits.push((row(inner, i as u16), Hit::RemoveRow(item)));
     }
+    let bx = inner.x + (iw.saturating_sub(bw)) as u16;
+    let by = inner.y + btn_line;
+    if by < inner.bottom() {
+        app.hits.push((Rect::new(bx, by, b1w, 1), key_hit('y')));
+        app.hits.push((
+            Rect::new(bx + b1w + 2, by, b2w, 1),
+            Hit::Key(KeyCode::Esc, KeyModifiers::NONE),
+        ));
+    }
+}
+
+/// After an update stops on conflicts: hand them to the resolver?
+fn draw_resolve_offer(f: &mut Frame, app: &mut App, area: Rect, o: &ResolveOffer) {
+    let w: u16 = 66.min(area.width.saturating_sub(4));
+    let iw = w.saturating_sub(6) as usize;
+    let mut lines = vec![];
+    let n = o.files.len();
+    for l in fmt::wrap(
+        &format!(
+            "{}: {} stopped on conflicts in {n} file{}:",
+            o.name,
+            o.strategy.word(),
+            if n == 1 { "" } else { "s" }
+        ),
+        iw,
+    ) {
+        lines.push(Line::from(Span::raw(l)));
+    }
+    for file in o.files.iter().take(6) {
+        lines.push(Line::from(Span::styled(format!("  {}", trunc_left(file, iw.saturating_sub(2))), fg(AMBER))));
+    }
+    if n > 6 {
+        lines.push(Line::from(Span::styled(format!("  and {} more", n - 6), muted())));
+    }
+    lines.push(Line::from(""));
+    for l in fmt::wrap(
+        &format!(
+            "{} runs in the clone, here: it resolves what's clear, then continues the update, and stops to ask about the rest. No leaves it stopped: R resolves later, U continues once fixed, X aborts.",
+            o.who
+        ),
+        iw,
+    ) {
+        lines.push(Line::from(Span::styled(l, muted())));
+    }
+    lines.push(Line::from(""));
+    let b1 = button(&format!("resolve with {}", o.who), !o.focus_no, false);
+    let b2 = button("no", o.focus_no, false);
+    let (b1w, b2w) = (width(&b1.content) as u16, width(&b2.content) as u16);
+    let bw = (b1w + 2 + b2w) as usize;
+    let btn_line = lines.len() as u16;
+    lines.push(Line::from(vec![
+        Span::raw(" ".repeat(iw.saturating_sub(bw))),
+        b1,
+        Span::raw("  "),
+        b2,
+    ]));
+    let h = lines.len() as u16 + 4;
+    let rect = centered(area, w, h);
+    open_modal(f, &mut app.hits, area, rect);
+    let block = modal_block(vec![Span::styled("conflicts", title())]);
+    let inner = block.inner(rect);
+    f.render_widget(Paragraph::new(lines).block(block), rect);
     let bx = inner.x + (iw.saturating_sub(bw)) as u16;
     let by = inner.y + btn_line;
     if by < inner.bottom() {

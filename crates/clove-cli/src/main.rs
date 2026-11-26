@@ -163,6 +163,10 @@ enum Cmd {
         /// Use the base as last fetched.
         #[arg(long)]
         no_fetch: bool,
+        /// On conflicts, start the resolver (`update.resolver`, claude by
+        /// default) without asking; on a clone already stopped, start it now.
+        #[arg(long, conflicts_with_all = ["abort", "all"])]
+        resolve: bool,
     },
     /// Golden image and clone summary for this repo.
     #[command(visible_alias = "info")]
@@ -571,6 +575,7 @@ fn run(cli: Cli) -> Result<()> {
             continue_,
             abort,
             no_fetch,
+            resolve,
         } => {
             let strategy = if *merge {
                 Some(clove_core::update::Strategy::Merge)
@@ -586,7 +591,9 @@ fn run(cli: Cli) -> Result<()> {
             } else {
                 UpdateMode::Run
             };
-            cmd_update(&cli, clones, *all, mode, strategy, *autostash, !*no_fetch, r)?;
+            cmd_update(
+                &cli, clones, *all, mode, strategy, *autostash, !*no_fetch, *resolve, r,
+            )?;
         }
         Cmd::Setup { clone, all } => {
             let c = repo(&cli)?;
@@ -1669,10 +1676,18 @@ fn cmd_update(
     strategy: Option<clove_core::update::Strategy>,
     autostash: bool,
     fetch: bool,
+    resolve: bool,
     r: &dyn clove_core::Reporter,
 ) -> Result<()> {
     use clove_core::update::{Update, UpdateOptions};
     let c = repo(cli)?;
+    // `--resolve` on a clone already stopped on conflicts: straight to the resolver.
+    if resolve && matches!(mode, UpdateMode::Run) && clones.len() <= 1 {
+        let name = c.resolve(clones.first().map_or(".", String::as_str))?;
+        if c.info(&name, false)?.operation.is_some() {
+            return run_resolver(&c, &name);
+        }
+    }
     let names: Vec<String> = if all {
         c.clone_names()?
     } else if clones.is_empty() {
@@ -1722,13 +1737,24 @@ fn cmd_update(
         };
         match res {
             Ok(u) => {
-                if matches!(u, Update::Conflict { .. }) {
-                    trouble = true;
-                }
+                let conflict = matches!(u, Update::Conflict { .. });
                 if !cli.json {
                     print_update(name, &u);
                 }
                 results.push(serde_json::json!({ "clone": name, "update": u }));
+                // Offered only to a person at a terminal, one clone at a time.
+                let interactive =
+                    !cli.json && std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+                if conflict && names.len() == 1 && interactive && c.config.update.resolver.is_some() {
+                    let who =
+                        clove_core::update::resolver_name(c.config.update.resolver.as_deref().unwrap_or(""));
+                    if resolve || ask(&format!("Resolve with {who}?"), &[], false)? {
+                        return run_resolver(&c, name);
+                    }
+                }
+                if conflict {
+                    trouble = true;
+                }
             }
             Err(e) => {
                 trouble = true;
@@ -1746,6 +1772,30 @@ fn cmd_update(
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// Runs the resolver in the clone, in this terminal, then says where the
+/// update stands: finished, or still stopped on conflicts.
+fn run_resolver(c: &Clove, name: &str) -> Result<()> {
+    let (who, mut cmd) = c.resolver_command(name)?;
+    eprintln!("{} starting {who} in {name}", paint(MAGENTA, "→"));
+    let status = cmd.status().with_context(|| format!("starting {who}"))?;
+    match c.info(name, false)?.operation {
+        None => {
+            eprintln!("{} {name}: update finished", paint(GREEN, "✓"));
+            Ok(())
+        }
+        Some(op) => {
+            eprintln!(
+                "{} {name}: the {} is still stopped on conflicts ({who} exited {status}); fix them, `git add` them, then {} (or {})",
+                paint(YELLOW, "!"),
+                op.word(),
+                paint(BOLD, format!("clove update --continue {name}")),
+                format!("clove update --abort {name}")
+            );
+            std::process::exit(1);
+        }
+    }
 }
 
 fn print_update(name: &str, u: &clove_core::update::Update) {
@@ -1790,9 +1840,10 @@ fn print_update(name: &str, u: &clove_core::update::Update) {
                 eprintln!("    {f}");
             }
             eprintln!(
-                "  fix them and `git add` them, then {} (or {})",
+                "  fix them and `git add` them, then {} (or {}); {} hands them to Claude",
                 paint(BOLD, format!("clove update --continue {name}")),
-                format!("clove update --abort {name}")
+                format!("clove update --abort {name}"),
+                format!("clove update --resolve {name}")
             );
         }
     }

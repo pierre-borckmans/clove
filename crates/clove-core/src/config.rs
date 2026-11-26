@@ -79,6 +79,9 @@ pub struct PruneFile {
 pub struct UpdateFile {
     /// rebase (default) or merge.
     pub strategy: Option<crate::update::Strategy>,
+    /// Command offered to resolve conflicts, run in the clone with a prompt
+    /// as its last argument; "off" turns the offer off.
+    pub resolver: Option<String>,
 }
 
 /// How a setting is edited, validated and stored.
@@ -272,6 +275,14 @@ pub const FIELDS: &[Field] = &[
         Is("rebase"),
         "how clove update brings a clone's branch onto the latest base",
     ),
+    field(
+        "update.resolver",
+        "resolve with",
+        "clones",
+        Kind::Text,
+        Is("claude"),
+        "offered when an update stops on conflicts: run in the clone with a prompt; e.g. claude --model opus, codex; off turns it off",
+    ),
 ];
 
 /// [`FileConfig`] keys edited in the file only (lists of tables).
@@ -295,6 +306,8 @@ pub struct PrunePolicy {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct UpdatePolicy {
     pub strategy: crate::update::Strategy,
+    /// None when off.
+    pub resolver: Option<String>,
 }
 
 /// Parses "90", "30m", "12h", "2d" into seconds.
@@ -531,6 +544,11 @@ impl Config {
             },
             update: UpdatePolicy {
                 strategy: pick(&layers, |l| l.update.as_ref().and_then(|u| u.strategy)).unwrap_or_default(),
+                resolver: match pick(&layers, |l| l.update.as_ref().and_then(|u| u.resolver.clone())) {
+                    Some(r) if r.trim().is_empty() || r.trim() == "off" => None,
+                    Some(r) => Some(r.trim().to_string()),
+                    None => Some("claude".into()),
+                },
             },
             sources,
         })
@@ -684,6 +702,7 @@ mod schema_tests {
             prune: Some(PruneFile { auto: Some(true) }),
             update: Some(UpdateFile {
                 strategy: Some(crate::update::Strategy::Merge),
+                resolver: Some("claude".into()),
             }),
             steps: vec![Step::default()],
             add_steps: vec![Step::default()],

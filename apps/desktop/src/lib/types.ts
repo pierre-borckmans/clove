@@ -214,6 +214,8 @@ export type Config = {
   copy: string[] | null;
   refresh: { auto: boolean; max_age_secs: number; max_behind: number };
   prune: { auto: boolean };
+  /** resolver: the command offered on conflicts; null when off. */
+  update: { strategy: "rebase" | "merge"; resolver: string | null };
   sources: string[];
 };
 

@@ -546,6 +546,19 @@ fn full_lifecycle() {
             up(&UpdateOptions::default()).unwrap(),
             Update::Conflict { .. }
         ));
+        // The resolver runs in the clone with the prompt as its last argument.
+        let prompt = c.resolve_prompt("feat-up").unwrap();
+        assert!(
+            prompt.contains("app.txt") && prompt.contains("clove update --continue feat-up"),
+            "{prompt}"
+        );
+        let mut with_resolver = Clove::open(&root).unwrap();
+        with_resolver.config.update.resolver = Some("printf %s > resolver-saw.txt".into());
+        let (who, mut cmd) = with_resolver.resolver_command("feat-up").unwrap();
+        assert_eq!(who, "Printf");
+        assert!(cmd.status().unwrap().success());
+        assert_eq!(read(u.path.join("resolver-saw.txt")), prompt);
+        std::fs::remove_file(u.path.join("resolver-saw.txt")).unwrap();
         std::fs::write(u.path.join("app.txt"), "both\n").unwrap();
         assert!(c.update_continue("feat-up", &Silent).is_err(), "not added yet");
         sh(&u.path, "git add app.txt");

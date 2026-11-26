@@ -55,6 +55,7 @@ Every feature is in three places:
 
 - **Uncommitted changes are refused,** unless `--autostash`, which sets them aside and reapplies them after.
 - **On a conflict it stops** in git's usual state and lists the files. Fix them and `git add` them, then `clove update --continue`, or `clove update --abort` to put the branch back.
+- **It offers to resolve conflicts with Claude.** At a terminal, `clove update` asks `Resolve with Claude? [y/N]`; `--resolve` skips the question, or starts it on a clone already stopped. Claude runs interactively in the clone, told to resolve only what's clear, regenerate lockfiles and generated code rather than merge them, build or test what it touched, then `clove update --continue`, and to stop and explain anything that needs your call. It never pushes or aborts. The TUI's `R` and the app's "Resolve with Claude" (in your chosen terminal) do the same. `update.resolver` picks the command (`claude --model opus`, `codex`) or turns it `off`.
 - **With `--all`,** a conflict in one clone doesn't stop the others.
 - **It never pushes.** After rebasing a branch that was already pushed, it reminds you to push with `--force-with-lease`.
 - In the terminal UI, `U` updates the selected clone (or continues once the conflicts are fixed) and `X` aborts; the Mac app has the same in the clone's menu. All three show a clone stopped on conflicts.

@@ -576,6 +576,7 @@ const commands: Record<string, (a: Args) => unknown> = {
         copy: null,
         refresh: { auto: true, max_age_secs: 86_400, max_behind: 100 },
         prune: { auto: false },
+        update: { strategy: "rebase", resolver: "claude" },
         sources: [],
       },
       layers: LAYERS.map((l) => ({ label: l.label, path: l.path(r), exists: r.layers.includes(l.label) })),
@@ -621,6 +622,7 @@ const commands: Record<string, (a: Args) => unknown> = {
       restore: "git branch fix/login-redirect 4be2c19d0a77",
     },
   ],
+  resolve_in_terminal: () => null,
   service_status: () => serviceOn,
   service_set: (a) => {
     serviceOn = !!a.install;

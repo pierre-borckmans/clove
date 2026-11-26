@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { api } from "./api";
 import { listen } from "./bridge";
 import { ms } from "./format";
+import { getPrefs } from "./prefs";
 import type { CloneInfo, OpEvent, OpFinished, OpRequest, OpStarted, UpdateResult } from "./types";
 
 export type StepState = {
@@ -196,11 +197,18 @@ export function wireOps(qc: QueryClient, hooks: Hooks) {
     const took = ms(e.at - op.startedAt);
     const later = (op.result as { when_free?: string[] } | null)?.when_free;
     const upd = op.req.kind === "update" ? (op.result as UpdateResult | null) : null;
-    if (op.status === "ok" && upd?.result === "conflict") {
-      toast.warning(`${op.subject}: ${upd.strategy} stopped on conflicts`, {
-        id: op.id,
-        duration: 15_000,
-        description: `${upd.files.join(", ")}. Fix them and git add them, then Continue update from the clone's menu (or Abort).`,
+    if (op.status === "ok" && upd?.result === "conflict" && op.req.kind === "update") {
+      const { root, name } = op.req;
+      void api.repoConfig(root).then((cfg) => {
+        const resolver = cfg.config.update?.resolver;
+        toast.warning(`${op.subject}: ${upd.strategy} stopped on conflicts`, {
+          id: op.id,
+          duration: 30_000,
+          description: `${upd.files.join(", ")}. Fix them and git add them, then Continue update from the clone's menu (or Abort).`,
+          action: resolver
+            ? { label: `Resolve with ${resolverName(resolver)}`, onClick: () => resolveInTerminal(root, name) }
+            : undefined,
+        });
       });
     } else if (op.status === "ok" && upd?.result === "updated" && (upd.hint || upd.failed_steps.length)) {
       toast.success(doneTitle(op), {
@@ -226,6 +234,19 @@ export function wireOps(qc: QueryClient, hooks: Hooks) {
       toast.error(`${op.title} failed`, { id: op.id, description: op.error, duration: 10_000 });
     }
   });
+}
+
+/** "Claude" for `claude --model opus` (clove_core::update::resolver_name). */
+export function resolverName(resolver: string): string {
+  const word = (resolver.trim().split(/\s+/)[0] ?? "resolver").split("/").pop() ?? "resolver";
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+/** Opens the preferred terminal in the clone with the resolver running. */
+export function resolveInTerminal(root: string, name: string) {
+  api
+    .resolveInTerminal(root, name, getPrefs().terminal)
+    .catch((e) => toast.error(`Could not start the resolver for ${name}`, { description: String(e) }));
 }
 
 function doneTitle(op: Op): string {

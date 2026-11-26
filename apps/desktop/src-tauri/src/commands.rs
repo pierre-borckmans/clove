@@ -277,6 +277,57 @@ pub async fn open_in(path: PathBuf, app: String) -> CmdResult<()> {
     .await
 }
 
+/// Opens the user's terminal in a clone stopped on conflicts, with the
+/// resolver (`update.resolver`) started there with clove's prompt. Runs
+/// through the login shell, so the resolver is found on the user's PATH.
+#[tauri::command]
+pub async fn resolve_in_terminal(root: PathBuf, name: String, terminal: String) -> CmdResult<()> {
+    block(move || {
+        let c = Clove::open(&root)?;
+        let resolver = c
+            .config
+            .update
+            .resolver
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("update.resolver is off"))?;
+        let prompt = c.resolve_prompt(&name)?;
+        let wt = c.info(&name, false)?.path;
+        let dir = std::env::temp_dir().join(format!("clove-resolve-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let prompt_file = dir.join(format!("{name}.prompt"));
+        std::fs::write(&prompt_file, prompt)?;
+        let q = |p: &std::path::Path| format!("'{}'", p.to_string_lossy().replace('\'', r"'\''"));
+        let script = dir.join(format!("{name}.command"));
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\ncd {} || exit 1\nexec \"${{SHELL:-/bin/zsh}}\" -ilc '{} \"$(cat \"$0\")\"' {}\n",
+                q(&wt),
+                resolver.replace('\'', r"'\''"),
+                q(&prompt_file)
+            ),
+        )?;
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))?;
+        let mut cmd = Command::new("open");
+        match terminal.as_str() {
+            // Ghostty runs a command given with -e; the others open a .command file.
+            "ghostty" => {
+                cmd.args(["-na", "Ghostty", "--args", "-e"]).arg(&script);
+            }
+            "iterm" => {
+                cmd.args(["-a", "iTerm"]).arg(&script);
+            }
+            _ => {
+                cmd.args(["-a", "Terminal"]).arg(&script);
+            }
+        }
+        clove_core::util::output(&mut cmd)?;
+        Ok(())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn copy_text(text: String) -> CmdResult<()> {
     block(move || {

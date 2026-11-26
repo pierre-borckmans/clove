@@ -10,6 +10,7 @@ import {
   GitPullRequestArrow,
   HardDrive,
   Plus,
+  Sparkles,
   SquareTerminal,
   Trash2,
   TriangleAlert,
@@ -29,9 +30,9 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useHotkey } from "@/hooks/use-hotkey";
 import { bytes, since } from "@/lib/format";
-import { startOp, useOps } from "@/lib/ops";
+import { resolveInTerminal, resolverName, startOp, useOps } from "@/lib/ops";
 import { APP_LABELS, usePrefs } from "@/lib/prefs";
-import { copyPath, copyText, openIn, useMountToggle, usePrCheck, usePrs } from "@/lib/queries";
+import { copyPath, copyText, openIn, useMountToggle, usePrCheck, usePrs, useRepoConfig } from "@/lib/queries";
 import type { CloneInfo, MergeCheck } from "@/lib/types";
 import { setUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
@@ -477,6 +478,7 @@ function RowAction({ label, onClick, children }: { label: string; onClick: () =>
 export function CloneMenu({ clone: c, root, children }: { clone: CloneInfo; root: string; children: ReactNode }) {
   const prefs = usePrefs();
   const mount = useMountToggle(root);
+  const resolver = useRepoConfig(c.operation ? root : undefined).data?.config.update?.resolver;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
@@ -506,6 +508,11 @@ export function CloneMenu({ clone: c, root, children }: { clone: CloneInfo; root
         <DropdownMenuSeparator />
         {c.operation ? (
           <>
+            {resolver && (
+              <DropdownMenuItem onSelect={() => resolveInTerminal(root, c.name)}>
+                <Sparkles /> Resolve with {resolverName(resolver)}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onSelect={() => void startOp({ kind: "update", root, name: c.name, step: "continue" })}>
               <GitPullRequestArrow /> Continue update
             </DropdownMenuItem>

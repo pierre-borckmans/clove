@@ -49,6 +49,8 @@ export const api = {
   installedApps: () => invoke<AppId[]>("installed_apps"),
   openIn: (path: string, app: AppId) => invoke<void>("open_in", { path, app }),
   copy: (text: string) => invoke<void>("copy_text", { text }),
+  resolveInTerminal: (root: string, name: string, terminal: AppId) =>
+    invoke<void>("resolve_in_terminal", { root, name, terminal }),
   repoConfig: (root: string) =>
     invoke<RepoConfig>("repo_config", { root }).then((r) => ({
       ...r,

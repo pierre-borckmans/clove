@@ -181,6 +181,26 @@ fn perform(e: Effect, app: &mut App, tx: &mpsc::Sender<Msg>, term: &mut Term) {
             Ok(what) => app.toast(model::ToastKind::Ok, format!("opened in {what}")),
             Err(e) => app.toast(model::ToastKind::Err, format!("{e:#}")),
         },
+        Effect::Resolve { root, name } => {
+            let ran = clove_core::Clove::open(&root).and_then(|c| {
+                let (who, mut cmd) = c.resolver_command(&name)?;
+                term.suspend();
+                eprintln!("→ starting {who} in {name}; the TUI comes back when it exits");
+                let status = cmd.status();
+                term.resume()?;
+                status?;
+                Ok((who, c.info(&name, false)?.operation))
+            });
+            match ran {
+                Ok((_, None)) => app.toast(model::ToastKind::Ok, format!("{name}: update finished")),
+                Ok((who, Some(_))) => app.toast(
+                    model::ToastKind::Warn,
+                    format!("{name} is still stopped on conflicts after {who}; R again, or U continues once fixed, X aborts"),
+                ),
+                Err(e) => app.toast(model::ToastKind::Err, format!("{e:#}")),
+            }
+            app.loaded_ms = None;
+        }
         Effect::FindRepos => add_repo::find(tx.clone()),
         Effect::PreviewInit(path) => add_repo::preview(tx.clone(), path),
         Effect::SetConfig(w) => match worker::write_config(&w) {

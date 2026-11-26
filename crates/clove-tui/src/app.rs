@@ -40,6 +40,12 @@ pub enum Effect {
     FindRepos,
     /// Work out what `init` would do for this path.
     PreviewInit(PathBuf),
+    /// Suspend the TUI and run the conflict resolver (`update.resolver`) in
+    /// a clone stopped on conflicts, then reload.
+    Resolve {
+        root: PathBuf,
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -733,14 +739,35 @@ impl App {
                         };
                         (kind, s)
                     }
-                    Some(Update::Conflict { strategy, files, .. }) => (
-                        ToastKind::Warn,
-                        format!(
-                            "{name}: {} stopped on conflicts in {}; fix them and git add them, then U continues, X aborts",
-                            strategy.word(),
-                            files.join(", ")
-                        ),
-                    ),
+                    Some(Update::Conflict { strategy, files, .. }) => {
+                        let resolver = self.current().and_then(|d| d.config.update.resolver.clone());
+                        if let (Some(r), Some(root)) = (&resolver, self.current().map(|d| d.root.clone()))
+                            && self.modal.is_none()
+                        {
+                            self.modal = Some(Modal::ResolveOffer(ResolveOffer {
+                                root,
+                                name: name.clone(),
+                                strategy,
+                                files: files.clone(),
+                                who: clove_core::update::resolver_name(r),
+                                focus_no: false,
+                            }));
+                        }
+                        let who = resolver
+                            .map(|r| format!("R resolves with {}, ", clove_core::update::resolver_name(&r)))
+                            .unwrap_or_default();
+                        let files = match files.len() {
+                            1 => files[0].rsplit('/').next().unwrap_or(&files[0]).to_string(),
+                            n => format!("{n} files"),
+                        };
+                        (
+                            ToastKind::Warn,
+                            format!(
+                                "{name}: {} stopped on conflicts ({files}). {who}or fix them, then U continues, X aborts",
+                                strategy.word(),
+                            ),
+                        )
+                    }
                 };
                 toasts.push((kind, s.clone()));
                 Ok(s)
@@ -1124,6 +1151,7 @@ impl App {
             KeyCode::Char('u') => return self.unmount_selected(),
             KeyCode::Char('U') => return self.update_selected(false),
             KeyCode::Char('X') => return self.update_selected(true),
+            KeyCode::Char('R') => return self.resolve_selected(),
             KeyCode::Char('r') => return self.refresh(),
             KeyCode::Char('i') => return self.init(),
             KeyCode::Char('A') | KeyCode::Char('+') => return self.open_add_repo(),
@@ -1395,6 +1423,26 @@ impl App {
         self.spawn(Task::Update { name: c.name, step }, After::Nothing)
     }
 
+    /// `R` on a clone stopped on conflicts: hand them to the resolver.
+    fn resolve_selected(&mut self) -> Vec<Effect> {
+        let Some(c) = self.selected_clone().cloned() else {
+            return vec![];
+        };
+        if c.operation.is_none() {
+            self.toast(ToastKind::Info, format!("{} has no conflicts to resolve", c.name));
+            return vec![];
+        }
+        let Some(d) = self.current() else { return vec![] };
+        if d.config.update.resolver.is_none() {
+            self.toast(ToastKind::Info, "update.resolver is off");
+            return vec![];
+        }
+        vec![Effect::Resolve {
+            root: d.root.clone(),
+            name: c.name,
+        }]
+    }
+
     fn unmount_selected(&mut self) -> Vec<Effect> {
         if self.selected_worktree().is_some() {
             self.toast(ToastKind::Info, "a plain git worktree has nothing to unmount");
@@ -1508,6 +1556,7 @@ impl App {
             Modal::Gc(g) => self.gc_key(g, k),
             Modal::Doctor(d) => self.doctor_key(d, k),
             Modal::Removals(v) => self.removals_key(v, k),
+            Modal::ResolveOffer(o) => self.resolve_offer_key(o, k),
             Modal::Settings(v) => self.settings_key(v, k),
             Modal::Job(id) => self.job_key(id, k),
             Modal::AddRepo(v) => self.add_repo_key(v, k),
@@ -1967,6 +2016,25 @@ impl App {
             _ => {}
         }
         (Some(Modal::Settings(v)), vec![])
+    }
+
+    fn resolve_offer_key(&mut self, mut o: ResolveOffer, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => (None, vec![]),
+            KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => {
+                o.focus_no = !o.focus_no;
+                (Some(Modal::ResolveOffer(o)), vec![])
+            }
+            KeyCode::Enter | KeyCode::Char(' ') if o.focus_no => (None, vec![]),
+            KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('y') | KeyCode::Char('R') => (
+                None,
+                vec![Effect::Resolve {
+                    root: o.root,
+                    name: o.name,
+                }],
+            ),
+            _ => (Some(Modal::ResolveOffer(o)), vec![]),
+        }
     }
 
     fn removals_key(&mut self, mut v: RemovalsView, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {

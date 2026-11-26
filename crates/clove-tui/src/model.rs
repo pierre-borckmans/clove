@@ -636,9 +636,23 @@ pub struct RemovalsView {
     pub scroll: Smooth,
 }
 
+/// Asked when an update stops on conflicts: hand them to the resolver?
+#[derive(Debug, Clone)]
+pub struct ResolveOffer {
+    pub root: PathBuf,
+    pub name: String,
+    pub strategy: clove_core::update::Strategy,
+    pub files: Vec<String>,
+    /// "Claude" for `claude --model opus`.
+    pub who: String,
+    /// No has focus (else yes).
+    pub focus_no: bool,
+}
+
 #[derive(Debug, Clone)]
 pub enum Modal {
     Help,
+    ResolveOffer(ResolveOffer),
     Removals(RemovalsView),
     New(NewForm),
     Remove(RemoveForm),

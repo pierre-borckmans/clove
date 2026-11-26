@@ -51,6 +51,7 @@ auto = false       # the service removes merged, clean, idle clones; `clove log`
 
 [update]
 strategy = "rebase"  # how `clove update` brings a clone onto the base: rebase or merge
+resolver = "claude"  # offered on conflicts, run in the clone with a prompt; "off" turns it off
 ```
 
 - Steps run inside the repo's environment (`direnv exec` or `mise exec`).

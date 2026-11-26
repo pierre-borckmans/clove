@@ -59,6 +59,8 @@ stops in git's usual rebase or merge state, lists the files (`--json`:
 `files`) and exits 1. Fix them, `git add` them, then
 `clove update --continue`; `clove update --abort` puts the branch back. After
 rebasing a branch that was pushed, push with `git push --force-with-lease`.
+`clove update --resolve` hands conflicts to another agent for a person at a
+terminal; as an agent, resolve them yourself.
 
 ## Remove it
 

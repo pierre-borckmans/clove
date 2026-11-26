@@ -2194,3 +2194,46 @@ fn l_lists_what_clove_removed_and_how_to_get_it_back() {
     key(&mut app, KeyCode::Char('L'));
     assert!(app.modal.is_none(), "L closes it again");
 }
+
+#[test]
+fn an_update_stopped_on_conflicts_offers_the_resolver() {
+    use clove_core::update::{Strategy, Update};
+    let conflict = || {
+        let mut app = app();
+        app.modal = None;
+        for d in app.data.values_mut() {
+            d.config.update.resolver = Some("claude".into());
+        }
+        let name = app.selected_clone().unwrap().name.clone();
+        let task = Task::Update {
+            name: name.clone(),
+            step: UpdateStep::Run,
+        };
+        let id = match app.spawn(task, After::Nothing).first() {
+            Some(Effect::Spawn { id, .. }) => *id,
+            other => panic!("{other:?}"),
+        };
+        app.modal = None;
+        app.on_msg(Msg::Done(
+            id,
+            Ok(Outcome::Updated(Some(Update::Conflict {
+                base: "origin/main".into(),
+                strategy: Strategy::Rebase,
+                files: vec!["src/table.go".into()],
+            }))),
+        ));
+        (app, name)
+    };
+    let (mut app, name) = conflict();
+    let (s, _) = render(&mut app, 120, 40);
+    assert!(s.contains("Resolve with Claude") || s.contains("resolve with Claude"), "{s}");
+    assert!(s.contains("src/table.go"), "{s}");
+    let fx = key(&mut app, KeyCode::Enter);
+    assert!(
+        matches!(&fx[..], [Effect::Resolve { name: n, .. }] if *n == name),
+        "Enter resolves: {fx:?}"
+    );
+    let (mut app, _) = conflict();
+    let fx = key(&mut app, KeyCode::Esc);
+    assert!(fx.is_empty() && app.modal.is_none(), "Esc leaves it stopped");
+}

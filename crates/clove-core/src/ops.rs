@@ -1077,7 +1077,15 @@ impl Clove {
                     .or_else(|| git::out(&self.root, &["rev-parse", "--verify", "--quiet", &r]).ok());
                 (Some(b.to_string()), head)
             }
-            None if !head_file.is_empty() => (None, Some(head_file.to_string())),
+            // Mid-rebase HEAD is detached; the branch being rebased is in git's state.
+            None if !head_file.is_empty() => {
+                let admin = self.clone_admin(name);
+                let rebasing = ["rebase-merge", "rebase-apply"].iter().find_map(|d| {
+                    let s = std::fs::read_to_string(admin.join(d).join("head-name")).ok()?;
+                    s.trim().strip_prefix("refs/heads/").map(str::to_string)
+                });
+                (rebasing, Some(head_file.to_string()))
+            }
             None => (meta.branch.clone(), None),
         };
         let (mut dirty, mut ahead, mut behind) = (None, None, None);

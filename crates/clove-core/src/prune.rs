@@ -375,6 +375,10 @@ impl Clove {
             reason,
             own_bytes: i.own_bytes,
         };
+        // Mid-rebase or merge, HEAD is a temporary commit: nothing to judge.
+        if let Some(op) = i.operation {
+            return mk(Verdict::Keep, format!("{} stopped on conflicts", op.word()), pr);
+        }
         let Some(head) = i.head.clone() else {
             return mk(Verdict::Keep, "no commit".into(), pr);
         };
