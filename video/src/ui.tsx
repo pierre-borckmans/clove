@@ -315,6 +315,8 @@ export function Mark({ size = 220, delay = 0, alive = false }: { size?: number; 
         strokeLinecap="round"
         strokeDasharray={len}
         strokeDashoffset={len * (1 - arc)}
+        // A zero-length dash still draws its round cap: hide it until the arc starts.
+        opacity={Math.min(1, arc * 10)}
       />
       <g filter="url(#leafglow)" transform={leafAt(16 - (1 - leaf) * 40 + sway, 0.33 * leaf)}>
         <path d="M50 8 C62 28 74 52 70 76 C68 90 32 90 30 76 C26 52 38 28 50 8Z" fill={c.bottle} />
