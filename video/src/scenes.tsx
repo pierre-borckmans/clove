@@ -144,6 +144,74 @@ export function Parallel() {
   );
 }
 
+/** 2b. One checkout shared by every agent: they clash. */
+export function Clash() {
+  const frame = useCurrentFrame();
+  const k = (w: string, n = 0, o = 0) => cue("clash", w, n, o);
+  const card = useIn(4, 18);
+  const hit = k("clash", 0, -2);
+  const red = interpolate(frame, [hit, hit + 8], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const shake = frame >= hit && frame < hit + 14 ? Math.sin((frame - hit) * 2.4) * 6 * (1 - (frame - hit) / 14) : 0;
+  const sw = k("switches", 0, -2);
+  const cycle = ["feat/login", "agent/parser", "agent/docs", "fix/race"];
+  const head = frame < sw ? cycle[0] : cycle[Math.min(cycle.length - 1, Math.floor((frame - sw) / 5))];
+  const agents: [string, string, number, number][] = [
+    ["claude", "feat/login", 170, 300],
+    ["codex", "fix/race", 1450, 300],
+    ["claude", "agent/parser", 170, 680],
+    ["cursor", "agent/docs", 1450, 680],
+  ];
+  const wire = `rgb(${Math.round(124 + (232 - 124) * red)},${Math.round(196 + (128 - 196) * red)},${Math.round(155 + (111 - 155) * red)})`;
+  return (
+    <Stage push={0.025}>
+      <div style={{ position: "absolute", top: 110, left: 0, right: 0, display: "flex", justifyContent: "center" }}>
+        <Words text="One checkout. Everyone in it." size={64} delay={k("but", 0, -4)} accent={["Everyone"]} />
+      </div>
+      <svg width={1920} height={1080} style={{ position: "absolute", inset: 0 }}>
+        {agents.map(([, , x, y], i) => {
+          const p = interpolate(frame, [10 + i * 4, 26 + i * 4], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+          const x0 = x < 960 ? x + 300 : x;
+          const x1 = x < 960 ? 640 : 1280;
+          return <line key={i} x1={x0} y1={y + 40} x2={x0 + (x1 - x0) * p} y2={y + 40 + (520 - y - 40) * p} stroke={wire} strokeOpacity={0.6} strokeWidth={2.5} />;
+        })}
+      </svg>
+      {agents.map(([tool, branch, x, y], i) => {
+        const p = useIn(6 + i * 4, 16);
+        return (
+          <Glass key={i} style={{ position: "absolute", left: x, top: y, width: 300, padding: "16px 22px", fontFamily: mono, opacity: p, border: `1px solid ${red > 0.5 ? `${c.red}55` : c.rule}` }}>
+            <div style={{ fontSize: 17, color: c.bottle }}>{tool}</div>
+            <div style={{ fontSize: 22, marginTop: 4 }}>wants {branch}</div>
+          </Glass>
+        );
+      })}
+      <Glass
+        style={{
+          position: "absolute",
+          left: 640,
+          top: 360,
+          width: 640,
+          padding: "30px 36px",
+          fontFamily: mono,
+          opacity: card,
+          transform: `translateX(${shake}px) scale(${0.95 + 0.05 * card})`,
+          border: `1px solid ${red > 0.5 ? `${c.red}77` : c.rule}`,
+          boxShadow: red > 0.5 ? `0 0 70px ${c.red}22` : "none",
+        }}
+      >
+        <div style={{ fontSize: 18, color: c.dim }}>~/src/mono · the only checkout</div>
+        <div style={{ fontSize: 40, marginTop: 14 }}>
+          <span style={{ color: c.muted }}>HEAD → </span>
+          <span style={{ color: frame >= sw ? c.red : c.ink }}>{head}</span>
+        </div>
+        <div style={{ fontSize: 19, marginTop: 18, lineHeight: 1.7 }}>
+          <Out at={sw} color={c.muted}>codex ❯ git checkout fix/race</Out>
+          <Out at={k("edits", 0, -2)} color={c.red}>✗ claude's login edits, now on fix/race</Out>
+        </div>
+      </Glass>
+    </Stage>
+  );
+}
+
 /* ---------------------------------------------------------------- problem */
 
 /** The viewer's own retort, as a speech bubble. */

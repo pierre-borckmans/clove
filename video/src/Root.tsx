@@ -3,7 +3,7 @@ import { linearTiming, TransitionSeries } from "@remotion/transitions";
 import { AbsoluteFill, Audio, Composition, Sequence, staticFile } from "remotion";
 import durations from "./durations.json";
 import script from "./script.json";
-import { Again, Cost, Detect, Empty, Fast, Features, Fresh, Golden, Hacks, Internals, Intro as IntroScene, Logo, Outro, Parallel, Steps, Surfaces, Worktree } from "./scenes";
+import { Again, Clash, Cost, Detect, Empty, Fast, Features, Fresh, Golden, Hacks, Internals, Intro as IntroScene, Logo, Outro, Parallel, Steps, Surfaces, Worktree } from "./scenes";
 import { Backdrop, LEAD, SceneLength } from "./ui";
 
 const FPS = 30;
@@ -12,7 +12,8 @@ const XFADE = 14;
 /** Breathing room after each line, in seconds, where the visual needs it. */
 const TAIL: Record<string, number> = {
   intro: 1.4,
-  parallel: 1.4,
+  parallel: 1.0,
+  clash: 1.6,
   hacks: 1.8,
   again: 1.6,
   worktree: 1.4,
@@ -32,6 +33,7 @@ const TAIL: Record<string, number> = {
 const SCENES: Record<string, () => React.JSX.Element> = {
   intro: IntroScene,
   parallel: Parallel,
+  clash: Clash,
   hacks: Hacks,
   again: Again,
   worktree: Worktree,

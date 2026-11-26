@@ -8,6 +8,10 @@
     "say": "To get anything done, they need to work in parallel, each on its own branch."
   },
   {
+    "id": "clash",
+    "say": "But in one checkout, they clash. One switches branches under another, and edits land in the wrong place."
+  },
+  {
     "id": "worktree",
     "say": "Fret not, you say. I'm not a caveman: git has worktrees for this. A fresh worktree, in about a second."
   },
