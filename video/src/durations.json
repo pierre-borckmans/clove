@@ -1,0 +1,15 @@
+{
+  "voice": "chatterbox:default",
+  "durations": {
+    "worktree": 1.6853333333333333,
+    "empty": 5.682666666666667,
+    "cost": 6.04,
+    "agents": 2.761458,
+    "logo": 0.702042,
+    "golden": 6.750917,
+    "fast": 4.389292,
+    "steps": 2.511125,
+    "features": 6.325167,
+    "outro": 2.198
+  }
+}
