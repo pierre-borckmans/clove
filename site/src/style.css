@@ -166,35 +166,92 @@ body {
   opacity: 0.7;
 }
 
-/* The pill nav: hidden at the top, drops in once the top nav has scrolled away. */
-.pill-nav {
+/* Floating navs drop in once the top nav has scrolled away. */
+.float-nav {
   position: fixed;
-  top: 14px;
-  left: 50%;
   z-index: 50;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 8px 16px;
-  border-radius: 999px;
-  background: rgba(13, 17, 15, 0.78);
-  border: 1px solid rgba(233, 238, 232, 0.12);
-  backdrop-filter: blur(12px);
-  box-shadow: 0 12px 30px -12px rgba(0, 0, 0, 0.6);
-  transform: translate(-50%, -160%);
   opacity: 0;
   transition:
     transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1),
     opacity 0.3s;
 }
-.pill-nav.show {
-  transform: translate(-50%, 0);
+.scrolled .float-nav {
   opacity: 1;
 }
-.pill-nav a {
+.float-nav a,
+.float-nav button {
   display: flex;
   align-items: center;
   transition: color 0.15s;
+}
+
+/* "corners": two small capsules, nothing between them, lined up with the
+   page's content edges (76rem wide, 2rem gutters) rather than the window's. */
+.corner-nav {
+  --edge: max(12px, calc((100vw - 76rem) / 2 + 2rem - 14px));
+  top: 14px;
+  left: var(--edge);
+  right: var(--edge);
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+  transform: translateY(-160%);
+}
+.scrolled .corner-nav {
+  transform: none;
+}
+.corner-nav .capsule {
+  pointer-events: auto;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: rgba(13, 17, 15, 0.7);
+  backdrop-filter: blur(10px);
+}
+/* The veil: a band that fades from the page colour at the top to nothing,
+   with a blur that fades the same way, so there's no edge. */
+.nav-veil {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 49;
+  height: 84px;
+  pointer-events: none;
+  background: linear-gradient(
+    rgba(13, 17, 15, 0.92),
+    rgba(13, 17, 15, 0.6) 45%,
+    rgba(13, 17, 15, 0)
+  );
+  backdrop-filter: blur(8px);
+  mask-image: linear-gradient(black 40%, transparent);
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+.scrolled .nav-veil {
+  opacity: 1;
+}
+/* On the veil, the capsules need less of their own background. */
+.scrolled .corner-nav .capsule {
+  background: rgba(13, 17, 15, 0.35);
+}
+
+/* Below the content's full width: the links become icons only. */
+@media (max-width: 1100px) {
+  .corner-nav .capsule a {
+    font-size: 0;
+    gap: 0;
+  }
+  .corner-nav .capsule a span {
+    font-size: 0.72rem;
+  }
+}
+@media (max-width: 640px) {
+  .corner-nav {
+    top: 10px;
+  }
+  .corner-nav .capsule {
+    padding: 6px 11px;
+  }
 }
 
 /* Scroll reveals. Only once JS has marked the page: without it, everything

@@ -5,11 +5,12 @@ function copyButtons() {
   for (const b of document.querySelectorAll<HTMLButtonElement>("[data-copy]")) {
     if (!navigator.clipboard) continue;
     b.hidden = false;
+    const original = b.innerHTML;
     b.addEventListener("click", async () => {
       await navigator.clipboard.writeText(b.dataset.copy ?? "");
       b.textContent = "copied";
       setTimeout(() => {
-        b.textContent = "copy";
+        b.innerHTML = original;
       }, 1500);
     });
   }
@@ -38,12 +39,14 @@ function reveals() {
   for (const el of els) io.observe(el);
 }
 
-/** Shows the pill nav while the top nav is out of view. */
-function pillNav() {
+/** Marks the page `scrolled` once the top nav is out of view, which brings in
+ * the corner capsules. Reads scroll position, never sets it. */
+function navState() {
   const top = document.querySelector("[data-topnav]");
-  const pill = document.querySelector(".pill-nav");
-  if (!top || !pill || !("IntersectionObserver" in window)) return;
-  new IntersectionObserver(([e]) => pill.classList.toggle("show", !e.isIntersecting)).observe(top);
+  if (!top || !("IntersectionObserver" in window)) return;
+  new IntersectionObserver(([e]) =>
+    document.documentElement.classList.toggle("scrolled", !e.isIntersecting),
+  ).observe(top);
 }
 
 /** Highlights the docs section being read in "on this page". Reads the
@@ -125,5 +128,5 @@ export function enhance() {
   tocSpy();
   copyButtons();
   reveals();
-  pillNav();
+  navState();
 }

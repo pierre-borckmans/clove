@@ -57,38 +57,39 @@ export function GithubLink({ label = "github" }: { label?: string }) {
 export function Nav({ wide = false }: { wide?: boolean }) {
   return (
     <>
-      <nav
-        data-topnav
-        className={`mx-auto flex items-center justify-between px-5 py-6 sm:px-8 ${wide ? "max-w-[84rem]" : "max-w-[76rem]"}`}
-      >
-        <a href="/" className="flex items-center gap-2.5 text-[1.6rem] text-ink no-underline">
-          <Mark size={30} /> clove
-        </a>
-        <div className="flex items-center gap-7 font-mono text-[0.8rem]">
-          <DocsLink />
-          <GithubLink />
-        </div>
-      </nav>
-      <PillNav />
+      <header>
+        <nav
+          data-topnav
+          className={`mx-auto flex items-center justify-between px-5 py-6 sm:px-8 ${wide ? "max-w-[84rem]" : "max-w-[76rem]"}`}
+        >
+          <a href="/" className="flex items-center gap-2.5 text-[1.6rem] text-ink no-underline">
+            <Mark size={30} /> clove
+          </a>
+          <div className="flex items-center gap-7 font-mono text-[0.8rem]">
+            <DocsLink />
+            <GithubLink />
+          </div>
+        </nav>
+      </header>
+      {/* Behind the corner capsules: content scrolling up fades into it. */}
+      <div className="nav-veil" aria-hidden="true" />
+      <CornerNav />
     </>
   );
 }
 
-/** Once the top nav scrolls away, a small pill drops in at the top centre. */
-function PillNav() {
+/** Past the hero: the logo top-left and the links top-right, each in a small capsule, over a veil. */
+function CornerNav() {
   return (
-    <nav className="pill-nav" aria-label="Quick links">
-      <a href="/" className="flex items-center gap-2 text-ink" aria-label="clove home">
-        <Mark size={20} />
-        <span className="text-[1rem]">clove</span>
+    <nav className="float-nav corner-nav" aria-label="Quick links">
+      <a href="/" className="capsule flex items-center gap-2 text-ink" aria-label="clove home">
+        <Mark size={18} />
+        <span className="text-[0.95rem]">clove</span>
       </a>
-      <span className="h-4 w-px bg-[rgba(233,238,232,0.15)]" />
-      <a href="/docs/" className="text-muted hover:text-ink" aria-label="docs">
-        <BookIcon />
-      </a>
-      <a href={REPO} className="text-muted hover:text-ink" aria-label="github">
-        <GithubIcon />
-      </a>
+      <div className="capsule flex items-center gap-4 font-mono text-[0.72rem]">
+        <DocsLink />
+        <GithubLink />
+      </div>
     </nav>
   );
 }
