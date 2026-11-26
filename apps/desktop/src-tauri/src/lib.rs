@@ -105,7 +105,47 @@ fn watch_repos(app: AppHandle) {
     });
 }
 
+/// Opened from Finder, the app gets launchd's bare PATH, so steps can't find
+/// pnpm, direnv or nix, and the service would be installed with that PATH.
+/// Take PATH from the login shell instead, as a terminal would. Started from
+/// a terminal, it already has it.
+fn adopt_login_path() {
+    if std::env::var_os("TERM").is_some() {
+        return;
+    }
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    const MARK: &str = "__clove_path__";
+    let Ok(mut child) = std::process::Command::new(&shell)
+        .args(["-l", "-i", "-c", &format!("printf '\\n{MARK}%s' \"$PATH\"")])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    else {
+        return;
+    };
+    // An rc file that waits on input must not hold the app up.
+    let start = Instant::now();
+    while child.try_wait().ok().flatten().is_none() {
+        if start.elapsed() > Duration::from_secs(5) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let Ok(out) = child.wait_with_output() else { return };
+    let text = String::from_utf8_lossy(&out.stdout);
+    if let Some(path) = text.rsplit_once(MARK).map(|(_, p)| p.trim())
+        && path.contains("/usr/bin")
+    {
+        // SAFETY: called first thing in `run`, before any other thread exists.
+        unsafe { std::env::set_var("PATH", path) };
+    }
+}
+
 pub fn run() {
+    adopt_login_path();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_positioner::init())

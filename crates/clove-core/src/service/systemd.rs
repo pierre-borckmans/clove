@@ -54,7 +54,7 @@ struct Ctx {
 
 impl Ctx {
     fn current() -> Result<Self> {
-        let exe = std::env::current_exe()?.canonicalize()?;
+        let exe = super::cli_exe()?;
         let log = crate::state_home().join("logs");
         std::fs::create_dir_all(&log)?;
         // Steps need the user's tools (nix, direnv, pnpm); systemd starts with a bare PATH.

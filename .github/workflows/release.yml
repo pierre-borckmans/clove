@@ -2,6 +2,11 @@ name: release
 # Push a tag like v0.2.0: builds the CLI for macOS and Linux, publishes a
 # GitHub release with checksums, and updates the formula in
 # pierre-borckmans/homebrew-tap.
+#
+# With the Apple secrets set (see RELEASING.md), the macOS CLI is signed with
+# Developer ID and notarized, and the Mac app is built, signed, notarized and
+# published as a cask. Without them, the CLI keeps its ad-hoc signature and
+# the app is skipped.
 on:
   push:
     tags: ["v*"]
@@ -10,7 +15,16 @@ permissions:
   contents: write
 
 jobs:
+  signing:
+    runs-on: ubuntu-latest
+    outputs:
+      on: ${{ steps.check.outputs.on }}
+    steps:
+      - id: check
+        run: echo "on=${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: signing
     strategy:
       matrix:
         include:
@@ -20,6 +34,8 @@ jobs:
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
     runs-on: ${{ matrix.os }}
+    env:
+      SIGN: ${{ needs.signing.outputs.on == 'true' && startsWith(matrix.os, 'macos') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -32,6 +48,25 @@ jobs:
           have=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           [ "$want" = "$have" ] || { echo "tag $GITHUB_REF_NAME but Cargo.toml says $have"; exit 1; }
       - run: cargo build --release --locked -p clove-cli --target ${{ matrix.target }}
+      - name: Import the Developer ID certificate
+        if: env.SIGN == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: scripts/ci/import-cert.sh
+      - name: Sign and notarize
+        if: env.SIGN == 'true'
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          bin="target/${{ matrix.target }}/release/clove"
+          codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$bin"
+          codesign --verify --strict --verbose=2 "$bin"
+          # A bare binary can't be stapled; Gatekeeper finds the ticket online.
+          ditto -c -k "$bin" "$RUNNER_TEMP/clove.zip"
+          scripts/ci/notarize.sh "$RUNNER_TEMP/clove.zip"
       - name: Package
         shell: bash
         run: |
@@ -45,8 +80,64 @@ jobs:
           name: ${{ matrix.target }}
           path: clove-*.tar.gz*
 
+  app:
+    needs: signing
+    if: needs.signing.outputs.on == 'true'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - name: Import the Developer ID certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: scripts/ci/import-cert.sh
+      - name: Build, sign and notarize
+        working-directory: apps/desktop
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY }}
+          # Tauri's names: APPLE_API_KEY is the key's ID here.
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+        run: |
+          printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/key.p8"
+          export APPLE_API_KEY_PATH="$RUNNER_TEMP/key.p8" APPLE_SIGNING_IDENTITY="$SIGN_ID"
+          v="${GITHUB_REF_NAME#v}"
+          jq --arg v "$v" '.version = $v' src-tauri/tauri.conf.json > "$RUNNER_TEMP/conf.json"
+          mv "$RUNNER_TEMP/conf.json" src-tauri/tauri.conf.json
+          pnpm install --frozen-lockfile
+          pnpm tauri build --target universal-apple-darwin --bundles app,dmg
+          dmg=$(ls src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg)
+          # Tauri notarizes the app inside; the dmg gets its own ticket so it
+          # opens without a Gatekeeper prompt even offline.
+          codesign --force --timestamp --sign "$SIGN_ID" "$dmg"
+          APPLE_API_KEY="$APPLE_API_KEY_P8" APPLE_API_KEY_ID="$NOTARY_KEY_ID" ../../scripts/ci/notarize.sh "$dmg"
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl --assess --type open --context context:primary-signature -vv "$dmg"
+          out="$GITHUB_WORKSPACE/clove-app-${GITHUB_REF_NAME}-universal.dmg"
+          cp "$dmg" "$out"
+          (cd "$GITHUB_WORKSPACE" && shasum -a 256 "$(basename "$out")" > "$(basename "$out").sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app
+          path: clove-app-*.dmg*
+
   release:
-    needs: build
+    needs: [build, app]
+    # The app job is skipped without the Apple secrets.
+    if: ${{ !cancelled() && needs.build.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.app.result) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -59,10 +150,11 @@ jobs:
           cat clove-*.sha256 > checksums.txt
           gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" --generate-notes \
-            clove-*.tar.gz checksums.txt
+            clove-*.tar.gz $(ls clove-app-*.dmg 2>/dev/null) checksums.txt
 
   tap:
     needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -87,12 +179,20 @@ jobs:
               -e "s/@SHA_LINUX_INTEL@/$(sha x86_64-unknown-linux-gnu)/" \
               clove/packaging/homebrew/clove.rb.in > tap/Formula/clove.rb
           ! grep -q "@[A-Z_]*@" tap/Formula/clove.rb
+          app=$(grep "clove-app-.*\.dmg\$" checksums.txt | cut -d' ' -f1 || true)
+          if [ -n "$app" ]; then
+            mkdir -p tap/Casks
+            sed -e "s/@VERSION@/${GITHUB_REF_NAME#v}/g" -e "s/@SHA_APP@/$app/" \
+                clove/packaging/homebrew/clove-app.rb.in > tap/Casks/clove-app.rb
+            ! grep -q "@[A-Z_]*@" tap/Casks/clove-app.rb
+          fi
       - name: Push
         working-directory: tap
         run: |
           git config user.name "clove release"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/clove.rb
+          [ -f Casks/clove-app.rb ] && git add Casks/clove-app.rb
           git diff --cached --quiet && exit 0
           git commit -m "clove ${GITHUB_REF_NAME#v}"
           git push

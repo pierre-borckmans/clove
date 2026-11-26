@@ -18,7 +18,7 @@ fn xml_escape(s: &str) -> String {
 }
 
 fn plist(label: &str, args: &[&str], trigger: &str) -> Result<String> {
-    let exe = std::env::current_exe()?.canonicalize()?;
+    let exe = super::cli_exe()?;
     let log = crate::state_home().join("logs").join(format!("{label}.log"));
     std::fs::create_dir_all(log.parent().context("log dir")?)?;
     // Steps need the user's tools (nix, direnv, pnpm); launchd starts with a bare PATH.
