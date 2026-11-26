@@ -39,10 +39,17 @@ brew install pierre-borckmans/tap/clove
 clove shell-init --install       # cd into new clones, completions (zsh, bash, fish)
 ```
 
-The Mac app, with a menu-bar popover:
+The desktop app, on macOS, with a menu-bar popover:
 
 ```
 brew install --cask pierre-borckmans/tap/clove-app
+```
+
+On Linux (x86_64 and arm64), a `.deb` and an AppImage are on the [releases page](https://github.com/pierre-borckmans/clove/releases). It runs the CLI for the background service, so install that too.
+
+```
+sudo apt install ./clove-app-v<version>-x86_64.deb    # Debian, Ubuntu
+chmod +x clove-app-v<version>-x86_64.AppImage         # anywhere else; needs libfuse2
 ```
 
 Without Homebrew:
@@ -133,7 +140,7 @@ More in [internals](docs/internals.md).
 ## Features
 
 - **Any branch or PR, ready in ~1s.** `clove new feat/x`, `clove new pr:123`, or `-x claude` to start an agent in it. → [Commands](docs/commands.md)
-- **CLI, terminal UI and Mac app,** with the same features everywhere; every command takes `--json`. → [Interfaces](docs/commands.md#interfaces)
+- **CLI, terminal UI and desktop app** (macOS and Linux), with the same features everywhere; every command takes `--json`. → [Interfaces](docs/commands.md#interfaces)
 - **Shell integration:** `cd` into new clones, completions, and each clone's environment loaded while you're in it. → [Shell integration](docs/commands.md#shell-integration)
 - **Brings clones up to date:** `clove update` rebases onto the latest base and reruns only the setup steps that changed; conflicts stop cleanly, with `--continue` or `--abort`. → [Updating a clone](docs/commands.md#updating-a-clone)
 - **Works next to plain git worktrees:** lists them, removes them safely, or adopts them as clones. → [Plain git worktrees](docs/commands.md#plain-git-worktrees)

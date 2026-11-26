@@ -43,7 +43,7 @@ Every feature is in three places:
 - **The terminal UI:** `clove` on its own (or `clove tui`), with mouse support.
   - A sidebar lists every repo, its clones, and whether its golden image is fresh.
   - `s` settings (Enter edits or toggles, ←/→ picks the file it saves to, `x` resets) · `g` clean up · `L` removal history · `A` add a repo · Enter quits into the selected clone.
-- **The Mac app:** the same sidebar, settings, cleanup and history, plus a menu-bar popover.
+- **The desktop app** (macOS and Linux): the same sidebar, settings, cleanup and history, plus a popover listing every clone. On macOS it opens from the menu bar; on Linux from the tray icon's menu ("Quick open…").
 
 ## Updating a clone
 
@@ -58,7 +58,7 @@ Every feature is in three places:
 - **It offers to resolve conflicts with Claude.** At a terminal, `clove update` asks `Resolve with Claude? [y/N]`; `--resolve` skips the question, or starts it on a clone already stopped. Claude runs interactively in the clone, told to resolve only what's clear, regenerate lockfiles and generated code rather than merge them, build or test what it touched, then `clove update --continue`, and to stop and explain anything that needs your call. It never pushes or aborts. The TUI's `R` and the app's "Resolve with Claude" (in your chosen terminal) do the same. `update.resolver` picks the command (`claude --model opus`, `codex`) or turns it `off`.
 - **With `--all`,** a conflict in one clone doesn't stop the others.
 - **It never pushes.** After rebasing a branch that was already pushed, it reminds you to push with `--force-with-lease`.
-- In the terminal UI, `U` updates the selected clone (or continues once the conflicts are fixed) and `X` aborts; the Mac app has the same in the clone's menu. All three show a clone stopped on conflicts.
+- In the terminal UI, `U` updates the selected clone (or continues once the conflicts are fixed) and `X` aborts; the desktop app has the same in the clone's menu. All three show a clone stopped on conflicts.
 
 ## Shell integration
 
