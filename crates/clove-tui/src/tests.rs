@@ -2237,3 +2237,225 @@ fn an_update_stopped_on_conflicts_offers_the_resolver() {
     let fx = key(&mut app, KeyCode::Esc);
     assert!(fx.is_empty() && app.modal.is_none(), "Esc leaves it stopped");
 }
+
+// ---- video frames ------------------------------------------------------
+
+/// A ratatui colour as #rrggbb (xterm defaults for named and indexed ones),
+/// or null for the terminal's own.
+fn hex(c: ratatui::style::Color) -> serde_json::Value {
+    use ratatui::style::Color::*;
+    const ANSI: [(u8, u8, u8); 16] = [
+        (0, 0, 0),
+        (205, 0, 0),
+        (0, 205, 0),
+        (205, 205, 0),
+        (0, 0, 238),
+        (205, 0, 205),
+        (0, 205, 205),
+        (229, 229, 229),
+        (127, 127, 127),
+        (255, 0, 0),
+        (0, 255, 0),
+        (255, 255, 0),
+        (92, 92, 255),
+        (255, 0, 255),
+        (0, 255, 255),
+        (255, 255, 255),
+    ];
+    let (r, g, b) = match c {
+        Reset => return serde_json::Value::Null,
+        Rgb(r, g, b) => (r, g, b),
+        Black => ANSI[0],
+        Red => ANSI[1],
+        Green => ANSI[2],
+        Yellow => ANSI[3],
+        Blue => ANSI[4],
+        Magenta => ANSI[5],
+        Cyan => ANSI[6],
+        Gray => ANSI[7],
+        DarkGray => ANSI[8],
+        LightRed => ANSI[9],
+        LightGreen => ANSI[10],
+        LightYellow => ANSI[11],
+        LightBlue => ANSI[12],
+        LightMagenta => ANSI[13],
+        LightCyan => ANSI[14],
+        White => ANSI[15],
+        Indexed(i @ 0..=15) => ANSI[i as usize],
+        Indexed(i @ 16..=231) => {
+            let l = |v: u8| if v == 0 { 0 } else { 55 + v * 40 };
+            let n = i - 16;
+            (l(n / 36), l(n / 6 % 6), l(n % 6))
+        }
+        Indexed(i) => {
+            let v = 8 + (i - 232) * 10;
+            (v, v, v)
+        }
+    };
+    serde_json::Value::String(format!("#{r:02x}{g:02x}{b:02x}"))
+}
+
+/// The buffer as {width, height, rows: [[cell]]}. The cell after a wide
+/// symbol keeps its slot with an empty "t".
+fn cells(buf: &Buffer) -> serde_json::Value {
+    use ratatui::style::Modifier;
+    let rows: Vec<serde_json::Value> = (0..buf.area.height)
+        .map(|y| {
+            let mut skip = 0;
+            let row: Vec<serde_json::Value> = (0..buf.area.width)
+                .map(|x| {
+                    let c = &buf[(x, y)];
+                    let t = if skip > 0 {
+                        skip -= 1;
+                        ""
+                    } else {
+                        skip = c.symbol().width().saturating_sub(1);
+                        c.symbol()
+                    };
+                    serde_json::json!({
+                        "t": t,
+                        "fg": hex(c.fg),
+                        "bg": hex(c.bg),
+                        "b": c.modifier.contains(Modifier::BOLD),
+                        "i": c.modifier.contains(Modifier::ITALIC),
+                        "d": c.modifier.contains(Modifier::DIM),
+                    })
+                })
+                .collect();
+            serde_json::Value::Array(row)
+        })
+        .collect();
+    serde_json::json!({ "width": buf.area.width, "height": buf.area.height, "rows": rows })
+}
+
+/// Agent-style clones for the intro video.
+fn video_app() -> App {
+    let mut parser = clone("agent-parser", Some("agent/parser"), true);
+    parser.dirty = Some(true);
+    parser.ahead = Some(3);
+    parser.created_at = NOW - 240;
+    parser.timings.push(t("setup deps", 1840.0));
+    let mut race = clone("fix-race", Some("fix/race"), true);
+    race.ahead = Some(1);
+    race.behind = Some(3);
+    race.own_bytes = 96 * 1024 * 1024;
+    race.created_at = NOW - 38 * 60;
+    let mut billing = clone("feat-billing-v2", Some("feat/billing-v2"), true);
+    billing.ahead = Some(4);
+    billing.behind = Some(2);
+    billing.own_bytes = 412 * 1024 * 1024;
+    billing.created_at = NOW - 2 * 3600;
+    let mut pr = clone("pr-4053", None, true);
+    pr.head = Some("c41d07be22a9".into());
+    pr.created_at = NOW - 22 * 60;
+    let mut search = clone("agent-search-index", Some("agent/search-index"), true);
+    search.failed_steps = vec!["lint".into()];
+    search.golden_generation = 2;
+    search.created_at = NOW - 26 * 3600;
+    let spike = clone("spike-wasm", Some("spike/wasm"), false);
+    let mut app = app_with(true, vec![parser, race, billing, pr, search, spike]);
+    app.service = Some(true);
+    app.modal = None;
+    app
+}
+
+/// Writes the TUI screens the intro video animates, as styled cell grids:
+/// CLOVE_VIDEO_OUT=<dir> cargo test -p clove-tui export_video_frames -- --ignored
+#[test]
+#[ignore]
+fn export_video_frames() {
+    use clove_core::history::{By, Kind, Removed};
+    use clove_core::update::{Strategy, Update};
+    let Some(out) = std::env::var_os("CLOVE_VIDEO_OUT").map(PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&out).unwrap();
+    let (w, h) = (132, 36);
+    let write = |name: &str, buf: &Buffer| {
+        let json = serde_json::to_string(&cells(buf)).unwrap();
+        std::fs::write(out.join(name), json).unwrap();
+    };
+
+    // Main screen, fix-race selected.
+    let mut app = video_app();
+    key(&mut app, KeyCode::Down);
+    let (_, buf) = render(&mut app, w, h);
+    write("tui-main.json", &buf);
+
+    // feat-billing-v2's update stops on conflicts; the resolver is offered.
+    let mut app = video_app();
+    key(&mut app, KeyCode::Down);
+    key(&mut app, KeyCode::Down);
+    for d in app.data.values_mut() {
+        d.config.update.resolver = Some("claude".into());
+    }
+    let name = app.selected_clone().unwrap().name.clone();
+    assert_eq!(name, "feat-billing-v2");
+    let task = Task::Update {
+        name,
+        step: UpdateStep::Run,
+    };
+    let id = match app.spawn(task, After::Nothing).first() {
+        Some(Effect::Spawn { id, .. }) => *id,
+        other => panic!("{other:?}"),
+    };
+    app.modal = None;
+    app.on_msg(Msg::Done(
+        id,
+        Ok(Outcome::Updated(Some(Update::Conflict {
+            base: "origin/main".into(),
+            strategy: Strategy::Rebase,
+            files: vec!["apps/web/src/billing.ts".into(), "apps/web/src/plans.ts".into()],
+        }))),
+    ));
+    let (s, buf) = render(&mut app, w, h);
+    assert!(s.contains("with Claude"), "{s}");
+    write("tui-conflict.json", &buf);
+
+    // The removal log.
+    let mut app = video_app();
+    let cs = app.data.values().next().unwrap().clones.clone();
+    let mut d = data("/work/app", status(true, cs.len()), cs);
+    let removed = |ago, name: &str, branch: &str, head: &str, by, reason: &str| Removed {
+        at: NOW - ago,
+        kind: Kind::Clone,
+        name: name.into(),
+        path: format!("/work/app.clove/{name}/app").into(),
+        branch: Some(branch.into()),
+        head: Some(head.into()),
+        by,
+        reason: Some(reason.into()),
+        branch_deleted: true,
+    };
+    d.history = vec![
+        removed(
+            3 * 3600,
+            "fix-login-redirect",
+            "fix/login-redirect",
+            "4be2c19d0a77e1f2",
+            By::AutoPrune,
+            "PR #4049 merged",
+        ),
+        removed(
+            5 * 3600,
+            "agent-tokenizer",
+            "agent/tokenizer",
+            "9c1e4a7b2d30f5a6",
+            By::Prune,
+            "PR #4038 merged",
+        ),
+        removed(
+            26 * 3600,
+            "pr-4021",
+            "pr/4021",
+            "e7f0a2c4b6d8a9b0",
+            By::Hand,
+            "removed by hand",
+        ),
+    ];
+    app.apply_data(d);
+    key(&mut app, KeyCode::Char('L'));
+    let (s, buf) = render(&mut app, w, h);
+    assert!(s.contains("fix-login-redirect"), "{s}");
+    write("tui-log.json", &buf);
+}
