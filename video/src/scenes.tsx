@@ -548,46 +548,58 @@ function Window({ children, title }: { children: React.ReactNode; title?: string
   );
 }
 
-/** 9. Command line, terminal UI, Mac app. */
-export function Surfaces() {
+/** One of the three ways in: arrives large, then steps back as the next comes. */
+function Layer({ at, next, label, children }: { at: number; next?: number; label: string; children: React.ReactNode }) {
   const frame = useCurrentFrame();
-  const { durationInFrames } = useVideoConfig();
-  const cli = useIn(4, 20);
-  const tui = useIn(sec(1.5), 20);
-  const app = useIn(sec(2.6), 20);
-  const drift = interpolate(frame, [0, durationInFrames], [0, -30]);
+  const p = useIn(at, 22);
+  const back = next === undefined ? 0 : interpolate(frame, [next, next + 16], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
+  if (frame < at - 1) return null;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: "50%",
+        top: "53%",
+        opacity: Math.min(1, p * 1.3) * (1 - back * 0.72),
+        transform: `translate(-50%, -50%) translateY(${(1 - p) * 70 - back * 150}px) scale(${(0.94 + 0.06 * p) * (1 - back * 0.14)})`,
+        filter: `blur(${back * 2.5}px)`,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 22, opacity: 1 - back }}>
+        <Kicker delay={at}>{label}</Kicker>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** 9. Command line, terminal UI, Mac app; one at a time, with the voice. */
+export function Surfaces() {
+  const tuiAt = sec(1.55);
+  const appAt = sec(3.15);
   return (
     <Stage push={0.02}>
-      <div style={{ position: "absolute", top: 90, left: 200 }}>
-        <Kicker delay={0}>Three ways in</Kicker>
-      </div>
-      <div style={{ position: "absolute", left: 150, top: 230, opacity: cli, transform: `translateY(${(1 - cli) * 50 + drift * 0.4}px) rotate(-1.2deg)` }}>
-        <Terminal title="clove" width={640}>
-          <Typed text="clove ls" start={10} cps={24} />
-          <Out at={30}>{"● feat-login   ↑2      14M"}</Out>
-          <Out at={33}>{"● fix-race     ↑1 ↓3  230M"}</Out>
-          <Out at={36}>{"○ spike-cache  unmounted"}</Out>
+      <Layer at={4} next={tuiAt} label="The command line">
+        <Terminal title="~/src/mono" width={1000}>
+          <Typed text="clove ls" start={12} cps={24} />
+          <Out at={30}>{"  NAME           CHANGES   OWN"}</Out>
+          <Out at={33} color={c.ink}>{"● feat-login     ↑2        14M"}</Out>
+          <Out at={36} color={c.ink}>{"● fix-race       ↑1 ↓3    230M"}</Out>
+          <Out at={39}>{"○ spike-cache    unmounted"}</Out>
         </Terminal>
-      </div>
-      <div
-        style={{
-          position: "absolute",
-          left: 560,
-          top: 300,
-          opacity: tui,
-          transform: `translateY(${(1 - tui) * 60 + drift * 0.7}px) scale(0.72) rotate(0.6deg)`,
-          transformOrigin: "top left",
-        }}
-      >
-        <Window>
-          <TuiShot name="tui-main" />
-        </Window>
-      </div>
-      <div style={{ position: "absolute", right: 120, top: 360, opacity: app, transform: `translateY(${(1 - app) * 70 + drift}px) rotate(1.4deg)` }}>
+      </Layer>
+      <Layer at={tuiAt} next={appAt} label="A full-screen terminal UI">
+        <div style={{ transform: "scale(0.82)", transformOrigin: "top center", marginBottom: -110 }}>
+          <Window>
+            <TuiShot name="tui-main" />
+          </Window>
+        </div>
+      </Layer>
+      <Layer at={appAt} label="The Mac app">
         <Window title="clove">
-          <AppShot name="app-repo" width={860} />
+          <AppShot name="app-repo" width={1240} />
         </Window>
-      </div>
+      </Layer>
     </Stage>
   );
 }
