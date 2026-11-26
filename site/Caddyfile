@@ -1,0 +1,23 @@
+# Static files from /srv on Railway's $PORT. Every page is prerendered into
+# <path>/index.html, so file_server finds it; anything else is a 404.
+{
+	admin off
+}
+
+:{$PORT:8080} {
+	root * /srv
+	encode zstd gzip
+
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+	header ?Cache-Control "public, max-age=300"
+
+	# www.clove.fast and the railway.app domain go to the canonical host.
+	@www host www.clove.fast
+	redir @www https://clove.fast{uri} permanent
+
+	file_server
+	handle_errors {
+		respond "Not found" 404
+	}
+}

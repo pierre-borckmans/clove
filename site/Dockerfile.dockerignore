@@ -1,0 +1,8 @@
+# Only what the site build needs from the repo.
+*
+!README.md
+!docs
+!site
+site/node_modules
+site/dist
+site/.ssr
