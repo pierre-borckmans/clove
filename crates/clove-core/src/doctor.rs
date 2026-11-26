@@ -168,7 +168,74 @@ pub fn machine() -> Vec<Check> {
         }
         Err(_) => out.push(check("git", Level::Fail, "git not found", None)),
     }
+    #[cfg(target_os = "macos")]
+    out.extend(first_runs());
     out
+}
+
+/// macOS checks a binary the first time it runs, per file. Every clone holds
+/// new copies of the repo's tools (esbuild, swc, native modules), so each one
+/// pays it again in each clone, and agents in many clones pay it many times.
+/// Programs started from an app listed under Developer Tools skip it. Probed
+/// by running a freshly signed copy of `true` twice.
+#[cfg(target_os = "macos")]
+fn first_runs() -> Option<Check> {
+    // Twice, so one slow start can't raise a false alarm.
+    let delay = first_run_delay()?.min(first_run_delay()?);
+    Some(if delay >= FIRST_RUN_SLOW {
+        check(
+            "first runs",
+            Level::Warn,
+            format!(
+                "macOS checks each new binary on its first run ({}ms here), and every clone brings \
+                 new copies; add your terminal to System Settings > Privacy & Security > Developer Tools",
+                delay.as_millis()
+            ),
+            Some("open 'x-apple.systempreferences:com.apple.preference.security?Privacy_DevTools'".into()),
+        )
+    } else {
+        check(
+            "first runs",
+            Level::Ok,
+            "new binaries start without a check",
+            None,
+        )
+    })
+}
+
+/// A first run this much slower than the second means macOS checked it.
+#[cfg(target_os = "macos")]
+const FIRST_RUN_SLOW: std::time::Duration = std::time::Duration::from_millis(30);
+
+#[cfg(target_os = "macos")]
+fn first_run_delay() -> Option<std::time::Duration> {
+    use std::time::Instant;
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let probe = std::env::temp_dir().join(format!("clove-first-run-{}-{n}", std::process::id()));
+    let delay = (|| {
+        std::fs::copy("/usr/bin/true", &probe).ok()?;
+        let signed = Command::new("codesign")
+            .args(["-s", "-", "-f"])
+            .arg(&probe)
+            .output()
+            .ok()?
+            .status
+            .success();
+        if !signed {
+            return None;
+        }
+        let time = || {
+            let t = Instant::now();
+            Command::new(&probe).status().ok().filter(|s| s.success())?;
+            Some(t.elapsed())
+        };
+        let first = time()?;
+        let second = time()?;
+        Some(first.saturating_sub(second))
+    })();
+    let _ = std::fs::remove_file(&probe);
+    delay
 }
 
 pub fn repo(c: &Clove) -> Vec<Check> {
@@ -377,4 +444,30 @@ fn quota(c: &Clove) -> Option<Check> {
             None,
         ),
     })
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod first_run_tests {
+    use super::*;
+
+    #[test]
+    fn probes_and_cleans_up() {
+        let before = std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .is_ok_and(|e| e.file_name().to_string_lossy().starts_with("clove-first-run-"))
+            })
+            .count();
+        assert!(first_run_delay().is_some());
+        assert!(first_runs().is_some());
+        let after = std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .is_ok_and(|e| e.file_name().to_string_lossy().starts_with("clove-first-run-"))
+            })
+            .count();
+        assert_eq!(before, after, "probe files are removed");
+    }
 }
