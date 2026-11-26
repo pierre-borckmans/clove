@@ -90,30 +90,61 @@ export function Parallel() {
   const fork = cue("parallel", "parallel", 0, -6);
   const named = cue("parallel", "branch", 0, -4);
   const main = useRamp(4, fork);
+  // The earliest fork takes the outermost lane, so no branch crosses another.
   const branches: [string, string, number, number][] = [
-    ["feat/login", "claude", 420, 330],
-    ["fix/race", "codex", 640, 760],
-    ["agent/parser", "claude", 860, 300],
-    ["agent/docs", "cursor", 1080, 780],
+    ["feat/login", "claude", 420, 260],
+    ["fix/race", "codex", 640, 840],
+    ["agent/parser", "claude", 860, 410],
+    ["agent/docs", "cursor", 1080, 690],
   ];
   return (
     <Stage push={0.025}>
       <div style={{ position: "absolute", top: 110, left: 0, right: 0, display: "flex", justifyContent: "center" }}>
         <Words text="In parallel, each on its own branch." size={64} delay={cue("parallel", "need", 0, -6)} accent={["parallel,"]} />
       </div>
-      <svg width={1920} height={1080} style={{ position: "absolute", inset: 0 }}>
-        <line x1={200} y1={540} x2={200 + 1520 * main} y2={540} stroke={c.ink} strokeOpacity={0.5} strokeWidth={4} strokeLinecap="round" />
+      <svg width={1920} height={1080} style={{ position: "absolute", inset: 0, overflow: "visible" }}>
+        <defs>
+          <linearGradient id="branch" x1="0" x2="1">
+            <stop offset="0" stopColor={c.ink} stopOpacity="0.55" />
+            <stop offset="0.35" stopColor={c.bottle} />
+            <stop offset="1" stopColor={c.bottle} />
+          </linearGradient>
+          <filter id="branchglow" x="-20%" y="-50%" width="140%" height="200%">
+            <feGaussianBlur stdDeviation="6" result="b" />
+            <feMerge>
+              <feMergeNode in="b" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        <line x1={200} y1={540} x2={200 + 1520 * main} y2={540} stroke={c.ink} strokeOpacity={0.45} strokeWidth={7} strokeLinecap="round" />
         {branches.map(([, , x, y], i) => {
-          const d = interpolate(frame, [fork + i * 5, fork + i * 5 + 16], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-          const path = `M ${x} 540 C ${x + 120} 540, ${x + 80} ${y}, ${x + 260} ${y} L ${x + 620} ${y}`;
+          const d = interpolate(frame, [fork + i * 5, fork + i * 5 + 18], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.out(Easing.cubic) });
+          const path = `M ${x} 540 C ${x + 150} 540, ${x + 110} ${y}, ${x + 270} ${y} L ${x + 620} ${y}`;
+          const dots = [x + 360, x + 470, x + 580];
           return (
             <g key={i}>
-              <path d={path} fill="none" stroke={c.bottle} strokeWidth={3} strokeDasharray={900} strokeDashoffset={900 * (1 - d)} strokeLinecap="round" />
-              <circle cx={x} cy={540} r={9} fill={c.paper} stroke={c.ink} strokeWidth={3} opacity={d > 0 ? 1 : 0} />
+              <path
+                d={path}
+                fill="none"
+                stroke="url(#branch)"
+                strokeWidth={6}
+                strokeLinecap="round"
+                filter="url(#branchglow)"
+                pathLength={1}
+                strokeDasharray={1}
+                strokeDashoffset={1 - d}
+                opacity={d > 0 ? 1 : 0}
+              />
+              {dots.map((cx, j) => {
+                const p = interpolate(frame, [fork + i * 5 + 14 + j * 4, fork + i * 5 + 22 + j * 4], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+                return <circle key={j} cx={cx} cy={y} r={7 * p} fill={c.paper} stroke={c.bottle} strokeWidth={3} />;
+              })}
+              <circle cx={x} cy={540} r={11} fill={c.paper} stroke={c.ink} strokeWidth={4} opacity={d > 0 ? 1 : 0} />
             </g>
           );
         })}
-        <text x={180} y={590} fill={c.muted} fontFamily={mono} fontSize={22} opacity={main}>
+        <text x={180} y={594} fill={c.muted} fontFamily={mono} fontSize={22} opacity={main}>
           main
         </text>
       </svg>
