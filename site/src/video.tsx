@@ -17,8 +17,14 @@ export function WatchButton() {
       hidden
       className="inline-flex cursor-pointer items-center gap-3 rounded-md border border-rule bg-[rgba(233,238,232,0.04)] px-4 py-3 font-mono text-[0.8rem] text-ink-2 transition-colors hover:border-bottle/50 hover:text-ink"
     >
-      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-bottle text-[0.55rem] text-paper">
-        ▶
+      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-bottle">
+        {/* A triangle's visual centre sits left of its box centre; nudge it right. */}
+        <svg width="9" height="10" viewBox="0 0 9 10" aria-hidden="true" style={{ marginLeft: 2 }}>
+          <path
+            d="M0.5 0.8v8.4a0.6 0.6 0 0 0 0.9 0.5l7-4.2a0.6 0.6 0 0 0 0-1L1.4 0.3a0.6 0.6 0 0 0-0.9 0.5z"
+            fill="var(--paper)"
+          />
+        </svg>
       </span>
       Watch the intro <span className="text-dim">· {LENGTH}</span>
     </button>
