@@ -1,0 +1,254 @@
+WEBVTT
+
+1
+00:00:00.333 --> 00:00:01.343
+So.
+
+2
+00:00:01.343 --> 00:00:03.270
+You've got a few clankers running, and you're
+
+3
+00:00:03.270 --> 00:00:05.374
+tokenmaxxing like everyone else.
+
+4
+00:00:06.860 --> 00:00:08.659
+To get anything done, they need to work
+
+5
+00:00:08.659 --> 00:00:11.180
+in parallel, each on its own branch.
+
+6
+00:00:12.260 --> 00:00:14.814
+But in one checkout, they clash.
+
+7
+00:00:14.814 --> 00:00:17.600
+One switches branches under another, and your login
+
+8
+00:00:17.600 --> 00:00:19.760
+fix lands on another agent's branch.
+
+9
+00:00:21.460 --> 00:00:22.349
+Duh!
+
+10
+00:00:22.349 --> 00:00:24.288
+I'm not a caveman, you say.
+
+11
+00:00:24.288 --> 00:00:26.319
+Git has worktrees for this.
+
+12
+00:00:26.319 --> 00:00:28.620
+A fresh worktree, in about a second.
+
+13
+00:00:30.127 --> 00:00:31.346
+But it starts empty.
+
+14
+00:00:31.346 --> 00:00:33.610
+No dependencies, no dev shell, none of your
+
+15
+00:00:33.610 --> 00:00:34.818
+local files.
+
+16
+00:00:34.818 --> 00:00:36.066
+Just tumbleweeds.
+
+17
+00:00:38.360 --> 00:00:39.660
+So your agent improvises.
+
+18
+00:00:39.660 --> 00:00:42.342
+It reinstalls everything in every worktree.
+
+19
+00:00:42.342 --> 00:00:44.862
+Or it gives up: it can't lint here,
+
+20
+00:00:44.862 --> 00:00:48.101
+can't regenerate the protos here, so it reaches
+
+21
+00:00:48.101 --> 00:00:50.434
+back into your main checkout and links things
+
+22
+00:00:50.434 --> 00:00:51.527
+across.
+
+23
+00:00:53.427 --> 00:00:55.726
+And the next agent rediscovers all of it,
+
+24
+00:00:55.726 --> 00:00:57.805
+from scratch, every single time.
+
+25
+00:00:59.493 --> 00:01:01.478
+On a big monorepo, that's over a minute
+
+26
+00:01:01.478 --> 00:01:04.741
+and gigabytes of disk, per worktree.
+
+27
+00:01:04.741 --> 00:01:06.971
+Your laptop fan has opinions.
+
+28
+00:01:08.860 --> 00:01:11.603
+But there's a better way.
+
+29
+00:01:11.603 --> 00:01:12.917
+Meet clove.
+
+30
+00:01:14.827 --> 00:01:17.416
+clove keeps one golden image of your repo,
+
+31
+00:01:17.416 --> 00:01:21.062
+with dependencies installed and the environment warmed.
+
+32
+00:01:21.062 --> 00:01:24.326
+Each worktree is a copy-on-write clone of it.
+
+33
+00:01:26.227 --> 00:01:29.431
+It detects your toolchain on its own: mise,
+
+34
+00:01:29.431 --> 00:01:33.611
+direnv and nix, pnpm, bun, yarn, npm, uv
+
+35
+00:01:33.611 --> 00:01:36.234
+and cargo, plus your local files.
+
+36
+00:01:36.234 --> 00:01:37.779
+Anything else is a step in a small
+
+37
+00:01:37.779 --> 00:01:40.219
+config file, shared with your team.
+
+38
+00:01:42.327 --> 00:01:44.812
+And it stays warm on its own.
+
+39
+00:01:44.812 --> 00:01:47.656
+Each time you pull, a background service refreshes
+
+40
+00:01:47.656 --> 00:01:50.758
+the golden image, while your clones keep working.
+
+41
+00:01:52.860 --> 00:01:54.578
+Under the hood, it leans on what your
+
+42
+00:01:54.578 --> 00:01:56.691
+file system already does well.
+
+43
+00:01:56.691 --> 00:01:59.280
+On macOS, each clone is an APFS disk
+
+44
+00:01:59.280 --> 00:02:02.589
+image, copied whole by a single clonefile call.
+
+45
+00:02:02.589 --> 00:02:05.782
+On Linux, it's a btrfs snapshot, taken in
+
+46
+00:02:05.782 --> 00:02:07.340
+a few milliseconds.
+
+47
+00:02:09.627 --> 00:02:11.252
+So a new worktree is ready in about
+
+48
+00:02:11.252 --> 00:02:12.332
+a second.
+
+49
+00:02:12.332 --> 00:02:14.526
+Everything is already there, and your fan and
+
+50
+00:02:14.526 --> 00:02:17.140
+your disk can finally relax.
+
+51
+00:02:19.627 --> 00:02:22.541
+When a lockfile changes, only that step runs
+
+52
+00:02:22.541 --> 00:02:23.472
+again.
+
+53
+00:02:25.160 --> 00:02:26.890
+Use it from the command line, from a
+
+54
+00:02:26.890 --> 00:02:30.315
+full-screen terminal interface, or from the desktop app,
+
+55
+00:02:30.315 --> 00:02:32.059
+on macOS and Linux.
+
+56
+00:02:34.160 --> 00:02:36.006
+It brings your clones up to date, with
+
+57
+00:02:36.006 --> 00:02:38.618
+your coding agent resolving the conflicts.
+
+58
+00:02:38.618 --> 00:02:41.497
+It cleans up after merged pull requests.
+
+59
+00:02:41.497 --> 00:02:43.819
+And it teaches your agents to use it,
+
+60
+00:02:43.819 --> 00:02:44.995
+so you don't have to.
+
+61
+00:02:47.293 --> 00:02:48.268
+That's clove.
+
+62
+00:02:48.268 --> 00:02:50.239
+Your worktrees, ready in a second.
+
+63
+00:02:50.239 --> 00:02:52.153
+Check it out at clove.fast.
+

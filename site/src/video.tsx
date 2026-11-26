@@ -3,11 +3,11 @@
 // overlay shows the poster and a note.
 
 /** Flip to true once public/video/clove-intro.mp4 (and .vtt) are in. */
-const READY = false;
+const READY = true;
 const SRC = "/video/clove-intro.mp4";
 const CAPTIONS = "/video/clove-intro.vtt";
 const POSTER = "/video/poster.jpg";
-const LENGTH = "2:50";
+const LENGTH = "2:56";
 
 export function WatchButton() {
   return (
