@@ -61,7 +61,7 @@ pub fn run(start_dir: &Path) -> Result<()> {
     // Without it (no inotify watches left, say) the TUI polls faster instead.
     let watcher = {
         let tx = tx.clone();
-        clove_core::watch::Watcher::new(move || {
+        clove_core::watch::Watcher::new(move |_| {
             let _ = tx.send(Msg::FsChanged);
         })
         .ok()

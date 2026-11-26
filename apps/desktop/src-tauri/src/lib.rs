@@ -80,19 +80,25 @@ fn quit(app: AppHandle) {
 /// refetch at once and otherwise poll slowly. Targets are resynced after each
 /// change and every 15s, to pick up new repos and clones.
 fn watch_repos(app: AppHandle) {
-    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let (tx, rx) = std::sync::mpsc::channel::<bool>();
     let emitter = app.clone();
-    let Ok(watcher) = clove_core::watch::Watcher::new(move || {
-        let _ = emitter.emit("repos-changed", ());
-        let _ = tx.send(());
+    let Ok(watcher) = clove_core::watch::Watcher::new(move |c| {
+        // Edits in a working tree only touch clone and worktree lists.
+        let _ = emitter.emit("repos-changed", serde_json::json!({ "treesOnly": c.trees_only }));
+        let _ = tx.send(c.trees_only);
     }) else {
         return;
     };
     std::thread::spawn(move || {
+        let mut resync = true;
         loop {
-            watcher.sync(clove_core::watch::all_targets());
+            if resync {
+                watcher.sync(clove_core::watch::all_targets());
+            }
             match rx.recv_timeout(Duration::from_secs(15)) {
-                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                // Edits in a tree add nothing to watch.
+                Ok(trees_only) => resync = !trees_only,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => resync = true,
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
             }
         }

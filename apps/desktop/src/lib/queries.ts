@@ -36,10 +36,15 @@ export const POLL_MS = 15_000;
 export function useRepoChanges() {
   const qc = useQueryClient();
   useEffect(() => {
-    const un = listen("repos-changed", () => {
+    const un = listen<{ treesOnly?: boolean } | null>("repos-changed", (change) => {
+      // Edits inside working trees change clone and worktree status only.
+      const only = change?.treesOnly ? ["clones", "worktrees"] : null;
       void qc.invalidateQueries({
-        predicate: (q) =>
-          !["prs-check", "doctor", "apps", "shell", "repo-candidates", "init-preview"].includes(String(q.queryKey[0])),
+        predicate: (q) => {
+          const k = String(q.queryKey[0]);
+          if (only) return only.includes(k);
+          return !["prs-check", "doctor", "apps", "shell", "repo-candidates", "init-preview"].includes(k);
+        },
       });
     });
     return () => void un.then((f) => f());

@@ -27,6 +27,14 @@ const DEBOUNCE: Duration = Duration::from_millis(150);
 /// A steady stream of events still reloads this often.
 const MAX_WAIT: Duration = Duration::from_secs(1);
 
+/// What a report covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Change {
+    /// Only edits inside working trees: clone and worktree status may have
+    /// changed, nothing else (no clone added, no ref moved). Nothing new to watch.
+    pub trees_only: bool,
+}
+
 /// What an event means, in rising order of urgency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Hit {
@@ -191,7 +199,7 @@ struct Inner {
 
 impl Watcher {
     /// `on_change` runs on a background thread after relevant changes settle.
-    pub fn new(on_change: impl Fn() + Send + 'static) -> Result<Self> {
+    pub fn new(on_change: impl Fn(Change) + Send + 'static) -> Result<Self> {
         let (tx, rx) = channel::<notify::Result<notify::Event>>();
         let w = notify::recommended_watcher(tx)?;
         let targets: Arc<Mutex<Vec<Target>>> = Arc::default();
@@ -240,7 +248,7 @@ impl Watcher {
                             Err(RecvTimeoutError::Timeout) => {
                                 trailing = None;
                                 last_fire = Some(Instant::now());
-                                on_change();
+                                on_change(Change { trees_only: true });
                                 continue;
                             }
                             Err(RecvTimeoutError::Disconnected) => return,
@@ -288,7 +296,9 @@ impl Watcher {
                         trailing = None;
                     }
                     last_fire = Some(Instant::now());
-                    on_change();
+                    on_change(Change {
+                        trees_only: hit == Hit::Tree,
+                    });
                 }
             })?;
         Ok(Self {
@@ -377,7 +387,7 @@ mod tests {
             std::fs::create_dir_all(state.join("clones")).unwrap();
             let hits = Arc::new(AtomicUsize::new(0));
             let h = hits.clone();
-            let w = Watcher::new(move || {
+            let w = Watcher::new(move |_| {
                 h.fetch_add(1, Ordering::SeqCst);
             })
             .unwrap();
@@ -521,7 +531,7 @@ mod tests {
         let c = Clove::open(&root).unwrap();
         let hits = Arc::new(AtomicUsize::new(0));
         let h = hits.clone();
-        let w = Watcher::new(move || {
+        let w = Watcher::new(move |_| {
             h.fetch_add(1, Ordering::SeqCst);
         })
         .unwrap();
@@ -569,7 +579,7 @@ mod tests {
         std::fs::create_dir_all(&tree).unwrap();
         let fired: Arc<Mutex<Vec<Instant>>> = Arc::default();
         let f = fired.clone();
-        let w = Watcher::new(move || f.lock().unwrap().push(Instant::now())).unwrap();
+        let w = Watcher::new(move |_| f.lock().unwrap().push(Instant::now())).unwrap();
         w.sync(vec![Target::tree(tree.clone())]);
         std::thread::sleep(Duration::from_millis(500));
         fired.lock().unwrap().clear();

@@ -82,6 +82,8 @@ struct Entry {
 }
 
 static MEMO: LazyLock<Mutex<HashMap<String, Entry>>> = LazyLock::new(Default::default);
+/// Per-key locks, so one key is computed by one caller at a time.
+static GATES: LazyLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = LazyLock::new(Default::default);
 /// Trees a live recursive watcher reports on.
 static WATCHED: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(Default::default);
 
@@ -150,18 +152,28 @@ fn lookup<T: Clone + Send + 'static>(
     recheck: impl Fn(&T) -> Duration,
     compute: impl FnOnce() -> T,
 ) -> T {
-    let now = stamp(deps);
     let ttl = tree.map(|t| if is_watched(t) { WATCHED_TTL } else { UNWATCHED_TTL });
-    {
+    let hit = || {
+        let now = stamp(deps);
         let m = MEMO.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(e) = m.get(key)
-            && e.stamp == now
+        let e = m.get(key)?;
+        let fresh = e.stamp == now
             && ttl.is_none_or(|t| e.at.elapsed() < t)
-            && !(e.stale && e.at.elapsed() >= e.recheck)
-            && let Some(v) = e.value.downcast_ref::<T>()
-        {
-            return v.clone();
-        }
+            && !(e.stale && e.at.elapsed() >= e.recheck);
+        fresh.then(|| e.value.downcast_ref::<T>().cloned()).flatten()
+    };
+    if let Some(v) = hit() {
+        return v;
+    }
+    // One computation per key at a time: callers that arrive meanwhile (a UI
+    // asking from several places at once) wait for it and reuse its answer.
+    let gate = {
+        let mut g = GATES.lock().unwrap_or_else(|e| e.into_inner());
+        g.entry(key.to_string()).or_default().clone()
+    };
+    let _turn = gate.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(v) = hit() {
+        return v;
     }
     let v = compute();
     let entry = Entry {
@@ -339,6 +351,28 @@ mod tests {
         let mut m = MEMO.lock().unwrap();
         let e = m.get_mut(key).unwrap();
         e.at -= by;
+    }
+
+    #[test]
+    fn concurrent_callers_share_one_computation() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let key = format!("t5:{:?}", std::thread::current().id());
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let (calls, key) = (calls.clone(), key.clone());
+                std::thread::spawn(move || {
+                    get(&key, &[], || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(100));
+                        7
+                    })
+                })
+            })
+            .collect();
+        for t in threads {
+            assert_eq!(t.join().unwrap(), 7);
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
