@@ -79,23 +79,45 @@ function tocSpy() {
   update();
 }
 
-/** The intro video overlay: opens from the hero, pauses when closed. */
+/** The intro video overlay: opens from the hero, closes the way it opened,
+ * and pauses when closed. */
 function videoDialog() {
   const button = document.querySelector<HTMLButtonElement>("[data-watch]");
   const dialog = document.querySelector<HTMLDialogElement>("[data-video-dialog]");
   if (!button || !dialog || typeof dialog.showModal !== "function") return;
   const video = dialog.querySelector("video");
+  const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const close = () => {
+    if (!dialog.open || dialog.classList.contains("closing")) return;
+    video?.pause();
+    if (reduced()) return dialog.close();
+    dialog.classList.add("closing");
+    dialog.addEventListener(
+      "animationend",
+      () => {
+        dialog.classList.remove("closing");
+        dialog.close();
+      },
+      { once: true },
+    );
+  };
+
   button.hidden = false;
   button.addEventListener("click", () => {
     dialog.showModal();
     video?.play().catch(() => {});
   });
-  dialog.querySelector("[data-video-close]")?.addEventListener("click", () => dialog.close());
+  dialog.querySelector("[data-video-close]")?.addEventListener("click", close);
   // A click on the dimmed backdrop (the dialog itself, not its content) closes it.
   dialog.addEventListener("click", (e) => {
-    if (e.target === dialog) dialog.close();
+    if (e.target === dialog) close();
   });
-  dialog.addEventListener("close", () => video?.pause());
+  // Esc: animate out instead of the browser's instant close.
+  dialog.addEventListener("cancel", (e) => {
+    e.preventDefault();
+    close();
+  });
 }
 
 export function enhance() {

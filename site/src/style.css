@@ -788,10 +788,36 @@ html:not(.js) .spark {
 .video-dialog[open] {
   animation: video-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
+.video-dialog[open]::backdrop {
+  animation: backdrop-in 0.35s ease-out;
+}
+/* Closing plays the opening backwards, then the dialog actually closes. */
+.video-dialog.closing {
+  animation: video-out 0.25s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+.video-dialog.closing::backdrop {
+  animation: backdrop-out 0.25s ease-in forwards;
+}
 @keyframes video-in {
   from {
     opacity: 0;
     transform: translateY(12px) scale(0.98);
+  }
+}
+@keyframes video-out {
+  to {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+}
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes backdrop-out {
+  to {
+    opacity: 0;
   }
 }
 .video-frame {
