@@ -32,12 +32,23 @@ $ clove new feat/login
 
 ## Install
 
+The CLI and terminal UI, on macOS and Linux:
+
 ```
 brew install pierre-borckmans/tap/clove
 clove shell-init --install       # cd into new clones, completions (zsh, bash, fish)
 ```
 
-The Mac app, with a menu-bar popover: `brew install --cask pierre-borckmans/tap/clove-app`. Prebuilt binaries for macOS and Linux are on the [releases page](https://github.com/pierre-borckmans/clove/releases); the macOS ones are signed and notarized. From source: `cargo install --git https://github.com/pierre-borckmans/clove clove-cli`.
+The Mac app, with a menu-bar popover:
+
+```
+brew install --cask pierre-borckmans/tap/clove-app
+```
+
+Without Homebrew:
+
+- **Prebuilt binaries** for macOS and Linux are on the [releases page](https://github.com/pierre-borckmans/clove/releases). The macOS ones are signed and notarized.
+- **From source:** `cargo install --git https://github.com/pierre-borckmans/clove clove-cli`
 
 Then, in a repository:
 
