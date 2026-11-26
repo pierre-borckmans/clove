@@ -770,8 +770,12 @@ html:not(.js) .spark {
 
 /* The intro video overlay. */
 .video-dialog {
-  width: min(1100px, 92vw);
+  /* Tailwind's reset zeroes margins; auto is what centres a modal dialog. */
+  margin: auto;
+  /* As wide as fits: 92% of the width, or 16:9 of what the height allows. */
+  width: min(1100px, 92vw, calc((88vh - 3rem) * 16 / 9));
   max-width: none;
+  max-height: none;
   padding: 0;
   border: 0;
   background: transparent;
