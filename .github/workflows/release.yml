@@ -6,7 +6,8 @@ name: release
 # With the Apple secrets set (see RELEASING.md), the macOS CLI is signed with
 # Developer ID and sent to Apple's notary service, and the Mac app is built,
 # signed, notarized and published as a cask. Without them, the CLI keeps its
-# ad-hoc signature and the app is skipped.
+# ad-hoc signature and the Mac app is skipped. The Linux app (.deb and
+# AppImage, x86_64 and aarch64) needs no signing and is always built.
 #
 # Apple's queue never holds the release: the CLI is published once signed
 # (macOS fetches a bare binary's ticket online), `notarized` waits for the
@@ -187,6 +188,54 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m "clove-app ${GITHUB_REF_NAME#v}"
           git pull --rebase -q && git push
+
+  app-linux:
+    # Unsigned .deb and AppImage, added to the release. Independent of Apple.
+    # 22.04 for an older glibc, so the AppImage runs on more distributions.
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, os: ubuntu-22.04 }
+          - { arch: aarch64, os: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the Tauri build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libxdo-dev libssl-dev patchelf file
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        working-directory: apps/desktop
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          jq --arg v "$v" '.version = $v' src-tauri/tauri.conf.json > "$RUNNER_TEMP/conf.json"
+          mv "$RUNNER_TEMP/conf.json" src-tauri/tauri.conf.json
+          pnpm install --frozen-lockfile
+          pnpm tauri build --bundles deb,appimage
+          b=src-tauri/target/release/bundle
+          out="$GITHUB_WORKSPACE/clove-app-${GITHUB_REF_NAME}-${{ matrix.arch }}"
+          cp $b/deb/*.deb "$out.deb"
+          cp $b/appimage/*.AppImage "$out.AppImage"
+          cd "$GITHUB_WORKSPACE"
+          for f in "$out.deb" "$out.AppImage"; do sha256sum "$(basename "$f")" > "$f.sha256"; done
+      - name: Add them to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --clobber \
+            clove-app-*.deb clove-app-*.AppImage clove-app-*.sha256
 
   release:
     needs: build
