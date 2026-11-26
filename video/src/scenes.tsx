@@ -593,7 +593,7 @@ function Spark({ x0, y0, x1, y1, t }: { x0: number; y0: number; x1: number; y1: 
   const u = 1 - t;
   const x = u * u * u * x0 + 3 * u * u * t * mx + 3 * u * t * t * mx + t * t * t * x1;
   const y = u * u * u * y0 + 3 * u * u * t * y0 + 3 * u * t * t * y1 + t * t * t * y1;
-  return <circle cx={x} cy={y} r={5} fill={c.bottle} style={{ filter: `drop-shadow(0 0 8px ${c.bottle})` }} />;
+  return <circle cx={x} cy={y} r={7} fill={c.ink} stroke={c.bottle} strokeWidth={2} style={{ filter: `drop-shadow(0 0 10px ${c.bottle})` }} />;
 }
 
 /** 6. One golden image, copy-on-write clones. */
@@ -647,20 +647,29 @@ export function Golden() {
       <svg width={1920} height={1080} style={{ position: "absolute", inset: 0 }}>
         <defs>
           <linearGradient id="wire" x1="0" x2="1">
-            <stop offset="0" stopColor={c.peel} stopOpacity="0.7" />
-            <stop offset="1" stopColor={c.bottle} stopOpacity="0.7" />
+            <stop offset="0" stopColor={c.peel} />
+            <stop offset="1" stopColor={c.bottle} />
           </linearGradient>
+          <filter id="wireglow" x="-20%" y="-50%" width="140%" height="200%">
+            <feGaussianBlur stdDeviation="6" result="b" />
+            <feMerge>
+              <feMergeNode in="b" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
         </defs>
         {ys.map((y, i) => {
           const at = fan + i * 6;
           const d = interpolate(frame, [at, at + 16], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
           const y1 = y + 36;
-          const path = `M 810 515 C 1015 515, 1015 ${y1}, 1220 ${y1}`;
+          // Leave the card a little apart from each other, not from one pinch point.
+          const y0 = 515 + (i - 1.5) * 18;
+          const path = `M 810 ${y0} C 1015 ${y0}, 1015 ${y1}, 1220 ${y1}`;
           const s = (((frame - at - 16) % 36) + 36) % 36 / 36;
           return (
             <g key={i}>
-              <path d={path} fill="none" stroke="url(#wire)" strokeWidth={2.5} pathLength={1} strokeDasharray={1} strokeDashoffset={1 - d} />
-              {d >= 1 && <Spark x0={810} y0={515} x1={1220} y1={y1} t={s} />}
+              <path d={path} fill="none" stroke="url(#wire)" strokeWidth={5} strokeLinecap="round" filter="url(#wireglow)" pathLength={1} strokeDasharray={1} strokeDashoffset={1 - d} opacity={d > 0 ? 1 : 0} />
+              {d >= 1 && <Spark x0={810} y0={y0} x1={1220} y1={y1} t={s} />}
             </g>
           );
         })}
