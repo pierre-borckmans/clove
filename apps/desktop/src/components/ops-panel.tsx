@@ -2,7 +2,7 @@ import { Check, ChevronDown, Loader, TriangleAlert, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNow } from "@/hooks/use-now";
 import { ms } from "@/lib/format";
-import { dismissOp, type Op, useOps } from "@/lib/ops";
+import { dismissOp, forgetOp, type Op, useOps } from "@/lib/ops";
 import { setUi, useUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 import { barsFromSteps, Waterfall } from "./waterfall";
@@ -21,6 +21,11 @@ export function OpsPanel() {
       for (const t of timers) clearTimeout(t);
     };
   }, [ops, activity]);
+
+  // An emptied Activity view closes, so it doesn't stay open with nothing in it.
+  useEffect(() => {
+    if (activity && ops.length === 0) setUi({ activity: false });
+  }, [activity, ops.length]);
 
   if (visible.length === 0 || addRepo) return null;
   return (
@@ -86,7 +91,7 @@ export function OpCard({ op, embedded }: { op: Op; embedded?: boolean }) {
             <button
               type="button"
               aria-label="Dismiss"
-              onClick={() => dismissOp(op.id)}
+              onClick={() => forgetOp(op.id)}
               className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
             >
               <X className="size-3.5" />

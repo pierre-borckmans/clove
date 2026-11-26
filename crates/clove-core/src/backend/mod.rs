@@ -313,11 +313,36 @@ fn proc_parent_and_exe(pid: i32) -> Option<(i32, PathBuf)> {
     Some((ppid.trim().parse().ok()?, PathBuf::from(exe.trim())))
 }
 
+/// Owner of a process.
+#[cfg(target_os = "linux")]
+fn proc_uid(pid: i32) -> Option<u32> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(format!("/proc/{pid}")).ok().map(|m| m.uid())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn proc_uid(pid: i32) -> Option<u32> {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "uid=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+/// Whether clove may signal this process at all: the user's own, never
+/// launchd or clove itself. A last guard behind every caller's own checks.
+fn may_stop(pid: i32) -> bool {
+    // SAFETY: getuid has no preconditions.
+    let me = unsafe { libc::getuid() };
+    pid > 1 && pid as u32 != std::process::id() && proc_uid(pid) == Some(me)
+}
+
 fn stop(users: &[VolumeUser], grace: std::time::Duration) {
+    let users: Vec<&VolumeUser> = users.iter().filter(|u| may_stop(u.pid)).collect();
     if users.is_empty() {
         return;
     }
-    for u in users {
+    for u in &users {
         // SAFETY: kill(2) with a pid we just read; no memory involved.
         unsafe { libc::kill(u.pid, libc::SIGTERM) };
     }
@@ -329,7 +354,7 @@ fn stop(users: &[VolumeUser], grace: std::time::Duration) {
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    for u in users {
+    for u in &users {
         // SAFETY: as above.
         unsafe { libc::kill(u.pid, libc::SIGKILL) };
     }
@@ -369,6 +394,17 @@ mod daemon_tests {
             Some((4242, 1, PathBuf::from("/Users/a b/x.clove/c/bin/turbo")))
         );
         assert_eq!(parse_ps_line("garbage"), None);
+    }
+
+    #[test]
+    fn never_stops_launchd_itself_or_another_users_process() {
+        assert!(!may_stop(0));
+        assert!(!may_stop(1));
+        assert!(!may_stop(std::process::id() as i32));
+        let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        assert!(may_stop(child.id() as i32), "our own child");
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[test]

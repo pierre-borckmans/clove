@@ -96,6 +96,11 @@ function update(id: string, f: (op: Op) => void) {
   emit();
 }
 
+/** Takes a finished operation off the list, Activity included (its ✕). */
+export function forgetOp(id: string) {
+  if (ops.delete(id)) emit();
+}
+
 export function dismissOp(id: string) {
   update(id, (op) => {
     op.dismissed = true;

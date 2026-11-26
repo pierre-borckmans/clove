@@ -1523,19 +1523,9 @@ impl Clove {
         // Daemons started from a clone that is gone or unmounted (a forced
         // unmount, a clone removed outside clove): nothing else stops them,
         // and some spin once their files are gone.
-        let roots = [
-            self.clone_root(),
-            self.clone_root().canonicalize().unwrap_or_default(),
-        ];
+        let roots = clone_roots(&self.clone_root());
         for (pid, ppid, exe) in backend::processes() {
-            let Some(rel) = roots.iter().find_map(|r| exe.strip_prefix(r).ok()) else {
-                continue;
-            };
-            let Some(clone) = rel
-                .components()
-                .next()
-                .map(|c| c.as_os_str().to_string_lossy().to_string())
-            else {
+            let Some(clone) = clone_of(&exe, &roots) else {
                 continue;
             };
             let known = names.contains(&clone);
@@ -1625,6 +1615,34 @@ fn stop_fsmonitor(wt: &Path) {
 fn stop_daemons(wt: &Path, mount: &Path) {
     stop_fsmonitor(wt);
     backend::stop_orphan_daemons(mount, std::time::Duration::from_secs(5));
+}
+
+/// A folder deep enough to hold clones and nothing else: never `/`, an empty
+/// path, or a top-level system folder.
+fn safe_root(p: &Path) -> bool {
+    p.is_absolute() && p.components().count() >= 4
+}
+
+/// Where clones of this repo live, as written and resolved. Empty when the
+/// folder doesn't exist: a missing one must never become an empty prefix,
+/// which every path starts with.
+fn clone_roots(root: &Path) -> Vec<PathBuf> {
+    let mut v = vec![];
+    if let Ok(real) = root.canonicalize() {
+        v.push(root.to_path_buf());
+        v.push(real);
+    }
+    v.retain(|r| safe_root(r));
+    v
+}
+
+/// The clone a process's executable lives in, if it lives under a root.
+fn clone_of(exe: &Path, roots: &[PathBuf]) -> Option<String> {
+    let rel = roots.iter().find_map(|r| exe.strip_prefix(r).ok())?;
+    match rel.components().next()? {
+        std::path::Component::Normal(first) => Some(first.to_string_lossy().to_string()),
+        _ => None,
+    }
 }
 
 /// Next to each clone's worktree: KEY=VALUE lines the shell integration loads.
@@ -1741,5 +1759,39 @@ impl Clove {
         meta.setup_commit = git::head_commit(&wt).ok();
         write_json(&self.clone_dir(name).join("meta.json"), &meta)?;
         self.info(name, false)
+    }
+}
+
+#[cfg(test)]
+mod stray_tests {
+    use super::*;
+
+    #[test]
+    fn a_missing_clone_folder_claims_no_process() {
+        let gone = Path::new("/Users/nobody/src/app.clove");
+        assert!(clone_roots(gone).is_empty());
+        assert_eq!(clone_of(Path::new("/usr/libexec/logd"), &clone_roots(gone)), None);
+        // What 0.1.12 to 0.1.17 did: an empty root matched every process.
+        assert_eq!(clone_of(Path::new("/usr/libexec/logd"), &[PathBuf::new()]), None);
+    }
+
+    #[test]
+    fn only_deep_folders_are_roots() {
+        for p in ["", "/", "/Users", "/Users/me", "relative/a/b/c"] {
+            assert!(!safe_root(Path::new(p)), "{p:?}");
+        }
+        assert!(safe_root(Path::new("/Users/me/src/app.clove")));
+    }
+
+    #[test]
+    fn a_process_belongs_to_the_clone_folder_it_runs_from() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("app.clove");
+        std::fs::create_dir_all(&root).unwrap();
+        let roots = clone_roots(&root);
+        assert!(!roots.is_empty());
+        let exe = roots[1].join("feat-x/app/node_modules/.bin/turbo");
+        assert_eq!(clone_of(&exe, &roots).as_deref(), Some("feat-x"));
+        assert_eq!(clone_of(Path::new("/usr/bin/git"), &roots), None);
     }
 }
