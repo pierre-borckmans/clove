@@ -207,7 +207,7 @@ export function Clash() {
         {agents.map(([, , x, y], i) => {
           const p = interpolate(frame, [10 + i * 4, 26 + i * 4], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
           const x0 = x < 960 ? x + 300 : x;
-          const x1 = x < 960 ? 640 : 1280;
+          const x1 = x < 960 ? 600 : 1320;
           return <line key={i} x1={x0} y1={y + 40} x2={x0 + (x1 - x0) * p} y2={y + 40 + (520 - y - 40) * p} stroke={wire} strokeOpacity={0.6} strokeWidth={2.5} />;
         })}
       </svg>
@@ -223,9 +223,9 @@ export function Clash() {
       <Glass
         style={{
           position: "absolute",
-          left: 640,
+          left: 600,
           top: 360,
-          width: 640,
+          width: 720,
           padding: "30px 36px",
           fontFamily: mono,
           opacity: card,
@@ -239,7 +239,7 @@ export function Clash() {
           <span style={{ color: c.muted }}>HEAD → </span>
           <span style={{ color: frame >= sw ? c.red : c.ink }}>{head}</span>
         </div>
-        <div style={{ fontSize: 19, marginTop: 18, lineHeight: 1.7 }}>
+        <div style={{ fontSize: 18, marginTop: 18, lineHeight: 1.75 }}>
           <Out at={sw} color={c.muted}>codex ❯ git checkout fix/race</Out>
           <Out at={k("login", 0, -2)} color={c.red}>✗ claude's login fix, now on codex's fix/race</Out>
         </div>
