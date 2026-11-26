@@ -323,9 +323,70 @@ function Missing({ label, hint, at }: { label: string; hint: string; at: number 
 }
 
 /** 2. ...but empty. */
+/** A tumbleweed bouncing and rolling across the bottom of the frame. */
+function Tumbleweed({ at }: { at: number }) {
+  const frame = useCurrentFrame();
+  const t = frame - at;
+  if (t < 0) return null;
+  const DUR = 75;
+  const p = Math.min(1, t / DUR);
+  const x = interpolate(p, [0, 1], [-160, 2080]);
+  // Bounces that fade as it settles into a roll.
+  const hop = Math.abs(Math.sin(t / 7)) * 46 * Math.max(0.25, 1 - p * 0.9);
+  const ground = 965;
+  const r = 52;
+  const spin = (x / r) * (180 / Math.PI);
+  // A dry tangle: fixed pseudo-random twigs, many crossing the middle, a few
+  // poking out past the rim.
+  const rnd = (n: number) => {
+    const v = Math.sin(n * 12.9898) * 43758.5453;
+    return v - Math.floor(v);
+  };
+  const twigs = Array.from({ length: 34 }, (_, i) => {
+    const a = rnd(i + 1) * Math.PI * 2;
+    const len = 0.7 + rnd(i + 50) * 1.6;
+    const b = a + Math.PI * len * (rnd(i + 90) > 0.5 ? 1 : -1);
+    const ra = r * (0.35 + rnd(i + 7) * 0.75);
+    const rb = r * (0.35 + rnd(i + 13) * 0.75);
+    const pull = r * (rnd(i + 21) - 0.5) * 0.9;
+    const cx = Math.cos((a + b) / 2) * pull;
+    const cy = Math.sin((a + b) / 2) * pull;
+    return `M ${(Math.cos(a) * ra).toFixed(1)} ${(Math.sin(a) * ra).toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${(Math.cos(b) * rb).toFixed(1)} ${(Math.sin(b) * rb).toFixed(1)}`;
+  });
+  const spikes = Array.from({ length: 9 }, (_, i) => {
+    const a = rnd(i + 200) * Math.PI * 2;
+    const r1 = r * 0.75;
+    const r2 = r * (1.05 + rnd(i + 300) * 0.3);
+    const bend = (rnd(i + 400) - 0.5) * 0.5;
+    return `M ${(Math.cos(a) * r1).toFixed(1)} ${(Math.sin(a) * r1).toFixed(1)} L ${(Math.cos(a + bend) * r2).toFixed(1)} ${(Math.sin(a + bend) * r2).toFixed(1)}`;
+  });
+  const dust = [0, 1, 2].map((k) => {
+    const d = (t - k * 7) % 21;
+    return { o: d < 0 ? 0 : Math.max(0, 0.35 - d / 60), s: 6 + d * 0.9, dx: -d * 2.2 - k * 14 };
+  });
+  return (
+    <svg width={1920} height={1080} style={{ position: "absolute", inset: 0, overflow: "visible", pointerEvents: "none" }}>
+      <ellipse cx={x} cy={ground + r + 4} rx={r * (0.9 - hop / 160)} ry={7} fill="rgba(0,0,0,0.45)" opacity={0.9 - hop / 90} />
+      {dust.map((g, k) => (
+        <circle key={k} cx={x + g.dx} cy={ground + r - 2} r={g.s} fill="#b9a675" opacity={hop < 6 ? g.o : g.o * 0.4} />
+      ))}
+      <g transform={`translate(${x} ${ground - hop}) rotate(${spin})`}>
+        <circle r={r * 0.8} fill="rgba(169,146,96,0.1)" />
+        {twigs.map((d, i) => (
+          <path key={d} d={d} fill="none" stroke={["#a8915c", "#c9b27a", "#8a7547"][i % 3]} strokeWidth={i % 5 ? 1.8 : 2.8} strokeLinecap="round" opacity={0.85} />
+        ))}
+        {spikes.map((d) => (
+          <path key={d} d={d} fill="none" stroke="#b39d68" strokeWidth={1.6} strokeLinecap="round" opacity={0.8} />
+        ))}
+      </g>
+    </svg>
+  );
+}
+
 export function Empty() {
   return (
     <Stage>
+      <Tumbleweed at={cue("empty", "tumbleweeds", 0, -8)} />
       <div style={{ display: "flex", gap: 56, alignItems: "center" }}>
         <div>
           <Kicker delay={0} color={c.red}>
