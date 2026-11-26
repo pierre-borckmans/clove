@@ -61,7 +61,8 @@ function Intro() {
   return (
     <AbsoluteFill
       style={{
-        translate: "-3px 0px"
+        translate: "-3px 0px",
+        scale: 0.988
       }}
     >
       <Backdrop />

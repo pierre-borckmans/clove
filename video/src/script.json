@@ -53,7 +53,7 @@
   },
   {
     "id": "fast",
-    "say": "So a new worktree is ready in about a second. Everything is already there, it takes almost no disk, and your fan can finally relax."
+    "say": "So a new worktree is ready in about a second. Everything is already there, and your fan and your disk can finally relax."
   },
   {
     "id": "steps",

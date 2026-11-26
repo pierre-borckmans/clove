@@ -63,6 +63,25 @@ def cut(src, t0, t1, out):
     )
 
 
+def trim_tail(out):
+    """Drops a stray sound (a hum, a breath) after the line has gone quiet near
+    its end. Returns the new length, or None if nothing was cut."""
+    dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", out],
+                               capture_output=True, text=True, check=True).stdout)
+    log = subprocess.run(["ffmpeg", "-i", out, "-af", "silencedetect=n=-45dB:d=0.12", "-f", "null", "-"],
+                         capture_output=True, text=True).stderr
+    starts = [float(l.split("silence_start: ")[1]) for l in log.splitlines() if "silence_start" in l]
+    tail = [t for t in starts if dur - 0.8 < t < dur - 0.15]
+    if not tail:
+        return None
+    end = tail[0] + 0.08
+    tmp = out + ".tmp.wav"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", out, "-t", f"{end:.3f}",
+                    "-af", "areverse,afade=t=in:d=0.06,areverse", tmp], check=True)
+    os.replace(tmp, out)
+    return round(end, 3)
+
+
 def word_times(text, st, s, e, t0):
     """When each word of text[s:e] starts, relative to t0: visuals cue on words."""
     ws, w, w0 = [], "", None
@@ -94,7 +113,7 @@ if a.only:
     t0, t1 = max(0.0, st[0] - 0.06), en[len(say) - 1] + 0.12
     cut(src, t0, t1, f"public/vo/{a.only}.wav")
     durs = json.load(open("src/durations.json"))
-    durs["durations"][a.only] = round(t1 - t0, 3)
+    durs["durations"][a.only] = trim_tail(f"public/vo/{a.only}.wav") or round(t1 - t0, 3)
     words = json.load(open("src/words.json"))
     words[a.only] = word_times(say, st, 0, len(say), t0)
     json.dump(durs, open("src/durations.json", "w"), indent=2)
@@ -136,7 +155,7 @@ for idx, (l, (s, e)) in enumerate(zip(lines, starts)):
         t1 = min(t1, st[starts[idx + 1][0]] - 0.02)
     out = f"public/vo/{l['id']}.wav"
     cut(base + ".mp3", t0, t1, out)
-    durs["durations"][l["id"]] = round(t1 - t0, 3)
+    durs["durations"][l["id"]] = trim_tail(out) or round(t1 - t0, 3)
     words[l["id"]] = word_times(text, st, s, e, t0)
     print(f"{l['id']:9} {t1 - t0:5.2f}s")
 if not a.splice:

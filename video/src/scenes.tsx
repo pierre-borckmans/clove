@@ -816,8 +816,9 @@ export function Fast() {
             <span style={{ color: c.bottle, fontStyle: "italic" }}>70×</span> faster,{" "}
             <span style={{ color: c.bottle, fontStyle: "italic" }}>500×</span> less disk
           </div>
-          <div style={{ fontFamily: mono, fontSize: 20, color: c.muted, marginTop: 18, opacity: useIn(cue("fast", "fan", 0, -4), 14) }}>
-            fan · 1,200 rpm · idle
+          <div style={{ fontFamily: mono, fontSize: 20, color: c.muted, marginTop: 18, display: "flex", gap: 28 }}>
+            <span style={{ opacity: useIn(cue("fast", "fan", 0, -4), 14) }}>fan · idle</span>
+            <span style={{ opacity: useIn(cue("fast", "disk", 0, -4), 14) }}>disk · +6 MB</span>
           </div>
         </Glass>
       </div>

@@ -13,11 +13,11 @@
     "detect": 13.752,
     "fresh": 8.191,
     "internals": 14.24,
-    "fast": 8.47,
+    "fast": 7.273,
     "steps": 3.605,
     "surfaces": 6.659,
     "features": 9.503,
-    "outro": 3.024
+    "outro": 2.614
   },
   "voice": "elevenlabs:Eric:eleven_multilingual_v2"
 }
