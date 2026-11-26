@@ -10,7 +10,7 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-import { Bar, c, Glass, Kicker, Mark, mono, Out, sec, serif, Stage, Terminal, Typed, useIn, useRamp, Words } from "./ui";
+import { Bar, c, cue, Glass, Kicker, Mark, mono, Out, sec, serif, Stage, Terminal, Typed, useIn, useRamp, Words } from "./ui";
 
 const has = (name: string) => getStaticFiles().some((f) => f.name === name);
 
@@ -25,9 +25,9 @@ export function Worktree() {
       </div>
       <Terminal title="~/src/mono" width={1180} delay={4} style={{ marginTop: 40 }}>
         <Typed text="git worktree add ../feat-login -b feat/login" start={12} />
-        <Out at={sec(1.85)}>Preparing worktree (new branch 'feat/login')</Out>
-        <Out at={sec(2.05)}>HEAD is now at c9483ee feat(api): rate limits per team</Out>
-        <Out at={sec(2.4)} color={c.bottle}>
+        <Out at={cue("worktree", "fresh")}>Preparing worktree (new branch 'feat/login')</Out>
+        <Out at={cue("worktree", "fresh", 0, 5)}>HEAD is now at c9483ee feat(api): rate limits per team</Out>
+        <Out at={cue("worktree", "second")} color={c.bottle}>
           ✓ ready in 0.9s
         </Out>
       </Terminal>
@@ -65,18 +65,18 @@ export function Empty() {
           <div style={{ height: 28 }} />
           <Terminal title="~/src/feat-login" width={900} glow={c.red}>
             <Typed text="pnpm dev" start={8} />
-            <Out at={sec(0.85)} color={c.red}>
+            <Out at={cue("empty", "empty")} color={c.red}>
               sh: next: command not found
             </Out>
-            <Out at={sec(1.05)} color={c.dim}>
+            <Out at={cue("empty", "empty", 0, 6)} color={c.dim}>
               {"✗ node_modules missing"}
             </Out>
           </Terminal>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 20, marginTop: 50 }}>
-          <Missing label="node_modules" hint="4,470 packages to install" at={sec(1.3)} />
-          <Missing label="dev shell" hint="nix flake to evaluate" at={sec(2.0)} />
-          <Missing label=".env" hint="local files git never had" at={sec(2.9)} />
+          <Missing label="node_modules" hint="4,470 packages to install" at={cue("empty", "dependencies", 0, -4)} />
+          <Missing label="dev shell" hint="nix flake to evaluate" at={cue("empty", "dev", 0, -4)} />
+          <Missing label=".env" hint="local files git never had" at={cue("empty", "local", 0, -4)} />
         </div>
       </div>
     </Stage>
@@ -182,7 +182,7 @@ function AgentCard({ name, i }: { name: string; i: number }) {
 /** 4. Agents multiply it. */
 export function Agents() {
   const names = ["agent/parser", "agent/cache", "fix/race", "agent/docs", "agent/tests"];
-  const total = useRamp(sec(1.2), sec(5.2));
+  const total = useRamp(cue("agents", "five", 1, -6), cue("agents", "line"));
   return (
     <Stage>
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 70 }}>
@@ -279,7 +279,7 @@ export function Golden() {
   const clones = ["feat/login", "agent/parser", "fix/race", "pr/4053"];
   const ys = [230, 380, 530, 680];
   const card = useIn(6, 18);
-  const fan = sec(5.4);
+  const fan = cue("golden", "each", 0, -4);
   return (
     <Stage>
       <div style={{ position: "absolute", top: 110, left: 230 }}>
@@ -307,9 +307,9 @@ export function Golden() {
           <div>main @ c9483ee</div>
           {(
             [
-              ["node_modules installed", sec(2.4)],
-              ["dev shell warmed", sec(3.0)],
-              [".env and local files", sec(3.5)],
+              ["node_modules installed", cue("golden", "dependencies")],
+              ["dev shell warmed", cue("golden", "environment")],
+              [".env and local files", cue("golden", "warmed")],
             ] as const
           ).map(([l, at]) => {
             const on = frame >= at;
@@ -355,7 +355,7 @@ export function Golden() {
 /** 7. clove new vs git worktree + setup, side by side. */
 export function Fast() {
   const frame = useCurrentFrame();
-  const race = useRamp(sec(2.6), sec(5.2), Easing.linear);
+  const race = useRamp(cue("fast", "everything", 0, -6), cue("fast", "disk", 0, 10), Easing.linear);
   const steps: [string, string, boolean][] = [
     ["clone image", "0.00s", true],
     ["mount", "0.70s", true],
@@ -363,18 +363,18 @@ export function Fast() {
     ["setup direnv", "unchanged", false],
     ["setup pnpm", "unchanged", false],
   ];
-  const right = useIn(sec(2.3), 20);
+  const right = useIn(cue("fast", "everything", 0, -16), 20);
   return (
     <Stage>
       <div style={{ display: "flex", gap: 60, alignItems: "center" }}>
         <Terminal title="~/src/mono" width={820}>
           <Typed text="clove new feat/login" start={6} cps={28} />
           {steps.map(([s, t, ran], i) => (
-            <Out key={s} at={sec(0.9) + i * 3} color={ran ? c.ink : c.dim}>
+            <Out key={s} at={cue("fast", "worktree", 0, -2) + i * 3} color={ran ? c.ink : c.dim}>
               {`  ${ran ? "✓" : "·"} ${s.padEnd(14)} ${t}`}
             </Out>
           ))}
-          <Out at={sec(1.6)} color={c.bottle} style={{ marginTop: 10, fontWeight: 600 }}>
+          <Out at={cue("fast", "second", 0, -4)} color={c.bottle} style={{ marginTop: 10, fontWeight: 600 }}>
             ● feat-login ready in 1.0s
           </Out>
         </Terminal>
@@ -399,7 +399,7 @@ export function Fast() {
               </div>
             );
           })}
-          <div style={{ fontFamily: serif, fontSize: 40, marginTop: 6, opacity: frame > sec(5.3) ? 1 : 0 }}>
+          <div style={{ fontFamily: serif, fontSize: 40, marginTop: 6, opacity: frame > cue("fast", "disk", 0, 12) ? 1 : 0 }}>
             <span style={{ color: c.bottle, fontStyle: "italic" }}>70×</span> faster,{" "}
             <span style={{ color: c.bottle, fontStyle: "italic" }}>500×</span> less disk
           </div>
@@ -412,7 +412,7 @@ export function Fast() {
 function StepRow({ name, why, runs, i, run }: { name: string; why: string; runs: boolean; i: number; run: number }) {
   const frame = useCurrentFrame();
   const p = useIn(4 + i * 4, 16);
-  const lit = runs && frame > sec(0.9);
+  const lit = runs && frame > cue("steps", "lockfile");
   return (
     <Glass
       tint={lit ? "rgba(124,196,155,0.08)" : "rgba(233,238,232,0.02)"}
@@ -445,7 +445,7 @@ function StepRow({ name, why, runs, i, run }: { name: string; why: string; runs:
 
 /** 8. Only what changed runs. */
 export function Steps() {
-  const run = useRamp(sec(1.3), sec(2.6));
+  const run = useRamp(cue("steps", "only"), cue("steps", "again", 0, 8));
   const rows: [string, string, boolean][] = [
     ["mise", "mise.toml unchanged", false],
     ["direnv", "flake.lock unchanged", false],
@@ -575,8 +575,8 @@ function Layer({ at, next, label, children }: { at: number; next?: number; label
 
 /** 9. Command line, terminal UI, Mac app; one at a time, with the voice. */
 export function Surfaces() {
-  const tuiAt = sec(1.55);
-  const appAt = sec(3.15);
+  const tuiAt = cue("surfaces", "full-screen", 0, -6);
+  const appAt = cue("surfaces", "mac", 0, -8);
   return (
     <Stage push={0.02}>
       <Layer at={4} next={tuiAt} label="The command line">
@@ -649,8 +649,8 @@ function Feature({
 /** 10. Update with Claude, prune, agents; timed to the three sentences. */
 export function Features() {
   const a = 0;
-  const b = sec(2.7);
-  const d = sec(5.0);
+  const b = cue("features", "cleans", 0, -10);
+  const d = cue("features", "teaches", 0, -10);
   return (
     <Stage push={0.015}>
       <Feature
@@ -706,8 +706,8 @@ export function Features() {
 
 /** 11. Install. */
 export function Outro() {
-  const tag = useIn(sec(1.1));
-  const cmd = useIn(sec(1.8));
+  const tag = useIn(cue("outro", "worktrees", 0, -4));
+  const cmd = useIn(cue("outro", "second", 0, 8));
   return (
     <Stage push={0.03}>
       <div

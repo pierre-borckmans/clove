@@ -4,11 +4,9 @@ import { AbsoluteFill, Audio, Composition, Sequence, staticFile } from "remotion
 import durations from "./durations.json";
 import script from "./script.json";
 import { Agents, Cost, Empty, Fast, Features, Golden, Logo, Outro, Steps, Surfaces, Worktree } from "./scenes";
-import { Backdrop } from "./ui";
+import { Backdrop, LEAD } from "./ui";
 
 const FPS = 30;
-/** Voice starts this many frames into its scene. */
-const LEAD = 10;
 /** Frames two scenes overlap while one fades into the next. */
 const XFADE = 14;
 /** Breathing room after each line, in seconds, where the visual needs it. */

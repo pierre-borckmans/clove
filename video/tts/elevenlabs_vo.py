@@ -70,6 +70,7 @@ if a.audition:
 st, en = al["character_start_times_seconds"], al["character_end_times_seconds"]
 os.makedirs("public/vo", exist_ok=True)
 durs = {"durations": {}}
+words = {}
 for idx, (l, (s, e)) in enumerate(zip(lines, starts)):
     t0 = max(0.0, st[s] - 0.06)
     t1 = en[e - 1] + 0.12
@@ -83,6 +84,19 @@ for idx, (l, (s, e)) in enumerate(zip(lines, starts)):
         check=True,
     )
     durs["durations"][l["id"]] = round(t1 - t0, 3)
+    # When each word starts, relative to the scene's clip: visuals cue on words.
+    ws, w, w0 = [], "", None
+    for k in range(s, e + 1):
+        ch = text[k] if k < e else " "
+        if ch.isalnum() or ch in "'-":
+            if w0 is None:
+                w0 = st[k]
+            w += ch
+        elif w:
+            ws.append({"w": w.lower(), "t": round(w0 - t0, 3)})
+            w, w0 = "", None
+    words[l["id"]] = ws
     print(f"{l['id']:9} {t1 - t0:5.2f}s")
 durs["voice"] = f"elevenlabs:{name}:{a.model}"
 json.dump(durs, open("src/durations.json", "w"), indent=2)
+json.dump(words, open("src/words.json", "w"), indent=1)

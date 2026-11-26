@@ -21,7 +21,20 @@ export const c = {
   red: "#e8806f",
 };
 
+import words from "./words.json";
+
 export const sec = (s: number) => Math.round(s * 30);
+
+/** Frames into a scene before its voice starts (Root uses the same). */
+export const LEAD = 10;
+
+/** The frame, within scene `scene`, where its voice says `word` (the `nth` time). */
+export function cue(scene: string, word: string, nth = 0, offset = 0): number {
+  const hits = ((words as Record<string, { w: string; t: number }[]>)[scene] ?? []).filter((x) => x.w === word);
+  const hit = hits[nth] ?? hits[hits.length - 1];
+  if (!hit) throw new Error(`no "${word}" in the ${scene} line`);
+  return LEAD + Math.round(hit.t * 30) + offset;
+}
 
 /** 0 → 1 with a soft spring, starting at `delay` frames. */
 export function useIn(delay = 0, damping = 200, mass = 1) {
