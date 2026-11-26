@@ -27,10 +27,10 @@ THEMES = {
 SOURCES = [
     ("base branch", "origin/main", None, None),
     ("local files", ".env  .envrc.local", None, None),
-    ("detected steps", None, ["mise", "direnv", "nix", "pnpm", "bun", "yarn", "npm", "uv"],
+    ("detected steps", None, ["mise", "direnv + nix", "cargo", "uv", "pnpm", "bun", "yarn", "npm"],
      "+ your own, in .clove.toml"),
 ]
-GOLDEN_ROWS = ["dependencies installed", "dev shells evaluated", "package caches warm", "git index, mtimes kept"]
+GOLDEN_ROWS = ["dependencies installed", "dev shells evaluated", "package + build caches warm", "git index, mtimes kept"]
 CLONES = [
     ("feat/login", "~1s"),
     ("pr/123", "~1s"),

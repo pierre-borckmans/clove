@@ -238,7 +238,7 @@ The golden image is a recipe, not a snapshot of your checkout: the base branch, 
 
 ## Configure
 
-- **clove detects steps from the repo:** mise, direnv (including nix-direnv's cache), pnpm, bun, yarn, npm and uv.
+- **clove detects steps from the repo:** mise, direnv (including nix-direnv's cache), cargo, uv, pnpm, bun, yarn and npm. Anything else (Go, Gradle, codegen) is a step you add.
 - `clove config` shows what it found; `clove config --write` saves it to `.clove.toml` so the team gets the same setup.
 
 ```toml
