@@ -36,5 +36,6 @@ export function shortSha(sha: string | null | undefined, n = 8): string {
 
 /** `/Users/ada/src/mono` -> `~/src/mono` when it sits under a home dir. */
 export function tildify(path: string): string {
-  return path.replace(/^\/Users\/[^/]+/, "~");
+  // macOS homes are under /Users, Linux ones under /home (root's is /root).
+  return path.replace(/^(\/Users\/[^/]+|\/home\/[^/]+|\/root(?=\/|$))/, "~");
 }

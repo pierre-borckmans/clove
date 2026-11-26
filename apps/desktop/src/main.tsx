@@ -7,10 +7,13 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { setupTheme } from "@/hooks/use-theme";
 import { isTauri } from "@/lib/bridge";
 import { wireOps } from "@/lib/ops";
+import { isMac } from "@/lib/platform";
 import { router } from "./router";
 
 setupTheme();
-document.documentElement.dataset.shell = isTauri ? "native" : "web";
+// Only macOS windows have native vibrancy behind them; elsewhere the app
+// paints its own background, as in a browser.
+document.documentElement.dataset.shell = isTauri && isMac ? "native" : "web";
 
 const queryClient = new QueryClient({
   defaultOptions: {

@@ -1,8 +1,7 @@
 //! Drives the desktop commands against real disk images in a temp state dir,
-//! and checks the JSON the frontend reads. Creates and mounts APFS images, so
-//! it only runs on request: `cargo test -- --ignored`.
-
-#![cfg(target_os = "macos")]
+//! and checks the JSON the frontend reads. Creates and mounts APFS images
+//! (macOS) or a btrfs image (Linux, as root or with udisks), so it only runs
+//! on request: `cargo test -- --ignored`.
 
 use clove_core::Event;
 use clove_desktop_lib::{commands, ops};
@@ -125,9 +124,14 @@ fn commands_against_a_fixture_repo() {
     let clones = serde_json::to_value(block_on(commands::clones(root.clone(), true)).unwrap()).unwrap();
     assert_eq!(clones[0]["dirty"], false);
 
-    block_on(commands::unmount_clone(root.clone(), "feat-x".into(), false)).unwrap();
-    assert!(!block_on(commands::clones(root.clone(), false)).unwrap()[0].mounted);
-    block_on(commands::mount_clone(root.clone(), "feat-x".into())).unwrap();
+    // Linux clones share the repo's volume: one can't be unmounted alone.
+    if cfg!(target_os = "macos") {
+        block_on(commands::unmount_clone(root.clone(), "feat-x".into(), false)).unwrap();
+        assert!(!block_on(commands::clones(root.clone(), false)).unwrap()[0].mounted);
+        block_on(commands::mount_clone(root.clone(), "feat-x".into())).unwrap();
+    } else {
+        assert!(block_on(commands::unmount_clone(root.clone(), "feat-x".into(), false)).is_err());
+    }
 
     let doctor = block_on(commands::doctor_repo(root.clone())).unwrap();
     assert!(doctor.iter().any(|c| c.name == "golden"));

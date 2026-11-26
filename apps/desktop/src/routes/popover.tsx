@@ -23,12 +23,14 @@ import { api } from "@/lib/api";
 import { listen } from "@/lib/bridge";
 import { ms } from "@/lib/format";
 import { type Op, startOp, useOps } from "@/lib/ops";
+import { FILE_MANAGER } from "@/lib/platform";
 import { APP_LABELS, usePrefs } from "@/lib/prefs";
 import { copyPath, keys, openIn, POLL_MS, useRepoChanges, useRepos } from "@/lib/queries";
 import type { CloneInfo, RepoSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-/** The menu-bar popover: every repo and clone, one click from a terminal or editor. */
+/** The menu-bar popover (opened from the tray menu on Linux): every repo and
+ * clone, one click from a terminal or editor. */
 export function PopoverPage() {
   useRepoChanges();
   const { data: repos = [], isLoading } = useRepos();
@@ -244,7 +246,7 @@ function CloneRow({ clone: c }: { clone: CloneInfo }) {
         <IconButton label={APP_LABELS[prefs.editor]} onClick={() => void openIn(c.path, prefs.editor)}>
           <Code />
         </IconButton>
-        <IconButton label="Finder" onClick={() => void openIn(c.path, "finder")}>
+        <IconButton label={FILE_MANAGER} onClick={() => void openIn(c.path, "finder")}>
           <FolderOpen />
         </IconButton>
         <IconButton label="Copy path" onClick={() => void copyPath(c.path)}>

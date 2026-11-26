@@ -23,6 +23,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { tildify } from "@/lib/format";
 import { useOps } from "@/lib/ops";
+import { FILE_MANAGER } from "@/lib/platform";
 import { APP_LABELS, usePrefs } from "@/lib/prefs";
 import { copyPath, copyText, openIn } from "@/lib/queries";
 import type { OtherWorktree } from "@/lib/types";
@@ -180,7 +181,7 @@ export function WorktreeMenu({
           <SquareTerminal /> Open in {APP_LABELS[prefs.terminal]}
         </DropdownMenuItem>
         <DropdownMenuItem disabled={w.missing} onSelect={() => void openIn(w.path, "finder")}>
-          <FolderOpen /> Reveal in Finder
+          <FolderOpen /> Reveal in {FILE_MANAGER}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => void copyPath(w.path)}>

@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { isTauri } from "@/lib/bridge";
 import { useOps } from "@/lib/ops";
+import { isMac, MOD } from "@/lib/platform";
 import { APP_LABELS, EDITORS, setPrefs, TERMINALS, usePrefs } from "@/lib/prefs";
 import { useHistory, useInstalledApps, useRepos, useService } from "@/lib/queries";
 import type { RepoSummary } from "@/lib/types";
@@ -33,6 +34,7 @@ export function Sidebar() {
       <div data-tauri-drag-region className="flex h-[52px] shrink-0 items-center gap-2 pl-[19px]">
         {/* Stand-ins for the traffic lights when the UI runs in a browser. */}
         {!isTauri &&
+          isMac &&
           ["#ff5f57", "#febc2e", "#28c840"].map((c) => (
             <span
               key={c}
@@ -89,7 +91,10 @@ export function Sidebar() {
                   <RepoState repo={r} />
                 )}
                 {!busy && i < 9 && (
-                  <span className="hidden font-mono text-[11px] text-faint group-hover:inline">⌘{i + 1}</span>
+                  <span className="hidden font-mono text-[11px] text-faint group-hover:inline">
+                    {MOD}
+                    {i + 1}
+                  </span>
                 )}
               </Link>
             );

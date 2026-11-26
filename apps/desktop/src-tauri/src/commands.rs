@@ -223,58 +223,15 @@ pub async fn init_preview(dir: PathBuf) -> CmdResult<clove_core::InitPreview> {
     block(move || clove_core::preview::init_preview(&dir)).await
 }
 
-/// Apps the "Open in" actions can target, by bundle name under /Applications.
-const APPS: &[(&str, &str)] = &[
-    ("terminal", "Terminal"),
-    ("ghostty", "Ghostty"),
-    ("iterm", "iTerm"),
-    ("warp", "Warp"),
-    ("vscode", "Visual Studio Code"),
-    ("cursor", "Cursor"),
-    ("zed", "Zed"),
-];
-
-fn app_installed(bundle: &str) -> bool {
-    let name = format!("{bundle}.app");
-    [
-        PathBuf::from("/Applications"),
-        PathBuf::from("/System/Applications/Utilities"),
-        clove_core::util::home().join("Applications"),
-    ]
-    .iter()
-    .any(|d| d.join(&name).exists())
-}
-
 #[tauri::command]
 pub async fn installed_apps() -> CmdResult<Vec<String>> {
-    block(|| {
-        Ok(APPS
-            .iter()
-            .filter(|(_, b)| app_installed(b))
-            .map(|(id, _)| id.to_string())
-            .collect())
-    })
-    .await
+    block(|| Ok(crate::apps::installed())).await
 }
 
+/// Opens a folder in an editor, a terminal, or the file manager (`finder`).
 #[tauri::command]
 pub async fn open_in(path: PathBuf, app: String) -> CmdResult<()> {
-    block(move || {
-        let mut cmd = Command::new("open");
-        if app == "finder" {
-            cmd.arg(&path);
-        } else {
-            let bundle = APPS
-                .iter()
-                .find(|(id, _)| *id == app)
-                .map(|(_, b)| *b)
-                .ok_or_else(|| anyhow::anyhow!("unknown app {app}"))?;
-            cmd.args(["-a", bundle]).arg(&path);
-        }
-        clove_core::util::output(&mut cmd)?;
-        Ok(())
-    })
-    .await
+    block(move || crate::apps::open(&path, &app)).await
 }
 
 /// Opens the user's terminal in a clone stopped on conflicts, with the
@@ -301,33 +258,25 @@ pub async fn resolve_in_terminal(root: PathBuf, name: String, terminal: String) 
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\ncd {} || exit 1\nexec \"${{SHELL:-/bin/zsh}}\" -ilc '{} \"$(cat \"$0\")\"' {}\n",
+                "#!/bin/sh\ncd {} || exit 1\nexec \"${{SHELL:-{}}}\" -ilc '{} \"$(cat \"$0\")\"' {}\n",
                 q(&wt),
+                if cfg!(target_os = "macos") {
+                    "/bin/zsh"
+                } else {
+                    "/bin/sh"
+                },
                 resolver.replace('\'', r"'\''"),
                 q(&prompt_file)
             ),
         )?;
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))?;
-        let mut cmd = Command::new("open");
-        match terminal.as_str() {
-            // Ghostty runs a command given with -e; the others open a .command file.
-            "ghostty" => {
-                cmd.args(["-na", "Ghostty", "--args", "-e"]).arg(&script);
-            }
-            "iterm" => {
-                cmd.args(["-a", "iTerm"]).arg(&script);
-            }
-            _ => {
-                cmd.args(["-a", "Terminal"]).arg(&script);
-            }
-        }
-        clove_core::util::output(&mut cmd)?;
-        Ok(())
+        crate::apps::run_in_terminal(&terminal, &wt, &script)
     })
     .await
 }
 
+#[cfg(target_os = "macos")]
 #[tauri::command]
 pub async fn copy_text(text: String) -> CmdResult<()> {
     block(move || {
@@ -344,6 +293,15 @@ pub async fn copy_text(text: String) -> CmdResult<()> {
         Ok(())
     })
     .await
+}
+
+/// Linux has no one clipboard command (X11 or Wayland), so the app holds the
+/// clipboard itself, which works under both.
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub fn copy_text(app: tauri::AppHandle, text: String) -> CmdResult<()> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    app.clipboard().write_text(text).map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]
@@ -414,19 +372,25 @@ pub async fn config_set(
     .await
 }
 
-/// Opens a config file in the default text editor, creating it from the
-/// shared template first so CLI, TUI and app start from the same file.
+/// Opens a config file in the default text editor (`xdg-open` on Linux),
+/// creating it from the shared template first so CLI, TUI and app start from
+/// the same file.
 #[tauri::command]
 pub async fn edit_config(path: PathBuf) -> CmdResult<()> {
     block(move || {
         clove_core::config::ensure_file(&path)?;
-        clove_core::util::output(Command::new("open").arg("-t").arg(&path))?;
-        Ok(())
+        if cfg!(target_os = "macos") {
+            clove_core::util::output(Command::new("open").arg("-t").arg(&path))?;
+            Ok(())
+        } else {
+            crate::apps::open_default(&path)
+        }
     })
     .await
 }
 
-/// Whether both launchd agents are installed.
+/// Whether the background service is installed: both launchd agents on
+/// macOS, all the systemd user units on Linux.
 #[tauri::command]
 pub async fn service_status() -> CmdResult<bool> {
     block(|| Ok(clove_core::service::installed().iter().all(|(_, on)| *on))).await

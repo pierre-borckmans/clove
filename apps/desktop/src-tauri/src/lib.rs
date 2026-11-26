@@ -1,12 +1,15 @@
+pub mod apps;
 pub mod commands;
 pub mod ops;
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+#[cfg(target_os = "macos")]
+use tauri::RunEvent;
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_positioner::{Position, WindowExt};
 
 /// When the popover last hid itself on blur. A tray click that arrives right
@@ -31,7 +34,13 @@ fn toggle_popover(app: &AppHandle) {
     if recently_hidden {
         return;
     }
-    let _ = w.move_window(Position::TrayBottomCenter);
+    // Linux trays report no clicks or position (appindicator): the popover
+    // opens from the tray menu instead, in the middle of the screen.
+    if cfg!(target_os = "linux") {
+        let _ = w.center();
+    } else {
+        let _ = w.move_window(Position::TrayBottomCenter);
+    }
     let _ = w.show();
     let _ = w.set_focus();
     let _ = w.emit("popover-shown", ());
@@ -105,15 +114,20 @@ fn watch_repos(app: AppHandle) {
     });
 }
 
-/// Opened from Finder, the app gets launchd's bare PATH, so steps can't find
-/// pnpm, direnv or nix, and the service would be installed with that PATH.
-/// Take PATH from the login shell instead, as a terminal would. Started from
-/// a terminal, it already has it.
+/// Opened from Finder or a Linux app launcher, the app gets the session's bare
+/// PATH, so steps can't find pnpm, direnv or nix, and the service would be
+/// installed with that PATH. Take PATH from the login shell instead, as a
+/// terminal would. Started from a terminal, it already has it.
 fn adopt_login_path() {
     if std::env::var_os("TERM").is_some() {
         return;
     }
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let fallback = if cfg!(target_os = "macos") {
+        "/bin/zsh"
+    } else {
+        "/bin/sh"
+    };
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| fallback.into());
     const MARK: &str = "__clove_path__";
     let Ok(mut child) = std::process::Command::new(&shell)
         .args(["-l", "-i", "-c", &format!("printf '\\n{MARK}%s' \"$PATH\"")])
@@ -146,7 +160,14 @@ fn adopt_login_path() {
 
 pub fn run() {
     adopt_login_path();
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // macOS keeps one instance itself; on Linux, launching the app again
+    // brings the running one forward (its window may be hidden in the tray).
+    #[cfg(target_os = "linux")]
+    let builder = builder
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| show_main(app)))
+        .plugin(tauri_plugin_clipboard_manager::init());
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_positioner::init())
         .manage(PopoverState(Mutex::new(None)))
@@ -191,16 +212,32 @@ pub fn run() {
         .setup(|app| {
             watch_repos(app.handle().clone());
             let open = MenuItem::with_id(app, "open", "Open clove", true, None::<&str>)?;
+            let quick = MenuItem::with_id(app, "quick", "Quick open…", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit clove", true, Some("CmdOrCtrl+Q"))?;
-            let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
+            let sep = PredefinedMenuItem::separator(app)?;
+            // A click on a Linux tray icon always opens its menu, so the
+            // popover gets a menu item there.
+            let menu = if cfg!(target_os = "linux") {
+                Menu::with_items(app, &[&open, &quick, &sep, &quit])?
+            } else {
+                Menu::with_items(app, &[&open, &sep, &quit])?
+            };
+            // The macOS icon is a template the menu bar tints; Linux panels
+            // draw icons as is, so they get the colored one.
+            let icon = if cfg!(target_os = "macos") {
+                Image::from_bytes(include_bytes!("../icons/tray.png"))?
+            } else {
+                Image::from_bytes(include_bytes!("../icons/64x64.png"))?
+            };
             TrayIconBuilder::with_id("clove")
-                .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
+                .icon(icon)
                 .icon_as_template(true)
                 .tooltip("clove")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, e| match e.id().as_ref() {
                     "open" => show_main(app),
+                    "quick" => toggle_popover(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -227,7 +264,8 @@ pub fn run() {
                     }
                 }
             }
-            // The app lives in the menu bar; closing the window only hides it.
+            // The app lives in the menu bar (the tray on Linux); closing the
+            // window only hides it.
             WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
                 api.prevent_close();
                 let _ = window.hide();
@@ -237,9 +275,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("build tauri app");
 
-    app.run(|app, event| {
-        if let RunEvent::Reopen { .. } = event {
-            show_main(app);
+    app.run(|_app, _event| {
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Reopen { .. } = _event {
+            show_main(_app);
         }
     });
 }

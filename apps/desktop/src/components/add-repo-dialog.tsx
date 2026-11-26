@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { pickFolder } from "@/lib/api";
 import { ms, since, tildify } from "@/lib/format";
 import { startOp, useOps } from "@/lib/ops";
+import { isMac } from "@/lib/platform";
 import { useInitPreview, useRepoCandidates, useRepos } from "@/lib/queries";
 import type { InitPreview } from "@/lib/types";
 import { setUi, useUi } from "@/lib/ui";
@@ -211,8 +212,9 @@ function PreviewDetails({ p }: { p: InitPreview }) {
   return (
     <>
       <p className="text-[13px] leading-relaxed text-muted-foreground">
-        clove checks out <span className="font-mono text-foreground">{p.base}</span> into a new disk image and runs the
-        warm steps once. This is the slow part; every clone after it takes about a second.
+        clove checks out <span className="font-mono text-foreground">{p.base}</span> into a new{" "}
+        {isMac ? "disk image" : "btrfs image"} and runs the warm steps once. This is the slow part; every clone after it
+        takes about a second.
       </p>
       <dl className="mt-4 grid grid-cols-[88px_1fr] gap-x-2 gap-y-2 text-[12.5px]">
         <dt className="text-muted-foreground">Base</dt>

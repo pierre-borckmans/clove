@@ -146,7 +146,18 @@ export type Discovered = {
   steps: string[];
 };
 
-export type AppId = "terminal" | "ghostty" | "iterm" | "warp" | "vscode" | "cursor" | "zed" | "finder";
+export type AppId =
+  | "terminal"
+  | "ghostty"
+  | "iterm"
+  | "warp"
+  | "kitty"
+  | "alacritty"
+  | "wezterm"
+  | "vscode"
+  | "cursor"
+  | "zed"
+  | "finder";
 
 export type OpRequest =
   | { kind: "init"; root: string }

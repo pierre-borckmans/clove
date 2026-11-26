@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { FILE_MANAGER } from "./platform";
 import type { AppId } from "./types";
 
 export type Prefs = { editor: AppId; terminal: AppId };
@@ -46,11 +47,14 @@ export const APP_LABELS: Record<AppId, string> = {
   ghostty: "Ghostty",
   iterm: "iTerm",
   warp: "Warp",
+  kitty: "kitty",
+  alacritty: "Alacritty",
+  wezterm: "WezTerm",
   vscode: "VS Code",
   cursor: "Cursor",
   zed: "Zed",
-  finder: "Finder",
+  finder: FILE_MANAGER,
 };
 
 export const EDITORS: AppId[] = ["vscode", "cursor", "zed"];
-export const TERMINALS: AppId[] = ["terminal", "ghostty", "iterm", "warp"];
+export const TERMINALS: AppId[] = ["terminal", "ghostty", "iterm", "warp", "kitty", "alacritty", "wezterm"];

@@ -31,6 +31,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useHotkey } from "@/hooks/use-hotkey";
 import { bytes, since } from "@/lib/format";
 import { resolveInTerminal, resolverName, startOp, useOps } from "@/lib/ops";
+import { FILE_MANAGER, isMac } from "@/lib/platform";
 import { APP_LABELS, usePrefs } from "@/lib/prefs";
 import { copyPath, copyText, openIn, useMountToggle, usePrCheck, usePrs, useRepoConfig } from "@/lib/queries";
 import type { CloneInfo, MergeCheck } from "@/lib/types";
@@ -102,8 +103,8 @@ export function CloneList({
     const k = e.key.toLowerCase();
     if (k === "arrowdown" || k === "j") setSelected((s) => Math.min(shown.length - 1, s + 1));
     else if (k === "arrowup" || k === "k") setSelected((s) => Math.max(0, s - 1));
-    else if (c && !e.metaKey && ["enter", "e", "t", "f", "c", "m"].includes(k)) act(c, k);
-    else if (c && k === "backspace" && e.metaKey) act(c, "backspace");
+    else if (c && !(e.metaKey || e.ctrlKey) && ["enter", "e", "t", "f", "c", "m"].includes(k)) act(c, k);
+    else if (c && k === "backspace" && (e.metaKey || e.ctrlKey)) act(c, "backspace");
     else return;
     e.preventDefault();
   };
@@ -210,7 +211,7 @@ export function CloneList({
         <Hint keys="up+down" label="move" />
         <Hint keys="enter" label={APP_LABELS[prefs.editor]} />
         <Hint keys="t" label={APP_LABELS[prefs.terminal]} />
-        <Hint keys="f" label="Finder" />
+        <Hint keys="f" label={FILE_MANAGER} />
         <Hint keys="c" label="copy path" />
         <Hint keys="m" label="mount" />
         <Hint keys="mod+backspace" label="remove" />
@@ -365,7 +366,7 @@ function CloneRow({
           <RowAction label={`Open in ${APP_LABELS[prefs.editor]}`} onClick={() => void openIn(c.path, prefs.editor)}>
             <Code />
           </RowAction>
-          <RowAction label="Reveal in Finder" onClick={() => void openIn(c.path, "finder")}>
+          <RowAction label={`Reveal in ${FILE_MANAGER}`} onClick={() => void openIn(c.path, "finder")}>
             <FolderOpen />
           </RowAction>
           <RowAction label="Copy path" onClick={() => void copyPath(c.path)}>
@@ -492,7 +493,7 @@ export function CloneMenu({ clone: c, root, children }: { clone: CloneInfo; root
           <DropdownMenuShortcut>T</DropdownMenuShortcut>
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => void openIn(c.path, "finder")}>
-          <FolderOpen /> Reveal in Finder
+          <FolderOpen /> Reveal in {FILE_MANAGER}
           <DropdownMenuShortcut>F</DropdownMenuShortcut>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
@@ -535,7 +536,7 @@ export function CloneMenu({ clone: c, root, children }: { clone: CloneInfo; root
         </DropdownMenuItem>
         <DropdownMenuItem variant="destructive" onSelect={() => setUi({ remove: { root, clone: c } })}>
           <Trash2 /> Remove clone…
-          <DropdownMenuShortcut>⌘⌫</DropdownMenuShortcut>
+          <DropdownMenuShortcut>{isMac ? "⌘⌫" : "Ctrl+⌫"}</DropdownMenuShortcut>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

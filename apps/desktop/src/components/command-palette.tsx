@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/command";
 import { api } from "@/lib/api";
 import { startOp } from "@/lib/ops";
+import { FILE_MANAGER, MOD } from "@/lib/platform";
 import { APP_LABELS, EDITORS, setPrefs, TERMINALS, usePrefs } from "@/lib/prefs";
 import {
   copyPath,
@@ -142,7 +143,7 @@ function RootPage({ go, close }: { go: (p: Page) => void; close: () => void }) {
     <>
       <CommandGroup heading="Actions">
         <CommandItem onSelect={run(() => setUi({ newClone: { root: current?.root ?? repos[0]?.root ?? null } }))}>
-          <Plus /> New clone{current ? ` in ${current.name}` : ""}…<CommandShortcut>⌘N</CommandShortcut>
+          <Plus /> New clone{current ? ` in ${current.name}` : ""}…<CommandShortcut>{MOD}N</CommandShortcut>
         </CommandItem>
         {current && (
           <CommandItem onSelect={run(() => void startOp({ kind: "refresh", root: current.root }))}>
@@ -150,7 +151,7 @@ function RootPage({ go, close }: { go: (p: Page) => void; close: () => void }) {
           </CommandItem>
         )}
         <CommandItem onSelect={run(() => setUi({ addRepo: true }))}>
-          <FolderPlus /> Add repository…<CommandShortcut>⌘O</CommandShortcut>
+          <FolderPlus /> Add repository…<CommandShortcut>{MOD}O</CommandShortcut>
         </CommandItem>
         <CommandItem onSelect={run(() => void navigate({ to: "/doctor" }))}>
           <Stethoscope /> Run doctor
@@ -160,7 +161,7 @@ function RootPage({ go, close }: { go: (p: Page) => void; close: () => void }) {
           onSelect={run(() => void navigate({ to: "/settings", search: current ? { repo: current.id } : {} }))}
         >
           <Settings /> Settings{current ? ` for ${current.name}` : ""}
-          <CommandShortcut>⌘,</CommandShortcut>
+          <CommandShortcut>{MOD},</CommandShortcut>
         </CommandItem>
         <CommandItem
           value="cleanup prune merged clones leftovers gc"
@@ -174,7 +175,10 @@ function RootPage({ go, close }: { go: (p: Page) => void; close: () => void }) {
         >
           <History /> What clove removed
         </CommandItem>
-        <CommandItem value="service background refresh launchd toggle" onSelect={run(() => service.mutate(!serviceOn))}>
+        <CommandItem
+          value="service background refresh launchd systemd toggle"
+          onSelect={run(() => service.mutate(!serviceOn))}
+        >
           <Power /> {serviceOn ? "Turn off the background service" : "Turn on the background service"}
         </CommandItem>
         <CommandItem onSelect={run(() => setUi({ activity: true }))}>
@@ -199,7 +203,12 @@ function RootPage({ go, close }: { go: (p: Page) => void; close: () => void }) {
             <span className="text-[12px] text-faint">
               {r.clones} clone{r.clones === 1 ? "" : "s"}
             </span>
-            {i < 9 && <CommandShortcut>⌘{i + 1}</CommandShortcut>}
+            {i < 9 && (
+              <CommandShortcut>
+                {MOD}
+                {i + 1}
+              </CommandShortcut>
+            )}
           </CommandItem>
         ))}
       </CommandGroup>
@@ -241,7 +250,7 @@ function ClonePage({ repo, clone: c, close }: { repo: RepoSummary; clone: CloneI
         <SquareTerminal /> Open in {APP_LABELS[prefs.terminal]}
       </CommandItem>
       <CommandItem onSelect={run(() => void openIn(c.path, "finder"))}>
-        <FolderOpen /> Reveal in Finder
+        <FolderOpen /> Reveal in {FILE_MANAGER}
       </CommandItem>
       <CommandItem onSelect={run(() => void copyPath(c.path))}>
         <Copy /> Copy path
