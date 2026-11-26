@@ -9,7 +9,7 @@
   },
   {
     "id": "worktree",
-    "say": "Git has you covered: a fresh worktree, in about a second."
+    "say": "Fret not, you say. I'm not a caveman: git has worktrees for this. A fresh worktree, in about a second."
   },
   {
     "id": "empty",

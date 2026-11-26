@@ -146,15 +146,36 @@ export function Parallel() {
 
 /* ---------------------------------------------------------------- problem */
 
-/** 1. git gives you a worktree in a second. */
+/** The viewer's own retort, as a speech bubble. */
+function Quote({ at }: { at: number }) {
+  const p = useIn(at, 14);
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 150,
+        left: 230,
+        opacity: p,
+        transform: `translateY(${(1 - p) * 20}px) rotate(${(1 - p) * -3}deg)`,
+        transformOrigin: "bottom left",
+      }}
+    >
+      <Glass tint="rgba(124,196,155,0.08)" style={{ padding: "22px 34px", borderRadius: "26px 26px 26px 6px", border: `1px solid ${c.bottle}55` }}>
+        <span style={{ fontFamily: serif, fontSize: 52, fontStyle: "italic" }}>
+          “I'm not a <span style={{ color: c.bottle }}>caveman</span>.”
+        </span>
+      </Glass>
+    </div>
+  );
+}
+
+/** 3. Fret not: git has worktrees. */
 export function Worktree() {
   return (
     <Stage>
-      <div style={{ position: "absolute", top: 150, left: 230 }}>
-        <Kicker delay={2}>A new task</Kicker>
-      </div>
-      <Terminal title="~/src/mono" width={1180} delay={4} style={{ marginTop: 40 }}>
-        <Typed text="git worktree add ../feat-login -b feat/login" start={12} />
+      <Quote at={cue("worktree", "i'm", 0, -6)} />
+      <Terminal title="~/src/mono" width={1180} delay={cue("worktree", "git", 0, -10)} style={{ marginTop: 120 }}>
+        <Typed text="git worktree add ../feat-login -b feat/login" start={cue("worktree", "git", 0, -4)} />
         <Out at={cue("worktree", "fresh")}>Preparing worktree (new branch 'feat/login')</Out>
         <Out at={cue("worktree", "fresh", 0, 5)}>HEAD is now at c9483ee feat(api): rate limits per team</Out>
         <Out at={cue("worktree", "second")} color={c.bottle}>
