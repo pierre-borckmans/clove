@@ -29,8 +29,11 @@ function Session({ tool, branch, x, y, at }: { tool: string; branch: string; x: 
   const p = useIn(at, 12);
   const bob = Math.sin((frame + at) / 18) * 4;
   const spin = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[Math.floor(frame / 3 + at) % 10];
+  // Same green edge and glow as the branch lines, breathing out of step per card.
+  const glow = 0.5 + 0.5 * Math.sin((frame + at * 7) / 14);
   return (
     <Glass
+      tint="rgba(124,196,155,0.06)"
       style={{
         position: "absolute",
         left: x,
@@ -40,11 +43,13 @@ function Session({ tool, branch, x, y, at }: { tool: string; branch: string; x: 
         fontFamily: mono,
         opacity: p,
         transform: `scale(${0.7 + 0.3 * p})`,
+        border: `1.5px solid ${c.bottle}88`,
+        boxShadow: `0 0 ${18 + 16 * glow}px ${c.bottle}${glow > 0.5 ? "40" : "2e"}, 0 24px 60px rgba(0,0,0,0.45)`,
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 20 }}>
         <span style={{ color: c.bottle }}>{tool}</span>
-        <span style={{ color: c.peel }}>{spin}</span>
+        <span style={{ color: c.peel, fontSize: 26, lineHeight: "20px" }}>{spin}</span>
       </div>
       <div style={{ fontSize: 22, marginTop: 8 }}>{branch}</div>
       <div style={{ fontSize: 16, color: c.dim, marginTop: 6 }}>thinking…</div>
