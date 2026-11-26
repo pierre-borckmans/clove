@@ -72,21 +72,31 @@ const speech: [number, number][] = (() => {
   });
 })();
 
-/** Music volume: low under the voice, up in the gaps, faded in and out. */
-const MUSIC_UP = 0.16;
-const MUSIC_UNDER = 0.055;
-const DUCK = 9;
+/** Music volume: a gentle dip under the voice, eased in and out, faded in
+ * and out with the picture. Pauses shorter than BRIDGE stay dipped. */
+const MUSIC_UP = 0.15;
+const MUSIC_UNDER = 0.1;
+const ATTACK = 18;
+const RELEASE = 24;
+const BRIDGE = 36;
+const smooth = (x: number) => x * x * (3 - 2 * x);
+const voiced: [number, number][] = speech.reduce<[number, number][]>((acc, [a, b]) => {
+  const last = acc[acc.length - 1];
+  if (last && a - last[1] < BRIDGE) last[1] = b;
+  else acc.push([a, b]);
+  return acc;
+}, []);
 function musicVolume(f: number): number {
   let duck = 0;
-  for (const [a, b] of speech) {
+  for (const [a, b] of voiced) {
     if (f >= a && f < b) {
       duck = 1;
       break;
     }
-    const gap = f < a ? a - f : f - b + 1;
-    duck = Math.max(duck, 1 - gap / DUCK);
+    if (f < a && a - f < ATTACK) duck = Math.max(duck, smooth(1 - (a - f) / ATTACK));
+    if (f >= b && f - b < RELEASE) duck = Math.max(duck, smooth(1 - (f - b) / RELEASE));
   }
-  const v = MUSIC_UP + (MUSIC_UNDER - MUSIC_UP) * Math.max(0, duck);
+  const v = MUSIC_UP + (MUSIC_UNDER - MUSIC_UP) * duck;
   const edge = interpolate(f, [0, 20, total - 50, total - 1], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   return v * edge;
 }
@@ -123,13 +133,7 @@ function Intro({ music }: { music?: string }) {
 }
 
 export function Root() {
-  const common = { component: Intro, durationInFrames: total, fps: FPS, width: 1920, height: 1080 } as const;
   return (
-    <>
-      <Composition id="Intro" {...common} defaultProps={{ music: "warm" }} />
-      <Composition id="Intro-piano" {...common} defaultProps={{ music: "piano" }} />
-      <Composition id="Intro-tech" {...common} defaultProps={{ music: "tech" }} />
-      <Composition id="Intro-silent" {...common} defaultProps={{ music: "" }} />
-    </>
+    <Composition id="Intro" component={Intro} durationInFrames={total} fps={FPS} width={1920} height={1080} defaultProps={{ music: "tech" }} />
   );
 }
