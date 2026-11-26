@@ -18,7 +18,7 @@ ap.add_argument("--stability", type=float, default=0.5)
 ap.add_argument("--style", type=float, default=0.15)
 ap.add_argument("--speed", type=float, default=0.98)
 ap.add_argument("--audition", action="store_true", help="only make the full read")
-ap.add_argument("--splice", help="take a full read, but cut only this line id from it (the others keep their audio)")
+ap.add_argument("--splice", help="take a full read, but cut only these line ids from it, comma-separated (the others keep their audio)")
 ap.add_argument("--only", help="re-voice just this line id, with its neighbours as context")
 ap.add_argument("--reuse", action="store_true", help="cut the full read already in tts/eleven/ instead of a new take")
 a = ap.parse_args()
@@ -122,7 +122,8 @@ if a.only:
     raise SystemExit(0)
 
 os.makedirs("tts/eleven", exist_ok=True)
-base = f"tts/eleven/{name}-{a.model}" + (f"-splice-{a.splice}" if a.splice else "")
+splice = set(a.splice.split(",")) if a.splice else set()
+base = f"tts/eleven/{name}-{a.model}" + (f"-splice-{a.splice.replace(',', '+')}" if a.splice else "")
 if a.reuse:
     al = json.load(open(base + ".json"))
 else:
@@ -146,7 +147,7 @@ if a.splice:
     durs = json.load(open("src/durations.json"))
     words = json.load(open("src/words.json"))
 for idx, (l, (s, e)) in enumerate(zip(lines, starts)):
-    if a.splice and l["id"] != a.splice:
+    if splice and l["id"] not in splice:
         continue
     t0 = max(0.0, st[s] - 0.06)
     t1 = en[e - 1] + 0.12

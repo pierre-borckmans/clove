@@ -1290,7 +1290,7 @@ function Feature({
   );
 }
 
-/** 11. Update with Claude, prune, agents; timed to the three sentences. */
+/** 11. Update with your agent, prune, agents; timed to the three sentences. */
 export function Features() {
   const a = 0;
   const b = cue("features", "cleans", 0, -10);
@@ -1307,7 +1307,7 @@ export function Features() {
           </Window>
         }
       >
-        <Words text="Up to date, with Claude resolving the conflicts." size={60} delay={a + 4} accent={["Claude"]} />
+        <Words text="Up to date, with your agent resolving the conflicts." size={60} delay={a + 4} accent={["agent"]} />
       </Feature>
       <Feature
         at={b}
@@ -1357,6 +1357,8 @@ function Letter({ ch, at }: { ch: string; at: number }) {
 export function Outro() {
   const tag = useIn(cue("outro", "worktrees", 0, -4));
   const cmd = useIn(cue("outro", "second", 0, 8));
+  // The domain lands as the voice says it.
+  const site = useIn(cue("outro", "clove", 1, -4), 14);
   return (
     <Stage push={0.03}>
       <div
@@ -1399,7 +1401,7 @@ export function Outro() {
             </span>
           ))}
         </div>
-        <div style={{ fontFamily: mono, fontSize: 34, color: c.bottle, marginTop: 30, letterSpacing: 1, opacity: cmd, textShadow: `0 0 24px ${c.bottle}55` }}>clove.fast</div>
+        <div style={{ fontFamily: mono, fontSize: 34, color: c.bottle, marginTop: 30, letterSpacing: 1, opacity: site, transform: `scale(${0.9 + 0.1 * site})`, textShadow: `0 0 ${24 + 20 * site}px ${c.bottle}66` }}>clove.fast</div>
         <div style={{ fontFamily: mono, fontSize: 19, color: c.dim, marginTop: 10, opacity: cmd }}>github.com/pierre-borckmans/clove</div>
       </div>
     </Stage>

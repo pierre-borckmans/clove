@@ -65,10 +65,10 @@
   },
   {
     "id": "features",
-    "say": "It brings your clones up to date, with Claude resolving the conflicts. It cleans up after merged pull requests. And it teaches your agents to use it, so you don't have to."
+    "say": "It brings your clones up to date, with your coding agent resolving the conflicts. It cleans up after merged pull requests. And it teaches your agents to use it, so you don't have to."
   },
   {
     "id": "outro",
-    "say": "That's clove. Your worktrees, ready in a second."
+    "say": "That's clove. Your worktrees, ready in a second. Check it out at clove dot fast."
   }
 ]
