@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { api } from "./api";
 import { listen } from "./bridge";
 import { ms } from "./format";
-import type { CloneInfo, OpEvent, OpFinished, OpRequest, OpStarted } from "./types";
+import type { CloneInfo, OpEvent, OpFinished, OpRequest, OpStarted, UpdateResult } from "./types";
 
 export type StepState = {
   name: string;
@@ -79,6 +79,11 @@ export function describe(req: OpRequest): { title: string; subject: string } {
       return { title: "Make a clone", subject: repoName(req.path) };
     case "deinit":
       return { title: "Delete golden image", subject: repo };
+    case "update":
+      return {
+        title: req.step === "continue" ? "Finish update" : req.step === "abort" ? "Abort update" : "Update clone",
+        subject: req.name,
+      };
   }
 }
 
@@ -185,7 +190,21 @@ export function wireOps(qc: QueryClient, hooks: Hooks) {
     if (!hooks.toasts) return;
     const took = ms(e.at - op.startedAt);
     const later = (op.result as { when_free?: string[] } | null)?.when_free;
-    if (op.status === "ok" && later) {
+    const upd = op.req.kind === "update" ? (op.result as UpdateResult | null) : null;
+    if (op.status === "ok" && upd?.result === "conflict") {
+      toast.warning(`${op.subject}: ${upd.strategy} stopped on conflicts`, {
+        id: op.id,
+        duration: 15_000,
+        description: `${upd.files.join(", ")}. Fix them and git add them, then Continue update from the clone's menu (or Abort).`,
+      });
+    } else if (op.status === "ok" && upd?.result === "updated" && (upd.hint || upd.failed_steps.length)) {
+      toast.success(doneTitle(op), {
+        id: op.id,
+        description: [upd.failed_steps.length ? `setup failed: ${upd.failed_steps.join(", ")}` : "", upd.hint ?? ""]
+          .filter(Boolean)
+          .join(" · "),
+      });
+    } else if (op.status === "ok" && later) {
       toast.info(`${op.subject} is in use`, {
         id: op.id,
         description: `By ${later.join(", ")}. clove removes it as soon as ${later.length === 1 ? "it exits" : "they exit"}.`,
@@ -223,5 +242,13 @@ function doneTitle(op: Op): string {
     }
     case "deinit":
       return `Deleted the golden image of ${op.subject}`;
+    case "update": {
+      const u = op.result as UpdateResult | null;
+      if (!u) return `${op.subject} is back where it was`;
+      if (u.result === "up_to_date") return `${op.subject} is up to date with ${u.base}`;
+      if (u.result === "updated")
+        return `${op.subject} is on ${u.base}${u.commits ? ` (${u.commits} new commit${u.commits === 1 ? "" : "s"})` : ""}`;
+      return `${op.subject} has conflicts`;
+    }
   }
 }

@@ -135,6 +135,35 @@ enum Cmd {
         #[arg(long)]
         all: bool,
     },
+    /// Bring clones up to the latest base: fetch it, rebase onto it (or
+    /// merge), then rerun the setup steps whose inputs changed. Stops on
+    /// conflicts with the files listed; --continue or --abort after.
+    Update {
+        /// Clones (default: the one you are in).
+        #[arg(add = ArgValueCompleter::new(complete::clones))]
+        clones: Vec<String>,
+        /// Every clone of this repo; one with a conflict doesn't stop the others.
+        #[arg(long, conflicts_with = "clones")]
+        all: bool,
+        /// Merge the base instead of rebasing (default: the `update.strategy` setting).
+        #[arg(long, conflicts_with = "rebase")]
+        merge: bool,
+        /// Rebase onto the base (overrides `update.strategy = "merge"`).
+        #[arg(long)]
+        rebase: bool,
+        /// Set uncommitted changes aside and reapply them after.
+        #[arg(long)]
+        autostash: bool,
+        /// After fixing and `git add`-ing the conflicts: finish the update.
+        #[arg(long = "continue", conflicts_with_all = ["abort", "all"])]
+        continue_: bool,
+        /// Undo a stopped update: the branch goes back to where it was.
+        #[arg(long, conflicts_with = "all")]
+        abort: bool,
+        /// Use the base as last fetched.
+        #[arg(long)]
+        no_fetch: bool,
+    },
     /// Golden image and clone summary for this repo.
     #[command(visible_alias = "info")]
     Status,
@@ -533,6 +562,32 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Cmd::New(a) => cmd_new(&cli, a, r)?,
+        Cmd::Update {
+            clones,
+            all,
+            merge,
+            rebase,
+            autostash,
+            continue_,
+            abort,
+            no_fetch,
+        } => {
+            let strategy = if *merge {
+                Some(clove_core::update::Strategy::Merge)
+            } else if *rebase {
+                Some(clove_core::update::Strategy::Rebase)
+            } else {
+                None
+            };
+            let mode = if *continue_ {
+                UpdateMode::Continue
+            } else if *abort {
+                UpdateMode::Abort
+            } else {
+                UpdateMode::Run
+            };
+            cmd_update(&cli, clones, *all, mode, strategy, *autostash, !*no_fetch, r)?;
+        }
         Cmd::Setup { clone, all } => {
             let c = repo(&cli)?;
             let name = c.resolve(clone.as_deref().unwrap_or("."))?;
@@ -1408,6 +1463,8 @@ fn cmd_list(cli: &Cli, status: bool, only_worktrees: bool) -> Result<()> {
         let changes = if let Some(issue) = &i.issue {
             broken += 1;
             styled(YELLOW, issue.clone())
+        } else if let Some(op) = i.operation {
+            styled(YELLOW, format!("{}: conflicts", op.word()))
         } else if i.removing_when_free {
             styled(CYAN, "removing when free")
         } else if changes.is_empty() && i.mounted && status {
@@ -1594,6 +1651,151 @@ fn cmd_adopt(
         hint_shell_init();
     }
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum UpdateMode {
+    Run,
+    Continue,
+    Abort,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_update(
+    cli: &Cli,
+    clones: &[String],
+    all: bool,
+    mode: UpdateMode,
+    strategy: Option<clove_core::update::Strategy>,
+    autostash: bool,
+    fetch: bool,
+    r: &dyn clove_core::Reporter,
+) -> Result<()> {
+    use clove_core::update::{Update, UpdateOptions};
+    let c = repo(cli)?;
+    let names: Vec<String> = if all {
+        c.clone_names()?
+    } else if clones.is_empty() {
+        vec![c.resolve(".")?]
+    } else {
+        clones.iter().map(|q| c.resolve(q)).collect::<Result<_>>()?
+    };
+    // One fetch for all of them.
+    if fetch && matches!(mode, UpdateMode::Run) && names.len() > 1 {
+        c.fetch()?;
+    }
+    let opts = UpdateOptions {
+        strategy,
+        autostash,
+        fetch: fetch && names.len() == 1,
+    };
+    let mut results = vec![];
+    let mut trouble = false;
+    for name in &names {
+        if !cli.json && names.len() > 1 {
+            eprintln!("{} {}", paint(BOLD, "update"), name);
+        }
+        if let UpdateMode::Abort = mode {
+            match c.update_abort(name) {
+                Ok(()) => {
+                    if !cli.json {
+                        eprintln!(
+                            "{} {name}: back where it was before the update",
+                            paint(GREEN, "✓")
+                        );
+                    }
+                    results.push(serde_json::json!({ "clone": name, "aborted": true }));
+                }
+                Err(e) => {
+                    trouble = true;
+                    if !cli.json {
+                        eprintln!("{} {name}: {e:#}", paint(RED, "✗"));
+                    }
+                    results.push(serde_json::json!({ "clone": name, "error": format!("{e:#}") }));
+                }
+            }
+            continue;
+        }
+        let res = match mode {
+            UpdateMode::Continue => c.update_continue(name, r),
+            _ => c.update(name, &opts, r),
+        };
+        match res {
+            Ok(u) => {
+                if matches!(u, Update::Conflict { .. }) {
+                    trouble = true;
+                }
+                if !cli.json {
+                    print_update(name, &u);
+                }
+                results.push(serde_json::json!({ "clone": name, "update": u }));
+            }
+            Err(e) => {
+                trouble = true;
+                if !cli.json {
+                    eprintln!("{} {name}: {e:#}", paint(RED, "✗"));
+                }
+                results.push(serde_json::json!({ "clone": name, "error": format!("{e:#}") }));
+            }
+        }
+    }
+    if cli.json {
+        emit(&results)?;
+    }
+    if trouble {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn print_update(name: &str, u: &clove_core::update::Update) {
+    use clove_core::update::Update;
+    match u {
+        Update::UpToDate { base } => eprintln!("{} {name}: up to date with {base}", paint(GREEN, "✓")),
+        Update::Updated {
+            base,
+            strategy,
+            commits,
+            hint,
+            failed_steps,
+        } => {
+            let what = match strategy {
+                clove_core::update::Strategy::Rebase => "rebased onto",
+                clove_core::update::Strategy::Merge => "merged",
+            };
+            let n = commits
+                .map(|n| format!(" ({n} new commit{})", if n == 1 { "" } else { "s" }))
+                .unwrap_or_default();
+            eprintln!("{} {name}: {what} {base}{n}", paint(GREEN, "✓"));
+            if !failed_steps.is_empty() {
+                eprintln!(
+                    "  {} setup failed: {}",
+                    paint(YELLOW, "!"),
+                    failed_steps.join(", ")
+                );
+            }
+            if let Some(h) = hint {
+                eprintln!("  {}", paint(DIM, h));
+            }
+        }
+        Update::Conflict { strategy, files, .. } => {
+            eprintln!(
+                "{} {name}: {} stopped on conflicts in {} file{}:",
+                paint(YELLOW, "!"),
+                strategy.word(),
+                files.len(),
+                if files.len() == 1 { "" } else { "s" }
+            );
+            for f in files {
+                eprintln!("    {f}");
+            }
+            eprintln!(
+                "  fix them and `git add` them, then {} (or {})",
+                paint(BOLD, format!("clove update --continue {name}")),
+                format!("clove update --abort {name}")
+            );
+        }
+    }
 }
 
 fn cmd_log(cli: &Cli, limit: usize, all_repos: bool) -> Result<()> {

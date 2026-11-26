@@ -1,5 +1,6 @@
 ---
 source: crates/clove-tui/src/tests.rs
+assertion_line: 445
 expression: s
 ---
 ╭ clove ──────────────────────────────────────────────────────────────────  app   mono   web  ─╮
@@ -33,4 +34,4 @@ expression: s
 │  clone image ▊                                                                          6ms  │
 │                                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
- ⏎ cd  n new  d remove  u unmount  r refresh  o open  / filter  tab repo  ? help  q quit
+ ⏎ cd  n new  d remove  u unmount  U update  r refresh  o open  / filter  ? help  q quit

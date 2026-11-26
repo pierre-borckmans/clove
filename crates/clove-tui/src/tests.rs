@@ -55,6 +55,7 @@ fn clone(name: &str, branch: Option<&str>, mounted: bool) -> CloneInfo {
         failed_steps: vec![],
         issue: None,
         removing_when_free: false,
+        operation: None,
     }
 }
 
@@ -162,6 +163,7 @@ fn config() -> Config {
             max_behind: 100,
         },
         prune: Default::default(),
+        update: Default::default(),
         sources: vec![],
     }
 }
@@ -1456,11 +1458,11 @@ fn badges_explain_themselves() {
     let (s2, _) = render(&mut app, 120, 24);
     assert!(s2.contains("Not mounted: m mounts it."), "{s2}");
     // A footer hint.
-    let (x, y) = find(&s, "g cleanup  ?");
+    let (x, y) = find(&s, "U update");
     moved(&mut app, x, y);
     app.now_ms += crate::tooltip::DELAY_MS;
     let (s3, _) = render(&mut app, 120, 24);
-    assert!(s3.contains("remove clones whose PR is merged"), "{s3}");
+    assert!(s3.contains("bring the clone onto the latest base"), "{s3}");
 }
 
 #[test]

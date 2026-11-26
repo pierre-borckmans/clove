@@ -42,6 +42,9 @@ pub struct FileConfig {
     /// Whether the service removes merged clones on its own.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prune: Option<PruneFile>,
+    /// How `clove update` brings a clone up to the base.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update: Option<UpdateFile>,
     /// Replaces the detected steps.
     #[serde(rename = "step", skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<Step>,
@@ -66,6 +69,13 @@ pub struct RefreshFile {
 pub struct PruneFile {
     /// The service removes clones whose PR merged, once they are clean and idle.
     pub auto: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UpdateFile {
+    /// rebase (default) or merge.
+    pub strategy: Option<crate::update::Strategy>,
 }
 
 /// How a setting is edited, validated and stored.
@@ -241,6 +251,16 @@ pub const FIELDS: &[Field] = &[
         Is("false"),
         "the service removes clones whose PR merged, once clean and idle for an hour; clove log lists them",
     ),
+    field(
+        "update.strategy",
+        "update by",
+        "clones",
+        Kind::Choice {
+            options: &["rebase", "merge"],
+        },
+        Is("rebase"),
+        "how clove update brings a clone's branch onto the latest base",
+    ),
 ];
 
 /// [`FileConfig`] keys edited in the file only (lists of tables).
@@ -258,6 +278,12 @@ pub struct RefreshPolicy {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct PrunePolicy {
     pub auto: bool,
+}
+
+/// Resolved `clove update` policy.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UpdatePolicy {
+    pub strategy: crate::update::Strategy,
 }
 
 /// Parses "90", "30m", "12h", "2d" into seconds.
@@ -345,6 +371,7 @@ pub struct Config {
     pub copy: Option<Vec<String>>,
     pub refresh: RefreshPolicy,
     pub prune: PrunePolicy,
+    pub update: UpdatePolicy,
     pub sources: Vec<PathBuf>,
 }
 
@@ -485,6 +512,9 @@ impl Config {
             },
             prune: PrunePolicy {
                 auto: pick(&layers, |l| l.prune.as_ref().and_then(|p| p.auto)).unwrap_or(false),
+            },
+            update: UpdatePolicy {
+                strategy: pick(&layers, |l| l.update.as_ref().and_then(|u| u.strategy)).unwrap_or_default(),
             },
             sources,
         })
@@ -635,6 +665,9 @@ mod schema_tests {
                 max_behind: Some(1),
             }),
             prune: Some(PruneFile { auto: Some(true) }),
+            update: Some(UpdateFile {
+                strategy: Some(crate::update::Strategy::Merge),
+            }),
             steps: vec![Step::default()],
             add_steps: vec![Step::default()],
         };

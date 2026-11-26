@@ -168,6 +168,13 @@ jobs:
           path: tap
       - name: Publish the cask
         run: |
+          # Apple may finish an older release's app after a newer one's.
+          v="${GITHUB_REF_NAME#v}"
+          have=$(sed -n 's/^ *version "\(.*\)"/\1/p' tap/Casks/clove-app.rb 2>/dev/null || true)
+          if [ -n "$have" ] && [ "$(printf '%s\n%s\n' "$have" "$v" | sort -V | tail -1)" != "$v" ]; then
+            echo "the tap already has clove-app $have; not going back to $v"
+            exit 0
+          fi
           sha=$(cut -d' ' -f1 clove-app-*.dmg.sha256)
           mkdir -p tap/Casks
           sed -e "s/@VERSION@/${GITHUB_REF_NAME#v}/g" -e "s/@SHA_APP@/$sha/" \

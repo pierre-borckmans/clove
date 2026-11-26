@@ -135,6 +135,7 @@ More in [internals](docs/internals.md).
 - **Any branch or PR, ready in ~1s.** `clove new feat/x`, `clove new pr:123`, or `-x claude` to start an agent in it. → [Commands](docs/commands.md)
 - **CLI, terminal UI and Mac app,** with the same features everywhere; every command takes `--json`. → [Interfaces](docs/commands.md#interfaces)
 - **Shell integration:** `cd` into new clones, completions, and each clone's environment loaded while you're in it. → [Shell integration](docs/commands.md#shell-integration)
+- **Brings clones up to date:** `clove update` rebases onto the latest base and reruns only the setup steps that changed; conflicts stop cleanly, with `--continue` or `--abort`. → [Updating a clone](docs/commands.md#updating-a-clone)
 - **Works next to plain git worktrees:** lists them, removes them safely, or adopts them as clones. → [Plain git worktrees](docs/commands.md#plain-git-worktrees)
 - **Cleans up after merged PRs,** squash merges included, by hand or automatically, with a history to get any branch back. → [Cleaning up](docs/cleanup.md)
 - **Built for coding agents:** one command teaches Claude Code and Codex to use clones, and turns `claude --worktree` into one. → [Coding agents](docs/agents.md)

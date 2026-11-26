@@ -78,6 +78,8 @@ export type CloneInfo = {
   issue?: string;
   /** Removal asked while in use; it goes once nothing uses it. */
   removing_when_free?: boolean;
+  /** A `clove update` (or a rebase or merge) stopped on conflicts. */
+  operation?: "rebase" | "merge";
 };
 
 /** A plain git worktree clove didn't make (clove_core::OtherWorktree). */
@@ -161,7 +163,21 @@ export type OpRequest =
   | { kind: "remove"; root: string; name: string; force?: boolean; delete_branch?: boolean }
   | { kind: "remove_worktree"; root: string; path: string; delete_branch?: boolean; force?: boolean; unlock?: boolean }
   | { kind: "adopt"; root: string; path: string; name?: string | null }
-  | { kind: "deinit"; root: string };
+  | { kind: "deinit"; root: string }
+  | { kind: "update"; root: string; name: string; step?: "run" | "continue" | "abort"; autostash?: boolean };
+
+/** What `clove update` did (clove_core::update::Update). */
+export type UpdateResult =
+  | { result: "up_to_date"; base: string }
+  | {
+      result: "updated";
+      base: string;
+      strategy: "rebase" | "merge";
+      commits: number | null;
+      hint: string | null;
+      failed_steps: string[];
+    }
+  | { result: "conflict"; base: string; strategy: "rebase" | "merge"; files: string[] };
 
 export type CloveEvent =
   | { event: "start"; step: string }

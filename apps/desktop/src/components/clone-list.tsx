@@ -7,11 +7,13 @@ import {
   FolderOpen,
   GitBranch,
   GitCommitHorizontal,
+  GitPullRequestArrow,
   HardDrive,
   Plus,
   SquareTerminal,
   Trash2,
   TriangleAlert,
+  Undo2,
   Unplug,
 } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -27,7 +29,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useHotkey } from "@/hooks/use-hotkey";
 import { bytes, since } from "@/lib/format";
-import { useOps } from "@/lib/ops";
+import { startOp, useOps } from "@/lib/ops";
 import { APP_LABELS, usePrefs } from "@/lib/prefs";
 import { copyPath, copyText, openIn, useMountToggle, usePrCheck, usePrs } from "@/lib/queries";
 import type { CloneInfo, MergeCheck } from "@/lib/types";
@@ -284,6 +286,15 @@ function CloneRow({
           <span className={cn("truncate text-[13px] font-medium", !c.mounted && "text-muted-foreground")}>
             {c.name}
           </span>
+          {c.operation && (
+            <span
+              title="Fix the conflicts and git add them, then Continue update from the menu (or Abort)"
+              className="flex shrink-0 items-center gap-1 rounded-full bg-amber/12 px-1.5 text-[11px] leading-[18px] text-amber"
+            >
+              <TriangleAlert className="size-3" />
+              {c.operation}: conflicts
+            </span>
+          )}
           {c.removing_when_free && (
             <span className="shrink-0 rounded-full bg-foreground/[0.06] px-1.5 text-[11px] leading-[18px] text-muted-foreground">
               removing when free
@@ -493,6 +504,23 @@ export function CloneMenu({ clone: c, root, children }: { clone: CloneInfo; root
           </DropdownMenuItem>
         )}
         <DropdownMenuSeparator />
+        {c.operation ? (
+          <>
+            <DropdownMenuItem onSelect={() => void startOp({ kind: "update", root, name: c.name, step: "continue" })}>
+              <GitPullRequestArrow /> Continue update
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => void startOp({ kind: "update", root, name: c.name, step: "abort" })}>
+              <Undo2 /> Abort update
+            </DropdownMenuItem>
+          </>
+        ) : (
+          c.branch && (
+            <DropdownMenuItem onSelect={() => void startOp({ kind: "update", root, name: c.name })}>
+              <GitPullRequestArrow /> Update to latest base
+              <DropdownMenuShortcut>U</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )
+        )}
         <DropdownMenuItem onSelect={() => mount.mutate({ name: c.name, mounted: c.mounted })}>
           {c.mounted ? <Unplug /> : <HardDrive />}
           {c.mounted ? "Unmount" : "Mount"}

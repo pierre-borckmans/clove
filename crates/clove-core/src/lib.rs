@@ -27,6 +27,7 @@ pub mod service;
 pub mod settings;
 pub mod shellrc;
 pub mod steps;
+pub mod update;
 pub mod util;
 pub mod watch;
 pub mod worktrees;

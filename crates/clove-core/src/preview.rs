@@ -165,6 +165,7 @@ mod tests {
                     max_behind: 100,
                 },
                 prune: Default::default(),
+                update: Default::default(),
                 sources: vec![],
             },
         };

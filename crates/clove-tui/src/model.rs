@@ -89,12 +89,25 @@ pub enum Task {
     Service {
         install: bool,
     },
+    /// `clove update`: bring the clone onto the latest base, or finish or
+    /// undo one stopped on conflicts.
+    Update {
+        name: String,
+        step: UpdateStep,
+    },
     /// Teach coding agents clove (`clove agents install`), or take it out.
     Agents {
         install: bool,
     },
     /// Add the shell integration line to the user's rc file.
     ShellInstall,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateStep {
+    Run,
+    Continue,
+    Abort,
 }
 
 /// What to do once a mount finishes.
@@ -118,6 +131,8 @@ pub enum Outcome {
     Doctor(Vec<Check>),
     Service(bool),
     Agents(Option<clove_core::agents::State>),
+    /// None after an abort.
+    Updated(Option<clove_core::update::Update>),
     /// The rc file that now loads the integration, and whether it changed.
     ShellInstalled(PathBuf, bool),
 }
@@ -286,6 +301,18 @@ impl Job {
             Task::Doctor => "doctor".into(),
             Task::Service { install: true } => "install the service".into(),
             Task::Service { install: false } => "remove the service".into(),
+            Task::Update {
+                name,
+                step: UpdateStep::Run,
+            } => format!("update {name}"),
+            Task::Update {
+                name,
+                step: UpdateStep::Continue,
+            } => format!("continue updating {name}"),
+            Task::Update {
+                name,
+                step: UpdateStep::Abort,
+            } => format!("abort updating {name}"),
             Task::Agents { install: true } => "teach coding agents clove".into(),
             Task::Agents { install: false } => "remove clove from agent instructions".into(),
             Task::ShellInstall => "install shell integration".into(),
@@ -300,6 +327,7 @@ impl Job {
             Task::Mount { .. } => "mounting",
             Task::Unmount { .. } => "unmounting",
             Task::New(_) => "creating",
+            Task::Update { .. } => "updating",
             _ => "working",
         }
     }
@@ -307,7 +335,10 @@ impl Job {
     /// Clone this job works on, if any.
     pub fn target(&self) -> Option<&str> {
         match &self.task {
-            Task::Remove { name, .. } | Task::Mount { name } | Task::Unmount { name } => Some(name),
+            Task::Remove { name, .. }
+            | Task::Mount { name }
+            | Task::Unmount { name }
+            | Task::Update { name, .. } => Some(name),
             _ => None,
         }
     }

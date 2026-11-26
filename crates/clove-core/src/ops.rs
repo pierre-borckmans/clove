@@ -608,7 +608,7 @@ impl Clove {
         self.fetch_base(&crate::events::Silent, &mut t, &self.config.base, None)
     }
 
-    fn fetch_base(
+    pub(crate) fn fetch_base(
         &self,
         r: &dyn Reporter,
         timings: &mut Vec<Timing>,
@@ -1145,6 +1145,7 @@ impl Clove {
             failed_steps: meta.failed_steps,
             issue,
             removing_when_free: self.clone_dir(name).join(PENDING_FILE).exists(),
+            operation: crate::update::operation(&self.clone_admin(name)),
         })
     }
 

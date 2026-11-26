@@ -1269,6 +1269,11 @@ fn changes_tip(app: &App, c: &CloneInfo, base: &str) -> Option<Tip> {
         // The cell says what runs; nothing to add.
     } else if let Some(issue) = &c.issue {
         out.push(format!("{issue}: g finishes removing it"));
+    } else if let Some(op) = c.operation {
+        out.push(format!(
+            "{}: stopped on conflicts; fix them and git add them, then U continues, X aborts",
+            op.word()
+        ));
     } else if c.removing_when_free {
         out.push("removing when free: something still uses it; it goes once nothing does".into());
     } else if !c.mounted {
@@ -1448,6 +1453,8 @@ fn changes<'a>(app: &App, c: &CloneInfo, w: usize) -> Vec<Span<'a>> {
         parts.push((format!("{}…", j.verb()), fg(BOTTLE)));
     } else if let Some(issue) = &c.issue {
         parts.push((issue.clone(), fg(AMBER)));
+    } else if let Some(op) = c.operation {
+        parts.push((format!("{}: conflicts", op.word()), fg(AMBER)));
     } else if c.removing_when_free {
         parts.push(("removing when free".into(), muted()));
     } else if !c.mounted {
@@ -1911,6 +1918,11 @@ fn hints(app: &App) -> Vec<Hint> {
                 } else {
                     ("m", "mount", Char('m'))
                 });
+                if c.operation.is_some() {
+                    v.extend([("U", "continue", Char('U')), ("X", "abort", Char('X'))]);
+                } else {
+                    v.push(("U", "update", Char('U')));
+                }
                 v.extend([
                     ("r", "refresh", Char('r')),
                     ("o", "open", Char('o')),
@@ -2044,6 +2056,9 @@ fn hint_tip(k: &str, label: &str) -> Option<&'static str> {
         ("d", "remove") => "remove the clone (asks first)",
         ("m", "mount") => "mount the clone's disk image",
         ("u", "unmount") => "unmount the clone; its files stay in the image",
+        ("U", "update") => "bring the clone onto the latest base, then rerun changed setup steps",
+        ("U", "continue") => "finish the update once the conflicts are fixed and added",
+        ("X", "abort") => "undo the stopped update: the branch goes back where it was",
         ("r", "refresh") => "refresh the golden image to the latest base",
         ("o", "open") => "open the clone in $EDITOR",
         ("/", "filter") => "filter clones by name or branch",
@@ -2326,6 +2341,7 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
                 ("n", "new clone on a branch"),
                 ("d", "remove (asks first)"),
                 ("m / u", "mount / unmount"),
+                ("U / X", "update to latest base / abort"),
                 ("o", "open in $EDITOR"),
                 ("c", "make a plain git worktree a clone"),
                 ("/", "filter by name or branch"),

@@ -243,6 +243,43 @@ async function runOp(id: string, op: OpRequest): Promise<unknown> {
       if (op.delete_branch && w.branch) r.refs = r.refs.filter((x) => !(x.kind === "local" && x.name === w.branch));
       return null;
     }
+    case "update": {
+      const r = get(op.root);
+      const c = r.clones.find((x) => x.name === op.name);
+      if (!c) throw new Error(`no clone named \`${op.name}\``);
+      if (op.step === "abort") {
+        await play(id, [{ step: "rebase --abort", ms: 200 }]);
+        c.operation = undefined;
+        return null;
+      }
+      if (op.step === "continue") {
+        await play(id, [{ step: "rebase --continue", ms: 400 }]);
+        c.operation = undefined;
+        c.behind = 0;
+        return {
+          result: "updated",
+          base: "origin/main",
+          strategy: "rebase",
+          commits: null,
+          hint: null,
+          failed_steps: [],
+        };
+      }
+      if (c.dirty) throw new Error(`\`${c.name}\` has uncommitted changes; commit them, or update with autostash`);
+      const n = c.behind ?? 0;
+      if (!n) return { result: "up_to_date", base: "origin/main" };
+      await play(id, [
+        { step: "fetch", ms: 380 },
+        { step: `rebase ${c.branch} onto origin/main`, ms: 520 },
+      ]);
+      if (c.name.includes("billing")) {
+        c.operation = "rebase";
+        return { result: "conflict", base: "origin/main", strategy: "rebase", files: ["apps/web/src/billing.ts"] };
+      }
+      c.behind = 0;
+      await play(id, [{ step: "setup pnpm", ms: 900 }]);
+      return { result: "updated", base: "origin/main", strategy: "rebase", commits: n, hint: null, failed_steps: [] };
+    }
     case "adopt": {
       const r = get(op.root);
       const w = r.worktrees.find((x) => x.path === op.path);

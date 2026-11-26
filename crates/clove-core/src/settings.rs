@@ -612,6 +612,7 @@ warm = \"pnpm install\"
                 max_behind: 1,
             },
             prune: Default::default(),
+            update: Default::default(),
             sources: vec![],
         };
         let st = resolve(&[None, Some(team), Some(you)], &cfg);

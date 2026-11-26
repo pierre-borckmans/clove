@@ -42,6 +42,18 @@ are named after the branch, with `/` turned into `-`.
 `clove cd <clone>` only works in an interactive shell with clove's shell
 integration; use `clove path` from scripts and agents.
 
+## Bring it up to date
+
+    clove update [clone]           # fetch the base, rebase onto it, rerun changed setup steps
+    clove update --merge           # merge the base instead (default: the update.strategy setting)
+    clove update --autostash       # with uncommitted changes: set them aside, reapply after
+
+Without `--autostash`, uncommitted changes are refused. On conflicts it
+stops in git's usual rebase or merge state, lists the files (`--json`:
+`files`) and exits 1. Fix them, `git add` them, then
+`clove update --continue`; `clove update --abort` puts the branch back. After
+rebasing a branch that was pushed, push with `git push --force-with-lease`.
+
 ## Remove it
 
     clove rm <clone>               # unmount and delete; keeps the branch

@@ -478,6 +478,110 @@ fn full_lifecycle() {
     c.remove("done-fresh", &RemoveOptions::default(), &Silent)
         .unwrap();
 
+    // Update: the clone's branch comes onto the new base and setup reruns
+    // for the changed lockfile. A conflicting edit stops with the file
+    // listed; abort puts the branch back; continue finishes once fixed.
+    {
+        use clove_core::update::{Strategy, Update, UpdateOptions};
+        let read = |p: std::path::PathBuf| std::fs::read_to_string(p).unwrap();
+        let up = |opts: &UpdateOptions| c.update("feat-up", opts, &Silent);
+        let u = c
+            .new_clone(
+                &NewOptions {
+                    branch: Some("feat/up".into()),
+                    ..Default::default()
+                },
+                &Silent,
+            )
+            .unwrap();
+        sh(
+            &u.path,
+            "echo mine > mine.txt && git add mine.txt && git commit -qm mine",
+        );
+        sh(
+            &seed,
+            "git pull -q --rebase origin main && echo v-update > lock.txt && git commit -qam lock && git push -q origin main",
+        );
+        let r = up(&UpdateOptions::default()).unwrap();
+        assert!(matches!(r, Update::Updated { commits: Some(1), .. }), "{r:?}");
+        assert_eq!(
+            read(u.path.join("deps/installed")),
+            "v-update\n",
+            "setup reran for the new lockfile"
+        );
+        assert!(matches!(
+            up(&UpdateOptions::default()).unwrap(),
+            Update::UpToDate { .. }
+        ));
+
+        sh(&u.path, "echo clone > app.txt && git commit -qam clone-edit");
+        sh(
+            &seed,
+            "echo base > app.txt && git commit -qam base && git push -q origin main",
+        );
+        match up(&UpdateOptions::default()).unwrap() {
+            Update::Conflict { files, strategy, .. } => {
+                assert_eq!(files, ["app.txt"]);
+                assert_eq!(strategy, Strategy::Rebase);
+            }
+            other => panic!("expected a conflict: {other:?}"),
+        }
+        assert_eq!(
+            c.info("feat-up", false).unwrap().operation,
+            Some(Strategy::Rebase)
+        );
+        assert!(
+            up(&UpdateOptions::default()).is_err(),
+            "mid-rebase: update refuses"
+        );
+        c.update_abort("feat-up").unwrap();
+        assert_eq!(c.info("feat-up", false).unwrap().operation, None);
+        assert_eq!(
+            read(u.path.join("app.txt")),
+            "clone\n",
+            "abort puts the branch back"
+        );
+
+        assert!(matches!(
+            up(&UpdateOptions::default()).unwrap(),
+            Update::Conflict { .. }
+        ));
+        std::fs::write(u.path.join("app.txt"), "both\n").unwrap();
+        assert!(c.update_continue("feat-up", &Silent).is_err(), "not added yet");
+        sh(&u.path, "git add app.txt");
+        let r = c.update_continue("feat-up", &Silent).unwrap();
+        assert!(matches!(r, Update::Updated { commits: None, .. }), "{r:?}");
+        assert_eq!(git(&u.path, &["log", "-1", "--format=%s"]), "clone-edit");
+        assert_eq!(c.info("feat-up", false).unwrap().operation, None);
+
+        // Uncommitted changes: refused, unless set aside and reapplied.
+        sh(
+            &seed,
+            "echo x > other.txt && git add other.txt && git commit -qm other && git push -q origin main",
+        );
+        std::fs::write(u.path.join("mine.txt"), "dirty\n").unwrap();
+        let e = up(&UpdateOptions::default()).unwrap_err().to_string();
+        assert!(e.contains("uncommitted"), "{e}");
+        let r = up(&UpdateOptions {
+            autostash: true,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(matches!(r, Update::Updated { .. }), "{r:?}");
+        assert_eq!(read(u.path.join("mine.txt")), "dirty\n");
+        assert!(u.path.join("other.txt").exists());
+        c.remove(
+            "feat-up",
+            &RemoveOptions {
+                force: true,
+                delete_branch: true,
+                ..Default::default()
+            },
+            &Silent,
+        )
+        .unwrap();
+    }
+
     // remove refuses dirty clones without --force
     std::fs::write(a.path.join("app.txt"), "dirty\n").unwrap();
     assert!(c.remove("feat-a", &RemoveOptions::default(), &Silent).is_err());

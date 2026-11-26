@@ -15,6 +15,7 @@ clove adopt ../old-worktree      # turn a plain git worktree into a clone on its
 clove ls                         # clones, branch, dirty/ahead/behind, own disk
 clove cd feat-login              # jump to a clone; `clove cd` alone goes back to the main checkout
 clove run feat-login -- pnpm test   # run inside the clone's dev environment
+clove update                     # in a clone: rebase onto the latest base, rerun changed setup steps
 clove setup                      # in a clone, after a pull: rerun the setup steps that changed
 
 # clean up
@@ -43,6 +44,20 @@ Every feature is in three places:
   - A sidebar lists every repo, its clones, and whether its golden image is fresh.
   - `s` settings (Enter edits or toggles, ←/→ picks the file it saves to, `x` resets) · `g` clean up · `L` removal history · `A` add a repo · Enter quits into the selected clone.
 - **The Mac app:** the same sidebar, settings, cleanup and history, plus a menu-bar popover.
+
+## Updating a clone
+
+`clove update [clone]` (or `--all`):
+
+1. fetches the base
+2. rebases the clone's branch onto it (`--merge` merges instead; `update.strategy = "merge"` makes that the default)
+3. reruns only the setup steps whose inputs changed, so a new lockfile or proto change comes with it
+
+- **Uncommitted changes are refused,** unless `--autostash`, which sets them aside and reapplies them after.
+- **On a conflict it stops** in git's usual state and lists the files. Fix them and `git add` them, then `clove update --continue`, or `clove update --abort` to put the branch back.
+- **With `--all`,** a conflict in one clone doesn't stop the others.
+- **It never pushes.** After rebasing a branch that was already pushed, it reminds you to push with `--force-with-lease`.
+- In the terminal UI, `U` updates the selected clone (or continues once the conflicts are fixed) and `X` aborts; the Mac app has the same in the clone's menu. All three show a clone stopped on conflicts.
 
 ## Shell integration
 

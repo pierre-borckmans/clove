@@ -96,6 +96,9 @@ pub struct CloneInfo {
     /// nothing does.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub removing_when_free: bool,
+    /// A `clove update` (or a rebase or merge) stopped on conflicts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation: Option<crate::update::Strategy>,
 }
 
 pub struct Clove {

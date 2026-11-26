@@ -39,6 +39,9 @@ max_behind = 100   # commits
 
 [prune]
 auto = false       # the service removes merged, clean, idle clones; `clove log` lists them
+
+[update]
+strategy = "rebase"  # how `clove update` brings a clone onto the base: rebase or merge
 ```
 
 - Steps run inside the repo's environment (`direnv exec` or `mise exec`).

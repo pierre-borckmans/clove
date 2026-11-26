@@ -68,6 +68,24 @@ pub enum OpRequest {
     Deinit {
         root: PathBuf,
     },
+    /// `clove update`: onto the latest base, or finish or undo a stopped one.
+    Update {
+        root: PathBuf,
+        name: String,
+        #[serde(default)]
+        step: UpdateStep,
+        #[serde(default)]
+        autostash: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateStep {
+    #[default]
+    Run,
+    Continue,
+    Abort,
 }
 
 #[derive(Clone, Serialize)]
@@ -234,6 +252,28 @@ pub fn run(op: &OpRequest, r: &dyn clove_core::Reporter) -> anyhow::Result<serde
         OpRequest::Deinit { root } => {
             Clove::open(root)?.deinit(r)?;
             serde_json::Value::Null
+        }
+        OpRequest::Update {
+            root,
+            name,
+            step,
+            autostash,
+        } => {
+            let c = Clove::open(root)?;
+            match step {
+                UpdateStep::Run => {
+                    let opts = clove_core::update::UpdateOptions {
+                        autostash: *autostash,
+                        ..Default::default()
+                    };
+                    serde_json::to_value(c.update(name, &opts, r)?)?
+                }
+                UpdateStep::Continue => serde_json::to_value(c.update_continue(name, r)?)?,
+                UpdateStep::Abort => {
+                    c.update_abort(name)?;
+                    serde_json::Value::Null
+                }
+            }
         }
     })
 }

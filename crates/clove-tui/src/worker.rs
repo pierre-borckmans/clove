@@ -248,6 +248,14 @@ fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Res
             .map(Outcome::Clone)
             .map_err(e),
         Task::Mount { name } => c.mount(&name).map(Outcome::Mounted).map_err(e),
+        Task::Update { name, step } => match step {
+            UpdateStep::Run => c
+                .update(&name, &clove_core::update::UpdateOptions::default(), r)
+                .map(|u| Outcome::Updated(Some(u))),
+            UpdateStep::Continue => c.update_continue(&name, r).map(|u| Outcome::Updated(Some(u))),
+            UpdateStep::Abort => c.update_abort(&name).map(|()| Outcome::Updated(None)),
+        }
+        .map_err(e),
         Task::Unmount { name } => c.unmount(&name, false).map(|_| Outcome::Unmounted).map_err(e),
         Task::Gc { apply } => c.cleanup(apply, r).map(Outcome::Gc).map_err(e),
         Task::Doctor | Task::Service { .. } | Task::Agents { .. } | Task::ShellInstall => {

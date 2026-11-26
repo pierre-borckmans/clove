@@ -1032,6 +1032,7 @@ mod tests {
                     failed_steps: vec![],
                     issue: None,
                     removing_when_free: false,
+                    operation: None,
                 })
             })
             .unwrap();
@@ -1070,6 +1071,7 @@ mod tests {
             failed_steps: vec![],
             issue: None,
             removing_when_free: false,
+            operation: None,
         }
     }
 

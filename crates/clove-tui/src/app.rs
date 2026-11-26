@@ -698,6 +698,53 @@ impl App {
                 }
                 Ok(format!("mounted {name}"))
             }
+            Ok(Outcome::Updated(u)) => {
+                use clove_core::update::Update;
+                let name = job.target().unwrap_or("").to_string();
+                let (kind, s) = match u {
+                    None => (
+                        ToastKind::Ok,
+                        format!("{name}: back where it was before the update"),
+                    ),
+                    Some(Update::UpToDate { base }) => {
+                        (ToastKind::Info, format!("{name} is up to date with {base}"))
+                    }
+                    Some(Update::Updated {
+                        base,
+                        commits,
+                        hint,
+                        failed_steps,
+                        ..
+                    }) => {
+                        let mut s = format!("{name} is on {base}");
+                        if let Some(n) = commits {
+                            s.push_str(&format!(" ({n} new commit{})", if n == 1 { "" } else { "s" }));
+                        }
+                        if !failed_steps.is_empty() {
+                            s.push_str(&format!("; setup failed: {}", failed_steps.join(", ")));
+                        }
+                        if let Some(h) = hint {
+                            s.push_str(&format!("; {h}"));
+                        }
+                        let kind = if failed_steps.is_empty() {
+                            ToastKind::Ok
+                        } else {
+                            ToastKind::Warn
+                        };
+                        (kind, s)
+                    }
+                    Some(Update::Conflict { strategy, files, .. }) => (
+                        ToastKind::Warn,
+                        format!(
+                            "{name}: {} stopped on conflicts in {}; fix them and git add them, then U continues, X aborts",
+                            strategy.word(),
+                            files.join(", ")
+                        ),
+                    ),
+                };
+                toasts.push((kind, s.clone()));
+                Ok(s)
+            }
             Ok(Outcome::Unmounted) => {
                 let s = format!("unmounted {}", job.target().unwrap_or(""));
                 toasts.push((ToastKind::Ok, s.clone()));
@@ -1075,6 +1122,8 @@ impl App {
             KeyCode::Char('d') | KeyCode::Delete => self.open_remove(),
             KeyCode::Char('m') => return self.mount_selected(After::Nothing),
             KeyCode::Char('u') => return self.unmount_selected(),
+            KeyCode::Char('U') => return self.update_selected(false),
+            KeyCode::Char('X') => return self.update_selected(true),
             KeyCode::Char('r') => return self.refresh(),
             KeyCode::Char('i') => return self.init(),
             KeyCode::Char('A') | KeyCode::Char('+') => return self.open_add_repo(),
@@ -1316,6 +1365,34 @@ impl App {
             return vec![];
         }
         self.spawn(Task::Mount { name: c.name }, after)
+    }
+
+    /// `U` updates the clone onto the latest base, or finishes an update
+    /// stopped on conflicts; `X` undoes a stopped one.
+    fn update_selected(&mut self, abort: bool) -> Vec<Effect> {
+        if self.selected_worktree().is_some() {
+            self.toast(
+                ToastKind::Info,
+                "update works on clones; c makes this worktree one",
+            );
+            return vec![];
+        }
+        let Some(c) = self.selected_clone().cloned() else {
+            return vec![];
+        };
+        if self.busy(&c.name).is_some() {
+            return vec![];
+        }
+        let step = match (abort, c.operation.is_some()) {
+            (true, true) => UpdateStep::Abort,
+            (true, false) => {
+                self.toast(ToastKind::Info, format!("{} has no update to abort", c.name));
+                return vec![];
+            }
+            (false, true) => UpdateStep::Continue,
+            (false, false) => UpdateStep::Run,
+        };
+        self.spawn(Task::Update { name: c.name, step }, After::Nothing)
     }
 
     fn unmount_selected(&mut self) -> Vec<Effect> {
@@ -2140,6 +2217,7 @@ fn job_title(t: &Task) -> String {
         Task::Doctor => "doctor".into(),
         Task::Service { .. } => "service".into(),
         Task::Agents { .. } => "agents".into(),
+        Task::Update { name, .. } => format!("update {name}"),
         Task::ShellInstall => "shell integration".into(),
     }
 }
