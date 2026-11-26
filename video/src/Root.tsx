@@ -61,13 +61,44 @@ const total = lengths.reduce((a, l) => a + l.frames, 0) - XFADE * (lengths.lengt
 const FADE_IN = 18;
 const FADE_OUT = 36;
 
-function Intro() {
+/** Where the voice speaks, in frames: [start, end) per scene. */
+const speech: [number, number][] = (() => {
+  let start = 0;
+  return lengths.map(({ id, frames }) => {
+    const d = (durations.durations as Record<string, number>)[id] ?? 3;
+    const s = start + LEAD;
+    start += frames - XFADE;
+    return [s, s + Math.round(d * 30)] as [number, number];
+  });
+})();
+
+/** Music volume: low under the voice, up in the gaps, faded in and out. */
+const MUSIC_UP = 0.16;
+const MUSIC_UNDER = 0.055;
+const DUCK = 9;
+function musicVolume(f: number): number {
+  let duck = 0;
+  for (const [a, b] of speech) {
+    if (f >= a && f < b) {
+      duck = 1;
+      break;
+    }
+    const gap = f < a ? a - f : f - b + 1;
+    duck = Math.max(duck, 1 - gap / DUCK);
+  }
+  const v = MUSIC_UP + (MUSIC_UNDER - MUSIC_UP) * Math.max(0, duck);
+  const edge = interpolate(f, [0, 20, total - 50, total - 1], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  return v * edge;
+}
+
+function Intro({ music }: { music?: string }) {
   const frame = useCurrentFrame();
   const edge = interpolate(frame, [0, FADE_IN, total - FADE_OUT, total - 1], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   return (
     <AbsoluteFill style={{ background: "#000" }}>
     <AbsoluteFill style={{ opacity: edge }}>
       <Backdrop />
+      {music && <Audio src={staticFile(`music/${music}.mp3`)} volume={musicVolume} />}
       <TransitionSeries>
         {lengths.flatMap(({ id, frames }, i) => {
           const S = SCENES[id];
@@ -92,5 +123,13 @@ function Intro() {
 }
 
 export function Root() {
-  return <Composition id="Intro" component={Intro} durationInFrames={total} fps={FPS} width={1920} height={1080} />;
+  const common = { component: Intro, durationInFrames: total, fps: FPS, width: 1920, height: 1080 } as const;
+  return (
+    <>
+      <Composition id="Intro" {...common} defaultProps={{ music: "warm" }} />
+      <Composition id="Intro-piano" {...common} defaultProps={{ music: "piano" }} />
+      <Composition id="Intro-tech" {...common} defaultProps={{ music: "tech" }} />
+      <Composition id="Intro-silent" {...common} defaultProps={{ music: "" }} />
+    </>
+  );
 }
