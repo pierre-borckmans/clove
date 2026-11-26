@@ -1,23 +1,35 @@
 [
   {
+    "id": "intro",
+    "say": "So. You've got a few clankers running, and you're tokenmaxxing like everyone else."
+  },
+  {
+    "id": "parallel",
+    "say": "To get anything done, they need to work in parallel, each on its own branch."
+  },
+  {
     "id": "worktree",
-    "say": "You start a new task, and git gives you a fresh worktree in a second."
+    "say": "Git has you covered: a fresh worktree, in about a second."
   },
   {
     "id": "empty",
     "say": "But it starts empty. No dependencies, no dev shell, and none of your local files."
   },
   {
-    "id": "cost",
-    "say": "On a big monorepo, getting it ready takes over a minute and gigabytes of disk. And it happens every single time."
+    "id": "hacks",
+    "say": "So your agent improvises. It reinstalls everything in every worktree. Or it gives up: it can't lint here, can't regenerate the protos here, so it reaches back into your main checkout and links things across."
   },
   {
-    "id": "agents",
-    "say": "Now run five coding agents side by side. That is five minutes of waiting before anyone writes a line."
+    "id": "again",
+    "say": "And the next agent rediscovers all of it, from scratch, every single time."
+  },
+  {
+    "id": "cost",
+    "say": "On a big monorepo, that's over a minute and gigabytes of disk, per worktree."
   },
   {
     "id": "logo",
-    "say": "This is clove."
+    "say": "There's a better way. This is clove."
   },
   {
     "id": "golden",

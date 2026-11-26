@@ -1,6 +1,6 @@
 import { loadFont as loadMono } from "@remotion/google-fonts/JetBrainsMono";
 import { loadFont as loadSerif } from "@remotion/google-fonts/Newsreader";
-import type { CSSProperties, ReactNode } from "react";
+import { createContext, useContext, type CSSProperties, type ReactNode } from "react";
 import { AbsoluteFill, Easing, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 
 export const mono = loadMono("normal", { weights: ["400", "500", "600"] }).fontFamily;
@@ -24,6 +24,11 @@ export const c = {
 import words from "./words.json";
 
 export const sec = (s: number) => Math.round(s * 30);
+
+/** The current scene's length in frames. useVideoConfig() gives the whole
+ * video's length inside a TransitionSeries, so Root provides each scene's. */
+export const SceneLength = createContext(300);
+export const useSceneLength = () => useContext(SceneLength);
 
 /** Frames into a scene before its voice starts (Root uses the same). */
 export const LEAD = 10;
@@ -97,7 +102,7 @@ export function Backdrop() {
 /** A scene's stage: transparent over the backdrop, with a slow camera push. */
 export function Stage({ children, push = 0.035, style }: { children: ReactNode; push?: number; style?: CSSProperties }) {
   const frame = useCurrentFrame();
-  const { durationInFrames } = useVideoConfig();
+  const durationInFrames = useSceneLength();
   const s = 1 + push * (frame / durationInFrames);
   return (
     <AbsoluteFill

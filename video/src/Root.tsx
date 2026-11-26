@@ -3,18 +3,21 @@ import { linearTiming, TransitionSeries } from "@remotion/transitions";
 import { AbsoluteFill, Audio, Composition, Sequence, staticFile } from "remotion";
 import durations from "./durations.json";
 import script from "./script.json";
-import { Agents, Cost, Empty, Fast, Features, Golden, Internals, Logo, Outro, Steps, Surfaces, Worktree } from "./scenes";
-import { Backdrop, LEAD } from "./ui";
+import { Again, Cost, Empty, Fast, Features, Golden, Hacks, Internals, Intro as IntroScene, Logo, Outro, Parallel, Steps, Surfaces, Worktree } from "./scenes";
+import { Backdrop, LEAD, SceneLength } from "./ui";
 
 const FPS = 30;
 /** Frames two scenes overlap while one fades into the next. */
 const XFADE = 14;
 /** Breathing room after each line, in seconds, where the visual needs it. */
 const TAIL: Record<string, number> = {
-  worktree: 1.6,
+  intro: 1.4,
+  parallel: 1.4,
+  hacks: 1.8,
+  again: 1.6,
+  worktree: 1.4,
   empty: 1.4,
   cost: 2.4,
-  agents: 2.0,
   logo: 1.8,
   golden: 1.8,
   internals: 2.2,
@@ -25,10 +28,13 @@ const TAIL: Record<string, number> = {
   outro: 3.4,
 };
 const SCENES: Record<string, () => React.JSX.Element> = {
+  intro: IntroScene,
+  parallel: Parallel,
+  hacks: Hacks,
+  again: Again,
   worktree: Worktree,
   empty: Empty,
   cost: Cost,
-  agents: Agents,
   logo: Logo,
   golden: Golden,
   internals: Internals,
@@ -54,7 +60,9 @@ function Intro() {
           const S = SCENES[id];
           const scene = (
             <TransitionSeries.Sequence key={id} durationInFrames={frames} name={id}>
-              <S />
+              <SceneLength.Provider value={frames}>
+                <S />
+              </SceneLength.Provider>
               <Sequence from={LEAD} durationInFrames={frames - LEAD} layout="none">
                 <Audio src={staticFile(`vo/${id}.wav`)} />
               </Sequence>

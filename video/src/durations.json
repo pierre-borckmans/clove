@@ -1,17 +1,20 @@
 {
   "durations": {
-    "worktree": 4.195,
-    "empty": 5.369,
-    "cost": 6.24,
-    "agents": 5.66,
-    "logo": 1.027,
-    "golden": 8.946,
-    "internals": 15.854,
-    "fast": 6.136,
-    "steps": 3.256,
-    "surfaces": 6.682,
-    "features": 8.609,
-    "outro": 2.897
+    "intro": 4.485,
+    "parallel": 3.907,
+    "worktree": 3.489,
+    "empty": 5.672,
+    "hacks": 14.67,
+    "again": 4.047,
+    "cost": 4.499,
+    "logo": 2.373,
+    "golden": 8.679,
+    "internals": 14.82,
+    "fast": 5.974,
+    "steps": 3.547,
+    "surfaces": 7.018,
+    "features": 8.736,
+    "outro": 3.431
   },
   "voice": "elevenlabs:Eric:eleven_multilingual_v2"
 }

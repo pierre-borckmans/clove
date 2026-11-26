@@ -10,9 +10,139 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-import { Bar, c, cue, Glass, Kicker, Mark, mono, Out, sec, serif, Stage, Terminal, Typed, useIn, useRamp, Words } from "./ui";
+import { Bar, c, cue, Glass, Kicker, Mark, mono, Out, sec, serif, Stage, Terminal, Typed, useIn, useRamp, useSceneLength, Words } from "./ui";
 
 const has = (name: string) => getStaticFiles().some((f) => f.name === name);
+
+/* ---------------------------------------------------------------- opening */
+
+const SESSIONS: [string, string, number, number][] = [
+  ["claude", "fix/race", 200, 300],
+  ["codex", "agent/parser", 1390, 280],
+  ["claude", "feat/login", 330, 660],
+  ["cursor", "agent/docs", 1280, 640],
+  ["claude", "pr/4053", 795, 450],
+];
+
+function Session({ tool, branch, x, y, at }: { tool: string; branch: string; x: number; y: number; at: number }) {
+  const frame = useCurrentFrame();
+  const p = useIn(at, 12);
+  const bob = Math.sin((frame + at) / 18) * 4;
+  const spin = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[Math.floor(frame / 3 + at) % 10];
+  return (
+    <Glass
+      style={{
+        position: "absolute",
+        left: x,
+        top: y + bob,
+        width: 330,
+        padding: "18px 22px",
+        fontFamily: mono,
+        opacity: p,
+        transform: `scale(${0.7 + 0.3 * p})`,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 20 }}>
+        <span style={{ color: c.bottle }}>{tool}</span>
+        <span style={{ color: c.peel }}>{spin}</span>
+      </div>
+      <div style={{ fontSize: 22, marginTop: 8 }}>{branch}</div>
+      <div style={{ fontSize: 16, color: c.dim, marginTop: 6 }}>thinking…</div>
+    </Glass>
+  );
+}
+
+/** 1. So, you're running agents. */
+export function Intro() {
+  const frame = useCurrentFrame();
+  const t0 = cue("intro", "tokenmaxxing", 0, -4);
+  const tokens = frame < t0 ? 0 : Math.floor(Math.pow(frame - t0, 2.6) * 37 + (frame - t0) * 9113);
+  const tp = useIn(t0, 18);
+  return (
+    <Stage push={0.03}>
+      <div style={{ position: "absolute", top: 120, left: 0, right: 0, display: "flex", justifyContent: "center" }}>
+        <Words text="So, you've got a few clankers running." size={70} delay={4} accent={["clankers"]} />
+      </div>
+      {SESSIONS.map(([tool, branch, x, y], i) => (
+        <Session key={branch} tool={tool} branch={branch} x={x} y={y} at={cue("intro", "clankers", 0, -6) + i * 5} />
+      ))}
+      <div
+        style={{
+          position: "absolute",
+          bottom: 110,
+          left: 0,
+          right: 0,
+          textAlign: "center",
+          opacity: tp,
+          transform: `translateY(${(1 - tp) * 20}px)`,
+        }}
+      >
+        <span style={{ fontFamily: mono, fontSize: 64, color: c.peel, letterSpacing: -1 }}>{tokens.toLocaleString("en-US")}</span>
+        <span style={{ fontFamily: mono, fontSize: 28, color: c.muted, marginLeft: 18 }}>tokens</span>
+      </div>
+    </Stage>
+  );
+}
+
+/** 2. ...in parallel, each on its own branch. */
+export function Parallel() {
+  const frame = useCurrentFrame();
+  const fork = cue("parallel", "parallel", 0, -6);
+  const named = cue("parallel", "branch", 0, -4);
+  const main = useRamp(4, fork);
+  const branches: [string, string, number, number][] = [
+    ["feat/login", "claude", 420, 330],
+    ["fix/race", "codex", 640, 760],
+    ["agent/parser", "claude", 860, 300],
+    ["agent/docs", "cursor", 1080, 780],
+  ];
+  return (
+    <Stage push={0.025}>
+      <div style={{ position: "absolute", top: 110, left: 0, right: 0, display: "flex", justifyContent: "center" }}>
+        <Words text="In parallel, each on its own branch." size={64} delay={cue("parallel", "need", 0, -6)} accent={["parallel,"]} />
+      </div>
+      <svg width={1920} height={1080} style={{ position: "absolute", inset: 0 }}>
+        <line x1={200} y1={540} x2={200 + 1520 * main} y2={540} stroke={c.ink} strokeOpacity={0.5} strokeWidth={4} strokeLinecap="round" />
+        {branches.map(([, , x, y], i) => {
+          const d = interpolate(frame, [fork + i * 5, fork + i * 5 + 16], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+          const path = `M ${x} 540 C ${x + 120} 540, ${x + 80} ${y}, ${x + 260} ${y} L ${x + 620} ${y}`;
+          return (
+            <g key={i}>
+              <path d={path} fill="none" stroke={c.bottle} strokeWidth={3} strokeDasharray={900} strokeDashoffset={900 * (1 - d)} strokeLinecap="round" />
+              <circle cx={x} cy={540} r={9} fill={c.paper} stroke={c.ink} strokeWidth={3} opacity={d > 0 ? 1 : 0} />
+            </g>
+          );
+        })}
+        <text x={180} y={590} fill={c.muted} fontFamily={mono} fontSize={22} opacity={main}>
+          main
+        </text>
+      </svg>
+      {branches.map(([name, tool, x, y], i) => {
+        const at = named + i * 4;
+        const p = interpolate(frame, [at, at + 10], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+        return (
+          <div
+            key={name}
+            style={{
+              position: "absolute",
+              left: x + 290,
+              top: y - (y < 540 ? 58 : -18),
+              fontFamily: mono,
+              fontSize: 22,
+              opacity: p,
+              display: "flex",
+              gap: 12,
+              alignItems: "center",
+            }}
+          >
+            <span style={{ color: c.ink }}>{name}</span>
+            <span style={{ color: c.bottle, fontSize: 18, padding: "3px 10px", borderRadius: 999, border: `1px solid ${c.bottle}55` }}>{tool}</span>
+          </div>
+        );
+      })}
+    </Stage>
+  );
+}
 
 /* ---------------------------------------------------------------- problem */
 
@@ -107,7 +237,7 @@ function Ring({ value, size = 360, stroke = 14, color = c.peel }: { value: numbe
 
 /** 3. Getting ready: over a minute, gigabytes, every time. */
 export function Cost() {
-  const { durationInFrames } = useVideoConfig();
+  const durationInFrames = useSceneLength();
   const k = useRamp(10, durationInFrames - 34, Easing.inOut(Easing.quad));
   const t = k * 72;
   const rows: [string, number, number][] = [
@@ -158,45 +288,94 @@ export function Cost() {
   );
 }
 
-function AgentCard({ name, i }: { name: string; i: number }) {
+/** One line of an agent's transcript, tagged with what it really is. */
+function Said({ at, kind, text, tag }: { at: number; kind: "say" | "run" | "err"; text: string; tag?: [string, string] }) {
+  const frame = useCurrentFrame();
+  if (frame < at) return null;
+  const p = interpolate(frame, [at, at + 8], [0, 1], { extrapolateRight: "clamp" });
+  const tp = interpolate(frame, [at + 8, at + 16], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const mark = kind === "say" ? <span style={{ color: c.ink }}>●</span> : kind === "run" ? <span style={{ color: c.bottle }}>❯</span> : <span style={{ color: c.red }}>✗</span>;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 16, opacity: p, transform: `translateY(${(1 - p) * 10}px)`, marginBottom: 14 }}>
+      <span style={{ width: 22 }}>{mark}</span>
+      <span style={{ flex: 1, color: kind === "say" ? c.ink : kind === "err" ? c.red : c.muted, whiteSpace: "pre" }}>{text}</span>
+      {tag && (
+        <span
+          style={{
+            fontSize: 16,
+            letterSpacing: 2,
+            color: tag[1],
+            padding: "4px 12px",
+            borderRadius: 999,
+            border: `1px solid ${tag[1]}66`,
+            background: `${tag[1]}14`,
+            opacity: tp,
+            transform: `scale(${0.8 + 0.2 * tp})`,
+          }}
+        >
+          {tag[0]}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** 5. The agent improvises: reinstalls, gives up, or hacks across checkouts. */
+export function Hacks() {
+  const k = (w: string, n = 0, o = -4) => cue("hacks", w, n, o);
+  return (
+    <Stage push={0.02}>
+      <div style={{ position: "absolute", top: 100, left: 220 }}>
+        <Kicker delay={2} color={c.peel}>
+          So your agent improvises
+        </Kicker>
+      </div>
+      <Terminal title="claude · feat/login" width={1340} glow={c.peel} style={{ marginTop: 50 }}>
+        <div style={{ fontSize: 24 }}>
+          <Said at={k("improvises", 0, -10)} kind="say" text="This worktree has no dependencies. Setting it up first." />
+          <Said at={k("reinstalls")} kind="run" text="pnpm install                                  31s" tag={["REINSTALL", c.peel]} />
+          <Said at={k("everything")} kind="run" text="direnv allow && nix develop                   41s" tag={["REINSTALL", c.peel]} />
+          <Said at={k("lint")} kind="err" text="can't run lint here: eslint isn't installed" tag={["GAVE UP", c.red]} />
+          <Said at={k("regenerate")} kind="err" text="can't regenerate the protos here: buf not on PATH" tag={["GAVE UP", c.red]} />
+          <Said at={k("reaches")} kind="run" text="cd ../mono && make proto && cp -r gen ../feat-login/" tag={["HACK", c.red]} />
+          <Said at={k("links")} kind="run" text="ln -s ../mono/node_modules node_modules" tag={["HACK", c.red]} />
+        </div>
+      </Terminal>
+    </Stage>
+  );
+}
+
+function RediscoverCard({ name, i }: { name: string; i: number }) {
   const frame = useCurrentFrame();
   const p = useIn(i * 4, 16);
-  const waited = Math.min(72, Math.max(0, Math.floor((frame - i * 4) / 1.3)));
+  const steps = ["pnpm install", "nix develop", "make proto", "ln -s ../mono/…"];
+  const step = steps[Math.floor((frame + i * 11) / 22) % steps.length];
   const spin = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[Math.floor(frame / 3 + i) % 10];
   return (
-    <Glass style={{ width: 300, padding: "26px 26px 22px", fontFamily: mono, opacity: p, transform: `translateY(${(1 - p) * 30}px)` }}>
+    <Glass style={{ width: 300, padding: "24px 26px", fontFamily: mono, opacity: p, transform: `translateY(${(1 - p) * 30}px)` }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 22 }}>
         <span style={{ width: 9, height: 9, borderRadius: 5, background: c.peel, boxShadow: `0 0 10px ${c.peel}` }} />
         {name}
       </div>
-      <div style={{ fontSize: 18, color: c.peel, marginTop: 18 }}>
-        {spin} setting up · {waited}s
-      </div>
-      <div style={{ marginTop: 14 }}>
-        <Bar value={waited / 72} width={248} height={6} color={c.peel} />
+      <div style={{ fontSize: 18, color: c.peel, marginTop: 16 }}>
+        {spin} {step}
       </div>
     </Glass>
   );
 }
 
-/** 4. Agents multiply it. */
-export function Agents() {
+/** 6. ...and the next agent does it all again. */
+export function Again() {
   const names = ["agent/parser", "agent/cache", "fix/race", "agent/docs", "agent/tests"];
-  const total = useRamp(cue("agents", "five", 1, -6), cue("agents", "line"));
   return (
     <Stage>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 70 }}>
-        <div style={{ display: "flex", gap: 26 }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 64 }}>
+        <div style={{ display: "flex", gap: 24 }}>
           {names.map((n, i) => (
-            <AgentCard key={n} name={n} i={i} />
+            <RediscoverCard key={n} name={n} i={i} />
           ))}
         </div>
-        <div style={{ textAlign: "center", opacity: total }}>
-          <div style={{ fontFamily: serif, fontSize: 96, letterSpacing: -3 }}>
-            {Math.round(total * 6)} <span style={{ color: c.muted }}>minutes</span>
-          </div>
-          <div style={{ fontFamily: mono, fontSize: 22, color: c.dim, marginTop: 6 }}>of waiting, before anyone writes a line</div>
-        </div>
+        <Words text="From scratch, every single time." size={72} delay={cue("again", "scratch", 0, -8)} accent={["every", "single", "time."]} />
       </div>
     </Stage>
   );
@@ -204,10 +383,13 @@ export function Agents() {
 
 /* --------------------------------------------------------------- solution */
 
-/** 5. The mark. */
+/** 8. There's a better way: the mark. */
 export function Logo() {
-  const word = useIn(16, 200);
-  const glow = useRamp(10, 40);
+  const frame = useCurrentFrame();
+  const at = cue("logo", "this", 0, -6);
+  const word = useIn(at + 14, 200);
+  const glow = useRamp(at + 8, at + 38);
+  const lead = useIn(4, 200) * interpolate(frame, [at - 8, at], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   return (
     <Stage push={0.06}>
       <div
@@ -220,8 +402,11 @@ export function Logo() {
           opacity: glow,
         }}
       />
-      <div style={{ display: "flex", alignItems: "center", gap: 40 }}>
-        <Mark size={260} delay={2} />
+      <div style={{ position: "absolute", opacity: lead, transform: `translateY(${(1 - lead) * 16}px)` }}>
+        <Words text="There's a better way." size={84} delay={4} accent={["better"]} />
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 40, opacity: frame >= at ? 1 : 0 }}>
+        <Mark size={260} delay={at} />
         <div
           style={{
             fontFamily: serif,
