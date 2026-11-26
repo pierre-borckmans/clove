@@ -419,35 +419,33 @@ export function Empty() {
   );
 }
 
-function Ring({ value, size = 360, stroke = 14, color = c.peel }: { value: number; size?: number; stroke?: number; color?: string }) {
-  const r = (size - stroke) / 2;
-  const len = 2 * Math.PI * r;
+
+/** 3. Getting ready: over a minute, gigabytes, every time. */
+/** A glass tile with a small label, as on clove.fast's cost section. */
+function GaugeTile({ label, caption, captionColor, children }: { label: string; caption: string; captionColor: string; children: React.ReactNode }) {
   return (
-    <svg width={size} height={size} style={{ position: "absolute", inset: 0, transform: "rotate(-90deg)" }}>
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(233,238,232,0.07)" strokeWidth={stroke} />
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={r}
-        fill="none"
-        stroke={color}
-        strokeWidth={stroke}
-        strokeLinecap="round"
-        strokeDasharray={len}
-        strokeDashoffset={len * (1 - value)}
-        style={{ filter: `drop-shadow(0 0 12px ${color}88)` }}
-      />
-    </svg>
+    <Glass style={{ width: 250, padding: "18px 18px 22px", display: "flex", flexDirection: "column", alignItems: "center" }}>
+      <div style={{ alignSelf: "flex-start", fontFamily: mono, fontSize: 14, letterSpacing: 4, color: c.muted, marginBottom: 14 }}>{label}</div>
+      {children}
+      <div style={{ fontFamily: mono, fontSize: 17, color: captionColor, marginTop: 14, whiteSpace: "nowrap" }}>{caption}</div>
+    </Glass>
   );
 }
 
-/** 3. Getting ready: over a minute, gigabytes, every time. */
+/** A circle arc from 12 o'clock, `from` to `to` in turns. */
+function Arc({ r, from, to, color, width }: { r: number; from: number; to: number; color: string; width: number }) {
+  const len = Math.max(0, to - from);
+  if (len <= 0) return null;
+  return (
+    <circle r={r} fill="none" stroke={color} strokeWidth={width} pathLength={1} strokeDasharray={`${len} ${1 - len}`} strokeDashoffset={-from} transform="rotate(-90)" />
+  );
+}
+
+/** 4. Over a minute and gigabytes, per worktree: time, disk, fan. */
 export function Cost() {
   const frame = useCurrentFrame();
   const durationInFrames = useSceneLength();
   const fanAt = cue("cost", "fan", 0, -6);
-  const fan = useIn(fanAt, 14);
-  const rpm = Math.round(interpolate(frame, [fanAt, fanAt + 30], [2400, 6800], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) + Math.sin(frame * 1.7) * 60);
   const k = useRamp(10, durationInFrames - 34, Easing.inOut(Easing.quad));
   const t = k * 72;
   const rows: [string, number, number][] = [
@@ -455,6 +453,16 @@ export function Cost() {
     ["dependencies · pnpm, uv, cargo", 41, 71],
     ["local files · .env", 71, 72],
   ];
+  // Fan: idles, then spins up on "fan". The angle is the running sum of the
+  // speed; capped well under a blade's spacing per frame, so it never strobes.
+  const speed = (f: number) => interpolate(f, [fanAt, fanAt + 24], [3, 21], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  let angle = 0;
+  for (let f = 0; f < frame; f++) angle += speed(f);
+  const rpm = Math.round(interpolate(frame, [fanAt, fanAt + 24], [1200, 6800], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) + (frame > fanAt ? Math.sin(frame * 1.7) * 60 : 0));
+  const hot = frame >= fanAt;
+  const shake = hot ? Math.sin(frame * 2.3) * 1.2 : 0;
+  const R = 62;
+  const free = 4.5 - k * 3.1;
   return (
     <Stage>
       <div style={{ position: "absolute", top: 130, left: 230 }}>
@@ -462,8 +470,8 @@ export function Cost() {
           Every new worktree
         </Kicker>
       </div>
-      <div style={{ display: "flex", gap: 130, alignItems: "center", marginTop: 40 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 40, fontFamily: mono, fontSize: 25 }}>
+      <div style={{ display: "flex", gap: 90, alignItems: "center", marginTop: 40 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 40, fontFamily: mono, fontSize: 22 }}>
           {rows.map(([label, from, to]) => {
             const v = (t - from) / (to - from);
             const active = v > 0 && v < 1;
@@ -473,28 +481,52 @@ export function Cost() {
                   <span>{label}</span>
                   <span style={{ color: c.dim }}>{Math.round(Math.max(0, Math.min(t, to) - from))}s</span>
                 </div>
-                <Bar value={v} width={660} color={v >= 1 ? c.dim : c.peel} />
+                <Bar value={v} width={600} color={v >= 1 ? c.dim : c.peel} />
               </div>
             );
           })}
         </div>
-        <div
-          style={{
-            position: "relative",
-            width: 360,
-            height: 360,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexDirection: "column",
-          }}
-        >
-          <Ring value={k} />
-          <div style={{ fontFamily: serif, fontSize: 132, letterSpacing: -4, lineHeight: 1 }}>{Math.round(t)}s</div>
-          <div style={{ fontFamily: mono, fontSize: 28, color: c.peel, marginTop: 12 }}>+{(k * 3.1).toFixed(1)} GB</div>
-          <div style={{ position: "absolute", top: 400, width: 400, textAlign: "center", fontFamily: mono, fontSize: 22, color: c.red, opacity: fan, transform: `translateX(${Math.sin(frame * 2.3) * 1.5 * fan}px)` }}>
-            fan · {rpm.toLocaleString("en-US")} rpm
-          </div>
+        <div style={{ display: "flex", gap: 18 }}>
+          <GaugeTile label="TIME" caption="per worktree" captionColor={c.peel}>
+            <svg width={170} height={170} viewBox="-85 -85 170 170">
+              <circle r={R} fill="none" stroke="rgba(233,238,232,0.07)" strokeWidth={16} />
+              {[0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330].map((d) => (
+                <line key={d} y1={-R + 13} y2={-R + 18} stroke={c.dim} strokeWidth={2} transform={`rotate(${d})`} />
+              ))}
+              <Arc r={R} from={0} to={Math.min(t, 60) / 60} color={c.peel} width={16} />
+              <Arc r={R - 17} from={0} to={Math.max(0, t - 60) / 60} color={c.red} width={7} />
+              <line y2={-R + 22} stroke={c.ink} strokeWidth={3.5} strokeLinecap="round" transform={`rotate(${(t / 60) * 360})`} />
+              <circle r={5} fill={c.ink} />
+              <text y={36} textAnchor="middle" fill={c.ink} fontFamily={mono} fontSize={20}>
+                {Math.round(t)}s
+              </text>
+            </svg>
+          </GaugeTile>
+          <GaugeTile label="DISK" caption={`+${(k * 3.1).toFixed(1)} GB`} captionColor={c.peel}>
+            <svg width={170} height={170} viewBox="-85 -85 170 170">
+              <circle r={R} fill="none" stroke="rgba(233,238,232,0.07)" strokeWidth={16} />
+              <Arc r={R} from={0} to={0.55} color="rgba(233,238,232,0.2)" width={16} />
+              <Arc r={R} from={0.55} to={0.55 + k * 0.31} color={k > 0.8 ? c.red : c.peel} width={16} />
+              <text y={0} textAnchor="middle" fill={free < 2 ? c.red : c.ink} fontFamily={mono} fontSize={21}>
+                {free.toFixed(1)} GB
+              </text>
+              <text y={22} textAnchor="middle" fill={c.muted} fontFamily={mono} fontSize={13}>
+                free
+              </text>
+            </svg>
+          </GaugeTile>
+          <GaugeTile label="FAN" caption={`${rpm.toLocaleString("en-US")} rpm`} captionColor={hot ? c.red : c.muted}>
+            <svg width={170} height={170} viewBox="-70 -70 140 140" style={{ transform: `translateX(${shake}px)`, color: hot ? c.red : c.muted }}>
+              <circle r={64} fill="none" stroke="currentColor" strokeOpacity={0.25} strokeWidth={3} />
+              <circle r={55} fill="none" stroke="currentColor" strokeOpacity={0.12} strokeWidth={1.5} strokeDasharray="2 5" />
+              <g transform={`rotate(${angle})`}>
+                {[0, 51, 103, 154, 206, 257, 309].map((a) => (
+                  <path key={a} transform={`rotate(${a})`} d="M0 -8 C 18 -14, 44 -34, 50 -14 C 54 -1, 28 3, 0 8 Z" fill="currentColor" fillOpacity={0.75} />
+                ))}
+              </g>
+              <circle r={10} fill={c.paper} stroke="currentColor" strokeWidth={3} />
+            </svg>
+          </GaugeTile>
         </div>
       </div>
     </Stage>
