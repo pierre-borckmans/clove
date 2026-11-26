@@ -471,6 +471,10 @@ fn run(cli: Cli) -> Result<()> {
                             }
                             _ => {}
                         }
+                        // Held ones (an open TUI or app) were marked; they go once let go.
+                        if !c.pending_removals().is_empty() {
+                            spawn_pending_waiter(c);
+                        }
                     } else {
                         let _ = c.merge_checks(false);
                     }

@@ -26,10 +26,9 @@ pub fn cmd(dir: &Path) -> Command {
     let mut c = Command::new("git");
     // Preloading stats the index from up to 20 threads; on APFS they contend
     // in the kernel and a status costs ~10x the CPU for the same wall time.
-    c.args(["-c", "core.preloadIndex=false"]);
-    if GOLDEN.load(std::sync::atomic::Ordering::SeqCst) > 0 {
-        c.args(["-c", "core.fsmonitor=false"]);
-    }
+    // A repo with core.fsmonitor on would start a daemon in every clone
+    // clove looks at; it holds the volume open, so the clone can't go.
+    c.args(["-c", "core.preloadIndex=false", "-c", "core.fsmonitor=false"]);
     c.arg("-C").arg(dir);
     c.env("LC_ALL", "C").env("GIT_TERMINAL_PROMPT", "0");
     c

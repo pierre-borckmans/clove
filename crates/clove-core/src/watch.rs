@@ -163,6 +163,14 @@ impl Clove {
         };
         rd.flatten()
             .filter(|e| golden.as_deref() != Some(&*e.file_name().to_string_lossy()))
+            // FSEvents holds a watched folder open; a clone waiting to be
+            // removed once free would wait on its own watchers forever.
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                !name
+                    .strip_prefix("clove-")
+                    .is_some_and(|n| self.clone_dir(n).join(crate::ops::PENDING_FILE).exists())
+            })
             .filter_map(|e| {
                 let g = std::fs::read_to_string(e.path().join("gitdir")).ok()?;
                 Some(Path::new(g.trim()).parent()?.to_path_buf())
@@ -494,6 +502,52 @@ mod tests {
         // A fresh watch can replay the dir's own creation too: at least one.
         let n = r.after(|| std::fs::write(r.state.join("repo.json"), "{}").unwrap());
         assert!(n >= 1, "{n}");
+    }
+
+    /// FSEvents holds watched folders open, so a clone waiting to be removed
+    /// once free must drop out of every watcher, or it never becomes free.
+    #[test]
+    fn a_clone_marked_for_removal_is_not_watched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path().canonicalize().unwrap();
+        let git = |dir: &Path, args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "init.defaultBranch=main",
+                ])
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap()
+                .status
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        let root = base.join("repo");
+        std::fs::create_dir(&root).unwrap();
+        git(&root, &["init", "-q"]);
+        git(&root, &["commit", "-q", "--allow-empty", "-m", "a"]);
+        // Admin dir `clove-feat`, as clove names a clone's.
+        let wt = base.join("clove-feat");
+        git(
+            &root,
+            &["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()],
+        );
+        let mut c = Clove::open(&root).unwrap();
+        // Never the real state folder.
+        c.state = base.join("state");
+        assert_eq!(c.worktree_trees(), std::slice::from_ref(&wt));
+        let marker = c.clone_dir("feat").join(crate::ops::PENDING_FILE);
+        std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        std::fs::write(&marker, "{}").unwrap();
+        assert!(c.worktree_trees().is_empty(), "marked: let go of it");
+        std::fs::remove_file(&marker).unwrap();
+        assert_eq!(c.worktree_trees(), [wt]);
     }
 
     /// Real git against `Clove::watch_targets`: what agents and users actually run.

@@ -155,19 +155,18 @@ impl Clove {
         let now = crate::util::now_unix();
         let mut removed = vec![];
         for m in checks.iter().filter(|m| m.verdict == Verdict::Prune) {
-            let Ok(Some(meta)) = self.clone_meta(&m.clone) else {
+            if !matches!(self.clone_meta(&m.clone), Ok(Some(_))) {
                 continue;
-            };
+            }
             if now.saturating_sub(self.last_activity(&m.clone)) < AUTO_IDLE_SECS {
                 continue;
             }
-            crate::backend::stop_orphan_daemons(&meta.mount, std::time::Duration::from_secs(5));
-            if !crate::backend::users(&meta.mount).is_empty() {
-                continue;
-            }
+            // Something holding it (often a TUI's or the app's watcher, which
+            // lets go once it is marked) defers it to the remove-pending waiter.
             let opts = prune_options(By::AutoPrune, &m.reason);
-            match self.remove(&m.clone, &opts, r) {
-                Ok(()) => removed.push(m.clone.clone()),
+            match self.remove_or_defer(&m.clone, &opts, r) {
+                Ok(crate::ops::Removal::Removed) => removed.push(m.clone.clone()),
+                Ok(crate::ops::Removal::WhenFree(_)) => {}
                 Err(e) => r.event(crate::events::Event::Warn {
                     message: format!("auto-prune kept {}: {e:#}", m.clone),
                 }),

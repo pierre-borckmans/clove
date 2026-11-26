@@ -1215,7 +1215,8 @@ impl Clove {
                 .store()
                 .is_ok_and(|s| s.clone_attached(self, &name, &meta.mount));
             if attached {
-                backend::stop_orphan_daemons(&meta.mount, std::time::Duration::from_secs(5));
+                // fsmonitor too: git restarts it whenever anyone runs git there.
+                stop_daemons(&meta.path, &meta.mount);
                 if !backend::users(&meta.mount).is_empty() {
                     continue;
                 }
