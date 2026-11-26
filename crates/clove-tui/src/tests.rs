@@ -156,6 +156,7 @@ fn config() -> Config {
             ..Default::default()
         }],
         steps_detected: true,
+        nested_installs: 10,
         copy: None,
         refresh: RefreshPolicy {
             auto: true,

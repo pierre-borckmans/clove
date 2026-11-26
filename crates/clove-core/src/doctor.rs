@@ -220,24 +220,64 @@ pub fn repo(c: &Clove) -> Vec<Check> {
         None,
     ));
     if c.config.steps_detected {
-        let nested = crate::detect::nested_projects(&c.root);
-        if nested.len() > crate::detect::MAX_NESTED {
-            let shown: Vec<_> = nested.iter().take(6).map(String::as_str).collect();
-            let more = nested.len().saturating_sub(shown.len());
+        let plan = crate::detect::plan(&c.root, c.config.nested_installs);
+        // Ones the config already warms (an [[add_step]] watching their files) are fine.
+        let covered = |d: &String| {
+            let prefix = format!("{d}/");
+            c.config
+                .steps
+                .iter()
+                .any(|s| s.watch.iter().any(|w| w.starts_with(&prefix)))
+        };
+        let list = |v: &[String]| {
+            let shown: Vec<&str> = v.iter().take(6).map(String::as_str).collect();
+            let more = v.len().saturating_sub(shown.len());
+            let more = if more > 0 {
+                format!(" and {more} more")
+            } else {
+                String::new()
+            };
+            format!("{}{more}", shown.join(", "))
+        };
+        let installs: Vec<String> = plan
+            .skipped_installs
+            .iter()
+            .filter(|d| !covered(d))
+            .cloned()
+            .collect();
+        if !installs.is_empty() {
             out.push(check(
-                "nested projects",
+                "nested installs",
+                Level::Warn,
+                format!(
+                    "{} nested projects have their own lockfile, more than nested_installs ({}), so clones get none of their dependencies: {}",
+                    plan.skipped_installs.len(),
+                    c.config.nested_installs,
+                    list(&installs)
+                ),
+                Some(format!(
+                    "clove config set nested_installs {} (or add [[add_step]] entries for the ones you work on)",
+                    plan.skipped_installs.len()
+                )),
+            ));
+        }
+        let builds: Vec<String> = plan
+            .skipped_builds
+            .iter()
+            .filter(|d| !covered(d))
+            .cloned()
+            .collect();
+        if !builds.is_empty() {
+            out.push(check(
+                "nested builds",
                 Level::Ok,
                 format!(
-                    "{} have their own lockfile and aren't warmed (too many to build by default): {}{}",
-                    nested.len(),
-                    shown.join(", "),
-                    if more > 0 {
-                        format!(" and {more} more")
-                    } else {
-                        String::new()
-                    }
+                    "{} Rust workspaces aren't prebuilt (more than {}): {}",
+                    plan.skipped_builds.len(),
+                    crate::detect::MAX_NESTED_BUILDS,
+                    list(&builds)
                 ),
-                Some("add [[add_step]] entries to .clove.toml for the ones you work on".into()),
+                Some("add [[add_step]] entries for the ones you work on".into()),
             ));
         }
     }

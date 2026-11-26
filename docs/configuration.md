@@ -21,6 +21,15 @@ setup = "make generate"
 watch = ["proto/"]
 ```
 
+**Nested projects** with their own lockfile (a `site/`, a Tauri app, a monorepo's packages kept outside its workspace) are warmed too:
+
+- **Dependency installs** (pnpm, bun, yarn, npm, uv): up to `nested_installs`, 10 by default. Clones share them, and each reruns only when its own lockfile changes. Above the limit none are, rather than an arbitrary few; `clove status` and `clove doctor` name them. Raise the limit, or add steps for the ones you work on. `0` turns nested installs off.
+- **Rust builds** (cargo): up to 3, since compiling is the costly part.
+
+```toml
+nested_installs = 15
+```
+
 **Local-only files** like `.env` or `.envrc.local` never reach a fresh checkout. clove:
 
 - detects the ones git ignores (`**/.env`, `**/.env.*`, `**/.envrc.local`, `**/.dev.vars`)

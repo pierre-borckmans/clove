@@ -42,6 +42,12 @@ are named after the branch, with `/` turned into `-`.
 `clove cd <clone>` only works in an interactive shell with clove's shell
 integration; use `clove path` from scripts and agents.
 
+A clone has the dependencies of the projects clove warms. If a nested
+project (its own lockfile, outside the root workspace) has no
+`node_modules`, `clove status` or `clove doctor` names it; install it in the
+clone as usual (`cd <dir> && pnpm install`) and tell the user it could be
+warmed with `nested_installs` or an `[[add_step]]`.
+
 ## Bring it up to date
 
     clove update [clone]           # fetch the base, rebase onto it, rerun changed setup steps

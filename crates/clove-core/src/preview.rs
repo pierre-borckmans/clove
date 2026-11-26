@@ -2,7 +2,7 @@
 //! anything: for the confirm step of every "add repo" flow.
 
 use crate::config::Exec;
-use crate::detect::{MAX_NESTED, nested_projects, required_tool};
+use crate::detect::required_tool;
 use crate::doctor::{self, Check, Level};
 use crate::git;
 use crate::repo::Clove;
@@ -69,7 +69,7 @@ pub fn preview_of(c: &Clove, machine: Vec<Check>) -> InitPreview {
         })
         .collect();
     let nested = if c.config.steps_detected {
-        nested_projects(&c.root)
+        crate::detect::plan(&c.root, c.config.nested_installs).skipped()
     } else {
         vec![]
     };
@@ -89,7 +89,7 @@ pub fn preview_of(c: &Clove, machine: Vec<Check>) -> InitPreview {
         base: c.config.base.clone(),
         steps,
         steps_detected: c.config.steps_detected,
-        nested_skipped: if nested.len() > MAX_NESTED { nested } else { vec![] },
+        nested_skipped: nested,
         copy: c.resolve_copy(),
         exec: c.config.exec,
         image_size: c.config.image_size.clone(),
@@ -156,8 +156,9 @@ mod tests {
                 fetch_interval: 300,
                 exec: Exec::None,
                 env: Default::default(),
-                steps: crate::detect::steps(&r),
+                steps: crate::detect::steps(&r, 10),
                 steps_detected: true,
+                nested_installs: 10,
                 copy: None,
                 refresh: crate::config::RefreshPolicy {
                     auto: true,

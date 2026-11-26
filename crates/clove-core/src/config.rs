@@ -45,6 +45,9 @@ pub struct FileConfig {
     /// How `clove update` brings a clone up to the base.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub update: Option<UpdateFile>,
+    /// How many nested projects' dependency installs detection warms.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nested_installs: Option<u32>,
     /// Replaces the detected steps.
     #[serde(rename = "step", skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<Step>,
@@ -220,6 +223,14 @@ pub const FIELDS: &[Field] = &[
         "detect steps from repo files when none are configured",
     ),
     field(
+        "nested_installs",
+        "nested installs",
+        "steps",
+        Kind::Int,
+        Is("10"),
+        "nested projects with their own lockfile whose installs are warmed; above it, none are and doctor names them; 0 turns them off",
+    ),
+    field(
         "refresh.auto",
         "auto refresh",
         "freshness",
@@ -367,6 +378,8 @@ pub struct Config {
     pub env: BTreeMap<String, String>,
     pub steps: Vec<Step>,
     pub steps_detected: bool,
+    /// Nested projects detection installs at most.
+    pub nested_installs: usize,
     /// Explicit copy pathspecs, or None to detect env-like ignored files.
     pub copy: Option<Vec<String>>,
     pub refresh: RefreshPolicy,
@@ -480,10 +493,12 @@ impl Config {
         }
 
         let detect_on = pick(&layers, |l| l.detect).unwrap_or(true);
+        let nested_installs =
+            pick(&layers, |l| l.nested_installs).map_or(detect::DEFAULT_NESTED_INSTALLS, |n| n as usize);
         let configured = layers.iter().rev().find(|l| !l.steps.is_empty());
         let (mut steps, steps_detected) = match configured {
             Some(l) => (l.steps.clone(), false),
-            None if detect_on => (detect::steps(repo_root), true),
+            None if detect_on => (detect::steps(repo_root, nested_installs), true),
             None => (vec![], false),
         };
         for l in &layers {
@@ -501,6 +516,7 @@ impl Config {
             env,
             steps,
             steps_detected,
+            nested_installs,
             copy: pick(&layers, |l| l.copy.clone()),
             refresh: RefreshPolicy {
                 auto: pick(&layers, |l| l.refresh.as_ref().and_then(|r| r.auto)).unwrap_or(true),
@@ -664,6 +680,7 @@ mod schema_tests {
                 max_age: Some("1h".into()),
                 max_behind: Some(1),
             }),
+            nested_installs: Some(4),
             prune: Some(PruneFile { auto: Some(true) }),
             update: Some(UpdateFile {
                 strategy: Some(crate::update::Strategy::Merge),

@@ -605,6 +605,7 @@ warm = \"pnpm install\"
             env: Default::default(),
             steps: vec![],
             steps_detected: true,
+            nested_installs: 10,
             copy: None,
             refresh: config::RefreshPolicy {
                 auto: true,

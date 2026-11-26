@@ -2320,6 +2320,32 @@ fn cmd_status(cli: &Cli) -> Result<()> {
         },
         paint(DIM, if s.steps_detected { " (detected)" } else { "" })
     );
+    if s.steps_detected {
+        let plan = clove_core::detect::plan(&c.root, c.config.nested_installs);
+        let covered = |d: &String| {
+            let prefix = format!("{d}/");
+            c.config
+                .steps
+                .iter()
+                .any(|st| st.watch.iter().any(|w| w.starts_with(&prefix)))
+        };
+        let skipped: Vec<String> = plan
+            .skipped_installs
+            .iter()
+            .filter(|d| !covered(d))
+            .cloned()
+            .collect();
+        if !skipped.is_empty() {
+            println!(
+                "  {} {} nested project{} without dependencies in clones: {} {}",
+                paint(YELLOW, "!"),
+                skipped.len(),
+                if skipped.len() == 1 { "" } else { "s" },
+                skipped.join(", "),
+                paint(DIM, "(clove doctor)")
+            );
+        }
+    }
     println!(
         "  clones  {} ({} mounted) in {}",
         s.clones,
