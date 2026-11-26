@@ -9,7 +9,9 @@ The workflow stops if the tag doesn't match the crate version.
 
 ## Signing (macOS)
 
-With these repository secrets set, the release signs the macOS CLI with Developer ID and notarizes it, and builds the Mac app (universal, signed, notarized, stapled `.dmg`), which the tap ships as the `clove-app` cask. Without them, the CLI keeps its ad-hoc signature and the app job is skipped.
+With these repository secrets set, the release signs the macOS CLI with Developer ID and sends it to Apple's notary service, and builds the Mac app (universal, signed, notarized, stapled `.dmg`), which the tap ships as the `clove-app` cask. Without them, the CLI keeps its ad-hoc signature and the app job is skipped.
+
+Apple's queue never holds the release. The CLI and formula go out as soon as the binaries are signed: a bare binary can't carry a stapled ticket, so macOS looks it up online on first run. The `notarized` job then waits for Apple's verdicts and fails if one is a rejection. The `app` job starts after the release, waits for Apple as long as it takes (first submissions from a new team took over an hour), then attaches the `.dmg` to the release and updates the cask.
 
 | Secret | What |
 |---|---|

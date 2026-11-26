@@ -4,9 +4,13 @@ name: release
 # pierre-borckmans/homebrew-tap.
 #
 # With the Apple secrets set (see RELEASING.md), the macOS CLI is signed with
-# Developer ID and notarized, and the Mac app is built, signed, notarized and
-# published as a cask. Without them, the CLI keeps its ad-hoc signature and
-# the app is skipped.
+# Developer ID and sent to Apple's notary service, and the Mac app is built,
+# signed, notarized and published as a cask. Without them, the CLI keeps its
+# ad-hoc signature and the app is skipped.
+#
+# Apple's queue never holds the release: the CLI is published once signed
+# (macOS fetches a bare binary's ticket online), `notarized` waits for the
+# verdicts afterwards, and the app is added to the release when Apple is done.
 on:
   push:
     tags: ["v*"]
@@ -54,7 +58,7 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: scripts/ci/import-cert.sh
-      - name: Sign and notarize
+      - name: Sign and send to Apple
         if: env.SIGN == 'true'
         env:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
@@ -64,9 +68,10 @@ jobs:
           bin="target/${{ matrix.target }}/release/clove"
           codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$bin"
           codesign --verify --strict --verbose=2 "$bin"
-          # A bare binary can't be stapled; Gatekeeper finds the ticket online.
+          # A bare binary can't be stapled; Gatekeeper finds the ticket online,
+          # so the release doesn't wait for the verdict (see `notarized`).
           ditto -c -k "$bin" "$RUNNER_TEMP/clove.zip"
-          scripts/ci/notarize.sh "$RUNNER_TEMP/clove.zip"
+          scripts/ci/notarize.sh submit "$RUNNER_TEMP/clove.zip" > "notary-${{ matrix.target }}.id"
       - name: Package
         shell: bash
         run: |
@@ -78,10 +83,34 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: clove-*.tar.gz*
+          path: |
+            clove-*.tar.gz*
+            notary-*.id
+
+  notarized:
+    # Apple's verdicts on the CLI binaries; red here means a rejection.
+    needs: [signing, release]
+    if: needs.signing.outputs.on == 'true'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Wait for Apple
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          for f in notary-*.id; do
+            echo "== ${f#notary-}"
+            scripts/ci/notarize.sh wait "$(cat "$f")"
+          done
 
   app:
-    needs: signing
+    # After the release, so a slow notarization delays only the app.
+    needs: [signing, release]
     if: needs.signing.outputs.on == 'true'
     runs-on: macos-15
     steps:
@@ -128,15 +157,32 @@ jobs:
           out="$GITHUB_WORKSPACE/clove-app-${GITHUB_REF_NAME}-universal.dmg"
           cp "$dmg" "$out"
           (cd "$GITHUB_WORKSPACE" && shasum -a 256 "$(basename "$out")" > "$(basename "$out").sha256")
-      - uses: actions/upload-artifact@v4
+      - name: Add it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --clobber clove-app-*.dmg clove-app-*.dmg.sha256
+      - uses: actions/checkout@v4
         with:
-          name: app
-          path: clove-app-*.dmg*
+          repository: pierre-borckmans/homebrew-tap
+          ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
+          path: tap
+      - name: Publish the cask
+        run: |
+          sha=$(cut -d' ' -f1 clove-app-*.dmg.sha256)
+          mkdir -p tap/Casks
+          sed -e "s/@VERSION@/${GITHUB_REF_NAME#v}/g" -e "s/@SHA_APP@/$sha/" \
+              packaging/homebrew/clove-app.rb.in > tap/Casks/clove-app.rb
+          ! grep -q "@[A-Z_]*@" tap/Casks/clove-app.rb
+          cd tap
+          git config user.name "clove release"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/clove-app.rb
+          git diff --cached --quiet && exit 0
+          git commit -m "clove-app ${GITHUB_REF_NAME#v}"
+          git pull --rebase -q && git push
 
   release:
-    needs: [build, app]
-    # The app job is skipped without the Apple secrets.
-    if: ${{ !cancelled() && needs.build.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.app.result) }}
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -149,11 +195,10 @@ jobs:
           cat clove-*.sha256 > checksums.txt
           gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" --generate-notes \
-            clove-*.tar.gz $(ls clove-app-*.dmg 2>/dev/null) checksums.txt
+            clove-*.tar.gz checksums.txt
 
   tap:
     needs: release
-    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -178,20 +223,12 @@ jobs:
               -e "s/@SHA_LINUX_INTEL@/$(sha x86_64-unknown-linux-gnu)/" \
               clove/packaging/homebrew/clove.rb.in > tap/Formula/clove.rb
           ! grep -q "@[A-Z_]*@" tap/Formula/clove.rb
-          app=$(grep "clove-app-.*\.dmg\$" checksums.txt | cut -d' ' -f1 || true)
-          if [ -n "$app" ]; then
-            mkdir -p tap/Casks
-            sed -e "s/@VERSION@/${GITHUB_REF_NAME#v}/g" -e "s/@SHA_APP@/$app/" \
-                clove/packaging/homebrew/clove-app.rb.in > tap/Casks/clove-app.rb
-            ! grep -q "@[A-Z_]*@" tap/Casks/clove-app.rb
-          fi
       - name: Push
         working-directory: tap
         run: |
           git config user.name "clove release"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/clove.rb
-          [ -f Casks/clove-app.rb ] && git add Casks/clove-app.rb
           git diff --cached --quiet && exit 0
           git commit -m "clove ${GITHUB_REF_NAME#v}"
-          git push
+          git pull --rebase -q && git push
