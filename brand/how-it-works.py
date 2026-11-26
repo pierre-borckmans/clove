@@ -5,7 +5,7 @@
 """
 from pathlib import Path
 
-W, H = 990, 430
+W, H = 990, 500
 SERIF = "Iowan Old Style, Palatino, Georgia, serif"
 MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
 SANS = "-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
@@ -23,12 +23,14 @@ THEMES = {
     ),
 }
 
+# (title, mono line or None, chips or None, note or None)
 SOURCES = [
-    ("base branch", "origin/main"),
-    ("local files", ".env  .envrc.local"),
-    ("warm steps", "pnpm install  direnv"),
+    ("base branch", "origin/main", None, None),
+    ("local files", ".env  .envrc.local", None, None),
+    ("detected steps", None, ["mise", "direnv", "nix", "pnpm", "bun", "yarn", "npm", "uv"],
+     "+ your own, in .clove.toml"),
 ]
-GOLDEN_ROWS = ["node_modules", "nix + direnv dev shell", "git index, mtimes kept"]
+GOLDEN_ROWS = ["dependencies installed", "dev shells evaluated", "package caches warm", "git index, mtimes kept"]
 CLONES = [
     ("feat/login", "~1s"),
     ("pr/123", "~1s"),
@@ -36,9 +38,40 @@ CLONES = [
 ]
 
 SRC_X, CARD_W, CARD_H = 24, 220, 64
-ROW_Y = [104, 188, 272]
-GX, GY, GW, GH = 334, 96, 280, 240
+GAP = 16
+GX, GY, GW, GH = 334, 88, 280, 318
 CL_X = 746
+CHIP_H, CHIP_GAP = 20, 6
+
+
+def chip_w(label):
+    return 7.2 * len(label) + 16
+
+
+def chip_rows(chips, width):
+    rows, row, used = [], [], 0
+    for c in chips:
+        w = chip_w(c)
+        if row and used + CHIP_GAP + w > width:
+            rows.append(row)
+            row, used = [], 0
+        used += (CHIP_GAP if row else 0) + w
+        row.append(c)
+    if row:
+        rows.append(row)
+    return rows
+
+
+def source_height(src):
+    _, line, chips, note = src
+    h = 40
+    if line:
+        h += 16
+    if chips:
+        h += len(chip_rows(chips, CARD_W - 36)) * (CHIP_H + CHIP_GAP) + 4
+    if note:
+        h += 18
+    return max(h, CARD_H)
 
 
 def text(x, y, s, size, fill, family=SANS, weight=400, anchor="start", italic=False):
@@ -67,12 +100,32 @@ def render(t):
 
     # Sources.
     gy_mid = GY + GH / 2
-    for (title, value), y in zip(SOURCES, ROW_Y):
-        out.append(f'<rect x="{SRC_X}" y="{y}" width="{CARD_W}" height="{CARD_H}" rx="12" '
+    y = GY
+    for src in SOURCES:
+        title, line, chips, note = src
+        h = source_height(src)
+        out.append(f'<rect x="{SRC_X}" y="{y}" width="{CARD_W}" height="{h}" rx="12" '
                    f'fill="{t["card"]}" stroke="{t["card_line"]}"/>')
         out.append(text(SRC_X + 18, y + 26, title, 15, t["ink"], SERIF, 600))
-        out.append(text(SRC_X + 18, y + 47, value, 12.5, t["muted"], MONO))
-        out.append(curve(SRC_X + CARD_W, y + CARD_H / 2, GX, gy_mid + (y - ROW_Y[1]) * 0.35, t["arrow"]))
+        cy = y + 47
+        if line:
+            out.append(text(SRC_X + 18, cy, line, 12.5, t["muted"], MONO))
+        if chips:
+            cy = y + 40
+            for row in chip_rows(chips, CARD_W - 36):
+                cx = SRC_X + 18
+                for c in row:
+                    w = chip_w(c)
+                    out.append(f'<rect x="{cx}" y="{cy}" width="{w}" height="{CHIP_H}" rx="10" fill="{t["chip"]}"/>')
+                    out.append(text(cx + w / 2, cy + 14, c, 11.5, t["chip_ink"], MONO, 600, "middle"))
+                    cx += w + CHIP_GAP
+                cy += CHIP_H + CHIP_GAP
+            cy += 14
+        if note:
+            out.append(text(SRC_X + 18, cy, note, 12, t["muted"], SANS))
+        center = y + h / 2
+        out.append(curve(SRC_X + CARD_W, center, GX, gy_mid + (center - gy_mid) * 0.35, t["arrow"]))
+        y += h + GAP
 
     # Golden image: a stack, the front one carrying the contents.
     for off, op in [(16, 0.45), (8, 0.75)]:
@@ -85,17 +138,19 @@ def render(t):
     out.append(f'<line x1="{GX + 24}" y1="{GY + 86}" x2="{GX + GW - 24}" y2="{GY + 86}" '
                f'stroke="{t["golden_sub"]}" stroke-opacity="0.35"/>')
     for i, row in enumerate(GOLDEN_ROWS):
-        ry = GY + 118 + i * 34
+        ry = GY + 124 + i * 44
         out.append(f'<circle cx="{GX + 30}" cy="{ry - 4.5}" r="4" fill="{t["clove"]}"/>')
         out.append(text(GX + 46, ry, row, 14, t["golden_ink"], MONO))
 
+    clone_ys = [gy_mid - CARD_H / 2 + d for d in (-92, 0, 92)]
+
     # Copy-on-write fan-out.
-    out.append(text((GX + GW + 16 + CL_X) / 2, ROW_Y[0] - 18, "copy-on-write", 12, t["cow"], MONO, 600, "middle"))
-    for y in ROW_Y:
+    out.append(text((GX + GW + 16 + CL_X) / 2, clone_ys[0] - 18, "copy-on-write", 12, t["cow"], MONO, 600, "middle"))
+    for y in clone_ys:
         out.append(curve(GX + GW, gy_mid, CL_X, y + CARD_H / 2, t["cow"], 2))
 
     # Clones: a worktree each, with the clove-gold edge of the mark.
-    for (branch, took), y in zip(CLONES, ROW_Y):
+    for (branch, took), y in zip(CLONES, clone_ys):
         out.append(f'<rect x="{CL_X}" y="{y}" width="{CARD_W}" height="{CARD_H}" rx="12" '
                    f'fill="{t["card"]}" stroke="{t["card_line"]}"/>')
         out.append(f'<rect x="{CL_X}" y="{y + 12}" width="4" height="{CARD_H - 24}" rx="2" fill="{t["clove"]}"/>')
@@ -106,8 +161,8 @@ def render(t):
 
     # Footnotes under each column.
     foot_y = GY + GH + 54
-    out.append(text(SRC_X, foot_y, "the image is a recipe,", 13, t["muted"], SERIF, italic=True))
-    out.append(text(SRC_X, foot_y + 18, "not a snapshot of your checkout", 13, t["muted"], SERIF, italic=True))
+    out.append(text(SRC_X, foot_y, "steps are detected from the repo,", 13, t["muted"], SERIF, italic=True))
+    out.append(text(SRC_X, foot_y + 18, "or listed in .clove.toml", 13, t["muted"], SERIF, italic=True))
     out.append(text(GX, foot_y, "refreshed only when a step's", 13, t["muted"], SERIF, italic=True))
     out.append(text(GX, foot_y + 18, "inputs change on the base", 13, t["muted"], SERIF, italic=True))
     out.append(text(CL_X, foot_y, "regular git worktrees,", 13, t["muted"], SERIF, italic=True))
