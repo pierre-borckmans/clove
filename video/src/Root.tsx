@@ -1,6 +1,6 @@
 import { fade } from "@remotion/transitions/fade";
 import { linearTiming, TransitionSeries } from "@remotion/transitions";
-import { AbsoluteFill, Audio, Composition, Sequence, staticFile } from "remotion";
+import { AbsoluteFill, Audio, Composition, interpolate, Sequence, staticFile, useCurrentFrame } from "remotion";
 import durations from "./durations.json";
 import script from "./script.json";
 import { Again, Clash, Cost, Detect, Empty, Fast, Features, Fresh, Golden, Hacks, Internals, Intro as IntroScene, Logo, Outro, Parallel, Steps, Surfaces, Worktree } from "./scenes";
@@ -57,9 +57,16 @@ const lengths = script.map(({ id }) => {
 });
 const total = lengths.reduce((a, l) => a + l.frames, 0) - XFADE * (lengths.length - 1);
 
+/** Frames of fade from and to black at the very start and end. */
+const FADE_IN = 18;
+const FADE_OUT = 36;
+
 function Intro() {
+  const frame = useCurrentFrame();
+  const edge = interpolate(frame, [0, FADE_IN, total - FADE_OUT, total - 1], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   return (
-    <AbsoluteFill>
+    <AbsoluteFill style={{ background: "#000" }}>
+    <AbsoluteFill style={{ opacity: edge }}>
       <Backdrop />
       <TransitionSeries>
         {lengths.flatMap(({ id, frames }, i) => {
@@ -79,6 +86,7 @@ function Intro() {
             : [<TransitionSeries.Transition key={`${id}-in`} presentation={fade()} timing={linearTiming({ durationInFrames: XFADE })} />, scene];
         })}
       </TransitionSeries>
+    </AbsoluteFill>
     </AbsoluteFill>
   );
 }
