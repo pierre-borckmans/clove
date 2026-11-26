@@ -1,15 +1,16 @@
 {
-  "voice": "chatterbox:default",
   "durations": {
-    "worktree": 1.6853333333333333,
-    "empty": 5.682666666666667,
-    "cost": 6.04,
-    "agents": 2.761458,
-    "logo": 0.702042,
-    "golden": 6.750917,
-    "fast": 4.389292,
-    "steps": 2.511125,
-    "features": 6.325167,
-    "outro": 2.198
-  }
+    "worktree": 4.52,
+    "empty": 6.473,
+    "cost": 6.658,
+    "agents": 5.683,
+    "logo": 1.144,
+    "golden": 8.76,
+    "fast": 6.17,
+    "steps": 3.72,
+    "surfaces": 5.265,
+    "features": 9.015,
+    "outro": 3.547
+  },
+  "voice": "elevenlabs:Eric:eleven_multilingual_v2"
 }
