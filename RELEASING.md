@@ -7,6 +7,8 @@
 
 The workflow stops if the tag doesn't match the crate version.
 
+The `app-linux` job builds the desktop app for Linux (`.deb` and AppImage, x86_64 and aarch64, unsigned) and attaches it to the release. It needs no secrets.
+
 ## Signing (macOS)
 
 With these repository secrets set, the release signs the macOS CLI with Developer ID and sends it to Apple's notary service, and builds the Mac app (universal, signed, notarized, stapled `.dmg`), which the tap ships as the `clove-app` cask. Without them, the CLI keeps its ad-hoc signature and the app job is skipped.
