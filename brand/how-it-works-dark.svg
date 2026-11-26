@@ -41,7 +41,7 @@
 <circle cx="364" cy="251.5" r="4" fill="#e3c95e"/>
 <text x="380" y="256" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="400" fill="#f1f2ec" text-anchor="start">dev shells evaluated</text>
 <circle cx="364" cy="295.5" r="4" fill="#e3c95e"/>
-<text x="380" y="300" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="400" fill="#f1f2ec" text-anchor="start">package + build caches warm</text>
+<text x="380" y="300" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="400" fill="#f1f2ec" text-anchor="start">builds + caches warm</text>
 <circle cx="364" cy="339.5" r="4" fill="#e3c95e"/>
 <text x="380" y="344" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="400" fill="#f1f2ec" text-anchor="start">git index, mtimes kept</text>
 <text x="688.0" y="105.0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="600" fill="#7cc49b" text-anchor="middle">copy-on-write</text>

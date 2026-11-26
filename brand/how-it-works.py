@@ -30,7 +30,7 @@ SOURCES = [
     ("detected steps", None, ["mise", "direnv + nix", "cargo", "uv", "pnpm", "bun", "yarn", "npm"],
      "+ your own, in .clove.toml"),
 ]
-GOLDEN_ROWS = ["dependencies installed", "dev shells evaluated", "package + build caches warm", "git index, mtimes kept"]
+GOLDEN_ROWS = ["dependencies installed", "dev shells evaluated", "builds + caches warm", "git index, mtimes kept"]
 CLONES = [
     ("feat/login", "~1s"),
     ("pr/123", "~1s"),
