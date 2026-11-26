@@ -197,6 +197,7 @@ export type Config = {
   /** Configured copy pathspecs, or null when env-like ignored files are detected. */
   copy: string[] | null;
   refresh: { auto: boolean; max_age_secs: number; max_behind: number };
+  prune: { auto: boolean };
   sources: string[];
 };
 
@@ -266,6 +267,26 @@ export type Cleanup = {
   removed: string[];
   removed_worktrees: string[];
   kept: string[];
+};
+
+/** Whether coding agents know clove (`clove agents`); null when none is installed. */
+export type AgentsState = "installed" | "outdated" | "missing" | null;
+
+/** One removal from `clove log`. */
+export type Removed = {
+  repo: string;
+  root: string;
+  at: number;
+  kind: "clone" | "worktree";
+  name: string;
+  path: string;
+  branch: string | null;
+  head: string | null;
+  by: "hand" | "prune" | "auto-prune" | "claude-hook";
+  reason: string | null;
+  branch_deleted: boolean;
+  /** The command that brings the branch back, when it was deleted. */
+  restore: string | null;
 };
 
 export type ShellStatus = {

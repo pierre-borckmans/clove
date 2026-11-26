@@ -1868,6 +1868,11 @@ fn hints(app: &App) -> Vec<Hint> {
                 SettingsAction::Field(_) => "edit",
                 SettingsAction::Service if app.service == Some(true) => "turn off",
                 SettingsAction::Service => "turn on",
+                SettingsAction::Agents if app.agents == Some(clove_core::agents::State::Installed) => {
+                    "remove"
+                }
+                SettingsAction::Agents if app.agents == Some(clove_core::agents::State::Outdated) => "update",
+                SettingsAction::Agents => "install",
                 SettingsAction::Shell => "install",
             };
             let mut v = vec![("↑↓", "move", Down), ("⏎", what, Enter)];
@@ -2820,6 +2825,20 @@ fn draw_gc(f: &mut Frame, app: &mut App, area: Rect, g: &GcView) {
                 tips.add(lines.len(), 1, t);
                 lines.push(Line::from(vec![Span::styled(icon, st), Span::raw(act)]));
             }
+            if let Some(d) = app.current()
+                && !d.history.is_empty()
+            {
+                lines.push(Line::from(""));
+                lines.push(section("recently removed · clove log"));
+                for e in d.history.iter().take(5) {
+                    let (s, t) = cut(&e.summary(app.now_unix), iw.saturating_sub(2));
+                    tips.add(lines.len(), 1, t);
+                    lines.push(Line::from(vec![
+                        Span::styled("− ", muted()),
+                        Span::styled(s, muted()),
+                    ]));
+                }
+            }
             lines.push(Line::from(""));
             if g.running {
                 lines.push(Line::from(Span::styled(
@@ -3143,6 +3162,28 @@ fn settings_lines(app: &App, iw: usize) -> SettingsLayout {
             ),
         ],
     ));
+    if let Some(state) = app.agents {
+        use clove_core::agents::State;
+        out.rows.push((l.len(), SettingsAction::Agents));
+        l.push(kva(
+            SettingsAction::Agents,
+            "coding agents",
+            match state {
+                State::Installed => vec![
+                    Span::styled("● on   ", fg(SAGE)),
+                    Span::styled("Claude Code and Codex use clove for worktrees", muted()),
+                ],
+                State::Outdated => vec![
+                    Span::styled("◐ old  ", fg(AMBER)),
+                    Span::styled("instructions from an older clove; Enter updates them", muted()),
+                ],
+                State::Missing => vec![
+                    Span::styled("○ off  ", muted()),
+                    Span::styled("agents don't know clove and use git worktree add", muted()),
+                ],
+            },
+        ));
+    }
     let active = app.integrated;
     let in_rc = clove_core::shellrc::detect().is_some_and(clove_core::shellrc::installed);
     let shell_spans = if active {

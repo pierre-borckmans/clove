@@ -421,17 +421,30 @@ impl Clove {
             }
             return Err(e).with_context(|| format!("git {}", args.join(" ")));
         }
+        let mut branch_deleted = false;
         if opts.delete_branch
             && let Some(b) = &w.branch
         {
             let merged = git::ok(&self.root, &["merge-base", "--is-ancestor", b, &self.config.base]);
             let flag = if merged || opts.branch_merged { "-D" } else { "-d" };
-            if let Err(e) = git::run_ok(&self.root, &["branch", flag, b]) {
-                r.event(Event::Warn {
+            match git::run_ok(&self.root, &["branch", flag, b]) {
+                Ok(_) => branch_deleted = true,
+                Err(e) => r.event(Event::Warn {
                     message: format!("kept branch {b}: {e:#}"),
-                });
+                }),
             }
         }
+        self.record_removal(crate::history::Removed {
+            at: 0,
+            kind: crate::history::Kind::Worktree,
+            name: w.name.clone(),
+            path: w.path.clone(),
+            branch: w.branch.clone(),
+            head: w.head.clone(),
+            by: opts.by,
+            reason: opts.reason.clone(),
+            branch_deleted,
+        });
         Ok(())
     }
 
@@ -443,14 +456,9 @@ impl Clove {
         checks: &[WorktreeCheck],
         r: &dyn Reporter,
     ) -> (Vec<PathBuf>, Vec<String>) {
-        let opts = RemoveOptions {
-            force: false,
-            delete_branch: true,
-            branch_merged: true,
-            unlock: false,
-        };
         let (mut removed, mut kept) = (vec![], vec![]);
         for c in checks.iter().filter(|c| c.verdict == Verdict::Prune) {
+            let opts = crate::prune::prune_options(crate::history::By::Prune, &c.reason);
             match self.remove_worktree(&c.path, &opts, r) {
                 Ok(()) => removed.push(c.path.clone()),
                 Err(e) => {

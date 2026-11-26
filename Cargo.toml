@@ -14,7 +14,7 @@ clove-core = { path = "crates/clove-core" }
 clove-tui = { path = "crates/clove-tui" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 toml = "0.9"
 toml_edit = "0.25"
 libc = "0.2"

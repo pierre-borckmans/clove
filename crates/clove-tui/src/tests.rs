@@ -161,6 +161,7 @@ fn config() -> Config {
             max_age_secs: 86_400,
             max_behind: 100,
         },
+        prune: Default::default(),
         sources: vec![],
     }
 }
@@ -181,6 +182,7 @@ fn data(root: impl Into<PathBuf>, status: RepoStatus, clones: Vec<CloneInfo>) ->
         prs: Default::default(),
         summary,
         watch: vec![],
+        history: vec![],
     }
 }
 
@@ -1358,6 +1360,7 @@ fn switching_repo_mid_load_reloads_at_once() {
         data: Err("stale".into()),
         repos: vec![],
         service: false,
+        agents: None,
     });
     assert!(app.needs_reload(), "mono should load now, not in 3s");
     // Branch suggestions from the old repo are not offered in the new one.
@@ -1378,6 +1381,7 @@ fn reload_requested_mid_load_runs_after_it() {
         data: Err("x".into()),
         repos: vec![],
         service: false,
+        agents: None,
     });
     assert!(app.needs_reload());
 }
@@ -2089,4 +2093,65 @@ fn a_first_load_shows_the_list_before_git_status_lands() {
     stale[0].dirty = None;
     app.on_msg(Msg::Preview(Box::new(data("/work/app", status(true, n), stale))));
     assert_eq!(app.current().unwrap().clones[0].dirty, full[0].dirty);
+}
+
+#[test]
+fn an_auto_prune_while_open_shows_a_toast_once() {
+    use clove_core::history::{By, Kind, Removed};
+    let mut app = App::new(repos(), 0);
+    app.now_unix = NOW;
+    let gone = |at: u64, by: By| Removed {
+        at,
+        kind: Kind::Clone,
+        name: format!("feat-{at}"),
+        path: "/x".into(),
+        branch: Some("feat".into()),
+        head: None,
+        by,
+        reason: Some("PR #4 merged".into()),
+        branch_deleted: true,
+    };
+    // What happened before the TUI opened is in `clove log`, not a toast.
+    let mut d = data("/work/app", status(true, 0), vec![]);
+    d.history = vec![gone(NOW - 100, By::AutoPrune)];
+    app.apply_data(d.clone());
+    assert!(!app.toasts.iter().any(|t| t.text.contains("auto-pruned")));
+    d.history.insert(0, gone(NOW - 5, By::Hand));
+    d.history.insert(0, gone(NOW - 1, By::AutoPrune));
+    app.apply_data(d.clone());
+    let said: Vec<&str> = app
+        .toasts
+        .iter()
+        .map(|t| t.text.as_str())
+        .filter(|t| t.contains("feat-"))
+        .collect();
+    assert_eq!(
+        said,
+        [format!("auto-pruned feat-{} just now: PR #4 merged", NOW - 1)]
+    );
+    app.toasts.clear();
+    app.apply_data(d);
+    assert!(app.toasts.is_empty(), "not again on the next load");
+}
+
+#[test]
+fn the_agents_row_installs_and_removes() {
+    use clove_core::agents::State;
+    let mut app = app();
+    app.service = Some(true);
+    app.agents = Some(State::Missing);
+    key(&mut app, KeyCode::Char('s'));
+    let (s, _) = render(&mut app, 120, 60);
+    assert!(s.contains("coding agents"), "{s}");
+    let fx = key(&mut app, KeyCode::Char('A'));
+    assert!(matches!(&fx[..], [Effect::Spawn { .. }]), "{fx:?}");
+    assert!(matches!(
+        app.jobs.last().unwrap().task,
+        Task::Agents { install: true }
+    ));
+    let mut app = self::app();
+    app.agents = None;
+    key(&mut app, KeyCode::Char('s'));
+    let (s, _) = render(&mut app, 120, 60);
+    assert!(!s.contains("coding agents"), "no agent on this machine, no row");
 }

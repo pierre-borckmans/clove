@@ -529,10 +529,15 @@ function Agents() {
             environment. <code>clove new agent/parser -x claude</code> starts Claude Code there.
           </p>
           <p>
-            For Claude Code's own worktrees, <code>clove hook claude</code> prints a{" "}
-            <code>settings.json</code> block with <code>WorktreeCreate</code> and{" "}
-            <code>WorktreeRemove</code> hooks. With it, <code>claude --worktree</code> and the
-            worktrees Claude Code makes for subagents become clones.
+            <code>clove agents install</code> teaches Claude Code and Codex to reach for clove: a
+            skill, a short block in their global instructions, and Claude Code's worktree hooks, so{" "}
+            <code>claude --worktree</code> and subagent worktrees become clones. Agents read{" "}
+            <code>clove guide</code> for the rest.
+          </p>
+          <p>
+            With <code>prune.auto</code> on, the service removes clones whose PR merged once they
+            are clean and idle. <code>clove log</code> says what went and how to get the branch
+            back.
           </p>
           <p>
             Every command takes <code>--json</code> and prints machine-readable output on stdout,

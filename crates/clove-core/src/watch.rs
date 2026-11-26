@@ -135,6 +135,7 @@ impl Clove {
                 &[
                     "repo.json",
                     "prune.json",
+                    "history.jsonl",
                     "refresh.lock",
                     "golden",
                     "clones",

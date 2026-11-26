@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { useHotkey } from "@/hooks/use-hotkey";
 import { listen } from "@/lib/bridge";
-import { useRepoChanges, useRepos } from "@/lib/queries";
+import { useAutoPruneToasts, useRepoChanges, useRepos } from "@/lib/queries";
 import { getUi, setUi } from "@/lib/ui";
 import { AddRepoDialog } from "./add-repo-dialog";
 import { CommandPalette } from "./command-palette";
@@ -16,6 +16,7 @@ import { AdoptDialog, RemoveWorktreeDialog } from "./worktree-dialogs";
 export function AppShell() {
   const navigate = useNavigate();
   useRepoChanges();
+  useAutoPruneToasts();
   const { data: repos } = useRepos();
   const params = useParams({ strict: false }) as { repoId?: string };
   const current = repos?.find((r) => r.id === params.repoId);

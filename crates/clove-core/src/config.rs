@@ -39,6 +39,9 @@ pub struct FileConfig {
     /// When the golden image counts as stale, and whether clove refreshes it on its own.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh: Option<RefreshFile>,
+    /// Whether the service removes merged clones on its own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prune: Option<PruneFile>,
     /// Replaces the detected steps.
     #[serde(rename = "step", skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<Step>,
@@ -56,6 +59,13 @@ pub struct RefreshFile {
     pub max_age: Option<String>,
     /// Stale when the base has moved this many commits past the golden commit.
     pub max_behind: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PruneFile {
+    /// The service removes clones whose PR merged, once they are clean and idle.
+    pub auto: Option<bool>,
 }
 
 /// How a setting is edited, validated and stored.
@@ -223,6 +233,14 @@ pub const FIELDS: &[Field] = &[
         Is("100"),
         "stale when the base is this many commits past the golden commit",
     ),
+    field(
+        "prune.auto",
+        "auto prune",
+        "cleanup",
+        Kind::Bool,
+        Is("false"),
+        "the service removes clones whose PR merged, once clean and idle for an hour; clove log lists them",
+    ),
 ];
 
 /// [`FileConfig`] keys edited in the file only (lists of tables).
@@ -234,6 +252,12 @@ pub struct RefreshPolicy {
     pub auto: bool,
     pub max_age_secs: u64,
     pub max_behind: u32,
+}
+
+/// Resolved cleanup policy.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PrunePolicy {
+    pub auto: bool,
 }
 
 /// Parses "90", "30m", "12h", "2d" into seconds.
@@ -320,6 +344,7 @@ pub struct Config {
     /// Explicit copy pathspecs, or None to detect env-like ignored files.
     pub copy: Option<Vec<String>>,
     pub refresh: RefreshPolicy,
+    pub prune: PrunePolicy,
     pub sources: Vec<PathBuf>,
 }
 
@@ -362,6 +387,9 @@ pub const TEMPLATE: &str = "\
 # [refresh]
 # max_age = \"24h\"
 # max_behind = 100
+
+# [prune]
+# auto = true   # the service removes merged, clean, idle clones; `clove log` lists them
 
 # [[add_step]]
 # name = \"build-deps\"
@@ -454,6 +482,9 @@ impl Config {
                     None => 24 * 3600,
                 },
                 max_behind: pick(&layers, |l| l.refresh.as_ref().and_then(|r| r.max_behind)).unwrap_or(100),
+            },
+            prune: PrunePolicy {
+                auto: pick(&layers, |l| l.prune.as_ref().and_then(|p| p.auto)).unwrap_or(false),
             },
             sources,
         })
@@ -603,6 +634,7 @@ mod schema_tests {
                 max_age: Some("1h".into()),
                 max_behind: Some(1),
             }),
+            prune: Some(PruneFile { auto: Some(true) }),
             steps: vec![Step::default()],
             add_steps: vec![Step::default()],
         };

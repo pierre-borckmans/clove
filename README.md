@@ -89,7 +89,7 @@ clove config --edit           # open your settings for this repo (--edit team, -
 The same features are in three places, and each one gets new features at the same time:
 
 - **The CLI**, above.
-- **`clove`** on its own opens a terminal UI with mouse support (`clove tui` too). A sidebar lists every repo, with its clones and whether its golden image is fresh. `s` opens settings, where you edit values in place (Enter edits or toggles, ←/→ picks the file it saves to, `x` resets), `g` cleans up merged clones and leftovers, `A` adds a repo (pick one found on disk or type a path, see what init will do, then build it), and Enter quits into the selected clone. With no repo yet, it opens on that screen.
+- **`clove`** on its own opens a terminal UI with mouse support (`clove tui` too). A sidebar lists every repo, with its clones and whether its golden image is fresh. `s` opens settings, where you edit values in place (Enter edits or toggles, ←/→ picks the file it saves to, `x` resets) and turn on the service and coding agents, `g` cleans up merged clones and leftovers and shows what was recently removed, `A` adds a repo (pick one found on disk or type a path, see what init will do, then build it), and Enter quits into the selected clone. With no repo yet, it opens on that screen.
 - **The Mac app** (`apps/desktop`), with the same sidebar, settings and cleanup, plus a menu-bar popover.
 
 Every command takes `--json`. `clove new --json` prints the clone's path, branch and timings, so an agent can create its own worktree:
@@ -104,7 +104,22 @@ path=$(clove new --json agent/task-42 | jq -r .path)
 
 `clove prune` asks GitHub (through `gh`) for each clone's pull request. A clone goes when its PR is merged, its tip is the commit GitHub merged (or one the PR contains), and it has no uncommitted changes. That works for squash merges, which `git branch --merged` misses. A clone with commits after the merge, or with local edits, is listed for review and kept, as is any branch without a PR, since that may be fresh work. It lists first and asks; `--apply` skips the question. Run from inside a merged clone, it leaves the clone first. `clove ls` shows each clone's PR from the last check, which the background service refreshes.
 
-To make Claude Code put its worktrees (`claude --worktree`, subagents) in clones, merge the block from `clove hook claude` into `~/.claude/settings.json`. The create hook makes a clone named after the worktree, and the remove hook deletes it, along with the branch if the branch has no commits of its own.
+With `prune.auto` on (off by default), the service prunes by itself. It removes a clone only when the check proves it merged and clean, nothing has it open, and git has been quiet in it for an hour. It never touches plain git worktrees, and does nothing when GitHub can't be asked. Every removal, by hand, by prune or by the service, goes in a history: `clove log` shows what went, when, by what, why, and the `git branch` command that brings a deleted branch back. `clove ls`, the TUI's cleanup view and the app's Cleanup page show recent ones too, and a command on a removed clone says what happened to it.
+
+```toml
+[prune]
+auto = true
+```
+
+### Coding agents
+
+`clove agents install` teaches Claude Code and Codex to use clove:
+
+- a Claude Code skill (`~/.claude/skills/clove`),
+- a short block in `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`, between markers, leaving the rest of each file as it was,
+- Claude Code's worktree hooks in `~/.claude/settings.json`, so `claude --worktree` and subagent worktrees become clones. In repos clove doesn't manage, the hooks make the same plain git worktree Claude would.
+
+Agents then read `clove guide`, which explains clove for this version: when to make a clone, running commands in it, removing only their own clones, and what to do when the service pruned one. `clove agents status` shows what is installed, `clove agents remove` takes it all out, and `clove doctor` says when it's missing or from an older clove. The TUI and the app have the same switch in settings.
 
 ## Staying fresh
 
@@ -146,6 +161,9 @@ copy = [".env", "apps/*/.env.local", "config/dev.secrets.json"]
 auto = true        # refresh in the background when `clove new` finds the image stale
 max_age = "24h"     # safety net; steps' watch paths are the main signal
 max_behind = 100   # commits
+
+[prune]
+auto = false       # the service removes merged, clean, idle clones; `clove log` lists them
 ```
 
 Steps run inside the repo's environment (`direnv exec`, or `mise exec`). `[[step]]` replaces the detected steps; `[[add_step]]` appends to them. Settings layer in this order, last wins:

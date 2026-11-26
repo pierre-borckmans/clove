@@ -394,6 +394,64 @@ pub async fn service_set(install: bool) -> CmdResult<bool> {
     .await
 }
 
+/// Whether coding agents know clove; null when none is installed here.
+#[tauri::command]
+pub async fn agents_status() -> CmdResult<Option<clove_core::agents::State>> {
+    block(|| {
+        let ts = clove_core::agents::status()?;
+        Ok((!ts.is_empty()).then(|| clove_core::agents::summary(&ts)))
+    })
+    .await
+}
+
+/// `clove agents install` / `remove`; returns the new state.
+#[tauri::command]
+pub async fn agents_set(install: bool) -> CmdResult<Option<clove_core::agents::State>> {
+    block(move || {
+        if install {
+            clove_core::agents::install()?;
+        } else {
+            clove_core::agents::remove()?;
+        }
+        let ts = clove_core::agents::status()?;
+        Ok((!ts.is_empty()).then(|| clove_core::agents::summary(&ts)))
+    })
+    .await
+}
+
+#[derive(Serialize)]
+pub struct HistoryEntry {
+    pub repo: String,
+    pub root: PathBuf,
+    #[serde(flatten)]
+    pub removed: clove_core::history::Removed,
+    /// The command that brings the branch back, when it was deleted.
+    pub restore: Option<String>,
+}
+
+/// What clove removed, newest first, in every repo (`clove log --all-repos`).
+#[tauri::command]
+pub async fn history(limit: usize) -> CmdResult<Vec<HistoryEntry>> {
+    block(move || {
+        let mut v: Vec<HistoryEntry> = known_repos()
+            .into_iter()
+            .filter_map(|r| Clove::open(&r.root).ok())
+            .flat_map(|c| {
+                c.history().into_iter().map(move |e| HistoryEntry {
+                    repo: c.name.clone(),
+                    root: c.root.clone(),
+                    restore: e.restore(),
+                    removed: e,
+                })
+            })
+            .collect();
+        v.sort_by_key(|e| std::cmp::Reverse(e.removed.at));
+        v.truncate(limit);
+        Ok(v)
+    })
+    .await
+}
+
 /// The last PR check per clone (from `clove prune`, the service, or cleanup).
 #[tauri::command]
 pub async fn prs(root: PathBuf) -> CmdResult<Vec<MergeCheck>> {

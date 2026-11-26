@@ -70,8 +70,15 @@ pub fn load(tx: Sender<Msg>, root: PathBuf) {
             data,
             repos: repo_tabs(),
             service: clove_core::service::installed().iter().all(|(_, on)| *on),
+            agents: agents_state(),
         });
     });
+}
+
+/// Whether the coding agents here know clove; None when there are none.
+pub fn agents_state() -> Option<clove_core::agents::State> {
+    let ts = clove_core::agents::status().ok()?;
+    (!ts.is_empty()).then(|| clove_core::agents::summary(&ts))
 }
 
 fn repo_data(root: &Path, git_status: bool) -> Result<Box<RepoData>, String> {
@@ -92,6 +99,7 @@ fn repo_data(root: &Path, git_status: bool) -> Result<Box<RepoData>, String> {
         worktrees,
         fields: clove_core::settings::fields(&c.root, &c.name, &c.config).unwrap_or_default(),
         config: c.config.clone(),
+        history: c.history().into_iter().take(20).collect(),
         prs,
         watch: {
             let mut t = c.watch_targets();
@@ -182,6 +190,14 @@ fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Res
         };
         return res.map(|_| Outcome::Service(install)).map_err(e);
     }
+    if let Task::Agents { install } = task {
+        let res = if install {
+            clove_core::agents::install()
+        } else {
+            clove_core::agents::remove()
+        };
+        return res.map(|_| Outcome::Agents(agents_state())).map_err(e);
+    }
     if let Task::ShellInstall = task {
         let sh = clove_core::shellrc::detect().ok_or("can't tell your shell from $SHELL")?;
         return clove_core::shellrc::install(sh)
@@ -234,7 +250,9 @@ fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Res
         Task::Mount { name } => c.mount(&name).map(Outcome::Mounted).map_err(e),
         Task::Unmount { name } => c.unmount(&name, false).map(|_| Outcome::Unmounted).map_err(e),
         Task::Gc { apply } => c.cleanup(apply, r).map(Outcome::Gc).map_err(e),
-        Task::Doctor | Task::Service { .. } | Task::ShellInstall => unreachable!("handled above"),
+        Task::Doctor | Task::Service { .. } | Task::Agents { .. } | Task::ShellInstall => {
+            unreachable!("handled above")
+        }
     }
 }
 

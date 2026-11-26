@@ -164,6 +164,7 @@ mod tests {
                     max_age_secs: 86_400,
                     max_behind: 100,
                 },
+                prune: Default::default(),
                 sources: vec![],
             },
         };

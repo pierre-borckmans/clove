@@ -11,7 +11,7 @@ use clove_core::doctor::{self, Level};
 use clove_core::{Clove, Exec, NewOptions, RemoveOptions, Silent};
 use render::*;
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const AFTER_HELP: &str = "\
 Getting started:
@@ -164,6 +164,16 @@ enum Cmd {
         #[arg(long)]
         apply: bool,
     },
+    /// Clones and worktrees clove removed: when, by what (rm, prune,
+    /// auto-prune, Claude Code), why, and how to get the branch back.
+    Log {
+        /// How many, newest first.
+        #[arg(short = 'n', long, default_value_t = 20)]
+        limit: usize,
+        /// Every repo clove manages, not just this one.
+        #[arg(long)]
+        all_repos: bool,
+    },
     /// Find leftovers from interrupted operations.
     Gc {
         /// Remove them (default: only list).
@@ -204,6 +214,14 @@ enum Cmd {
         #[command(subcommand)]
         action: ServiceAction,
     },
+    /// Teach coding agents (Claude Code, Codex) to use clove: a skill, a
+    /// short block in their global instructions, and Claude's worktree hooks.
+    Agents {
+        #[command(subcommand)]
+        action: AgentsAction,
+    },
+    /// How to use clove, written for coding agents (what `clove agents install` points them to).
+    Guide,
     /// Hooks for other tools. `clove hook claude` prints the Claude Code settings.
     Hook {
         #[command(subcommand)]
@@ -265,6 +283,16 @@ fn setting_keys() -> clap::builder::PossibleValuesParser {
             .iter()
             .map(|f| clap::builder::PossibleValue::new(f.key).help(f.help)),
     )
+}
+
+#[derive(Subcommand)]
+enum AgentsAction {
+    /// Write the skill, instructions and hooks. Running it again updates them.
+    Install,
+    /// Take out everything `install` wrote, leaving the rest of each file as it was.
+    Remove,
+    /// What is installed where.
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -435,7 +463,17 @@ fn run(cli: Cli) -> Result<()> {
             for c in &targets {
                 if *prs {
                     // Background only: unmounted clones are not mounted to look inside.
-                    let _ = c.merge_checks(false);
+                    if c.config.prune.auto {
+                        // Checks too, and records each removal in the history.
+                        match c.auto_prune(r) {
+                            Ok(gone) if !gone.is_empty() && !cli.json => {
+                                eprintln!("{} auto-pruned {}", paint(GREEN, "✓"), gone.join(", "))
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        let _ = c.merge_checks(false);
+                    }
                 }
                 if *if_stale {
                     let _ = c.fetch_if_due();
@@ -546,6 +584,7 @@ fn run(cli: Cli) -> Result<()> {
                     delete_branch: a.delete_branch,
                     branch_merged: false,
                     unlock: a.unlock,
+                    ..Default::default()
                 };
                 if !cli.json && w.locked && a.unlock {
                     let why = w.lock_reason.as_deref().unwrap_or("no reason given");
@@ -605,6 +644,7 @@ fn run(cli: Cli) -> Result<()> {
                         delete_branch: a.delete_branch,
                         branch_merged: false,
                         unlock: false,
+                        ..Default::default()
                     },
                     r,
                 )?;
@@ -729,6 +769,7 @@ fn run(cli: Cli) -> Result<()> {
         }
         Cmd::Doctor => cmd_doctor(&cli)?,
         Cmd::Prune { apply } => cmd_prune(&cli, *apply, r)?,
+        Cmd::Log { limit, all_repos } => cmd_log(&cli, *limit, *all_repos)?,
         Cmd::Gc { apply } => {
             let c = repo(&cli)?;
             let actions = c.gc(*apply)?;
@@ -883,6 +924,8 @@ fn run(cli: Cli) -> Result<()> {
             }
         },
         Cmd::Hook { action } => cmd_hook(action)?,
+        Cmd::Guide => print!("{}", clove_core::agents::GUIDE),
+        Cmd::Agents { action } => cmd_agents(&cli, action)?,
         Cmd::ShellInit { shell: sh, install } => {
             let sh = sh
                 .or_else(shell::detect)
@@ -1317,6 +1360,7 @@ fn cmd_list(cli: &Cli, status: bool, only_worktrees: bool) -> Result<()> {
         };
         eprintln!("no clones yet. {}", paint(BOLD, hint));
         print_worktrees(&others, status, true);
+        print_recent_auto_prunes(&c);
         return Ok(());
     }
     // PRs from the last `clove prune` or background check; never asks GitHub here.
@@ -1413,7 +1457,27 @@ fn cmd_list(cli: &Cli, status: bool, only_worktrees: bool) -> Result<()> {
             paint(BOLD, "clove prune")
         );
     }
+    print_recent_auto_prunes(&c);
     Ok(())
+}
+
+/// Clones the service removed in the last day, so nobody wonders where they went.
+fn print_recent_auto_prunes(c: &Clove) {
+    let now = clove_core::util::now_unix();
+    let recent: Vec<_> = c
+        .history()
+        .into_iter()
+        .take_while(|e| now.saturating_sub(e.at) < 86_400)
+        .filter(|e| e.by == clove_core::history::By::AutoPrune)
+        .collect();
+    if recent.is_empty() {
+        return;
+    }
+    eprintln!();
+    for e in &recent {
+        eprintln!("{} {}", paint(YELLOW, "−"), paint(DIM, e.summary(now)));
+    }
+    eprintln!("{}", paint(DIM, "branches and how to get them back: clove log"));
 }
 
 /// The "other git worktrees" section: dimmer than clones, after them.
@@ -1525,6 +1589,78 @@ fn cmd_adopt(
     if (!no_cd || was_inside) && !shell::request_cd(&info.path) && std::io::stdout().is_terminal() {
         hint_shell_init();
     }
+    Ok(())
+}
+
+fn cmd_log(cli: &Cli, limit: usize, all_repos: bool) -> Result<()> {
+    let repos: Vec<Clove> = if all_repos {
+        clove_core::known_repos()
+            .into_iter()
+            .filter_map(|r| Clove::open(&r.root).ok())
+            .collect()
+    } else {
+        vec![repo(cli)?]
+    };
+    let mut rows: Vec<(String, clove_core::history::Removed)> = repos
+        .iter()
+        .flat_map(|c| c.history().into_iter().map(|e| (c.name.clone(), e)))
+        .collect();
+    rows.sort_by_key(|r| std::cmp::Reverse(r.1.at));
+    rows.truncate(limit);
+    if cli.json {
+        let v: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|(repo, e)| {
+                let mut v = serde_json::to_value(e).unwrap_or_default();
+                v["repo"] = repo.clone().into();
+                v["restore"] = e.restore().into();
+                v
+            })
+            .collect();
+        return emit(&v);
+    }
+    if rows.is_empty() {
+        eprintln!("nothing removed yet");
+        return Ok(());
+    }
+    let now = clove_core::util::now_unix();
+    let mut head = vec!["WHEN", "WHAT", "NAME", "BRANCH", "WHY", "BRANCH BACK"];
+    if all_repos {
+        head.insert(2, "REPO");
+    }
+    let mut t = Table::new(&head);
+    for (repo, e) in &rows {
+        let what = match e.by {
+            clove_core::history::By::AutoPrune => styled(YELLOW, e.by.label()),
+            _ => cell(e.by.label()),
+        };
+        let mut name = e.name.clone();
+        if e.kind == clove_core::history::Kind::Worktree {
+            name.push_str(" (git worktree)");
+        }
+        let mut row = vec![
+            styled(DIM, clove_core::history::ago(now.saturating_sub(e.at))),
+            what,
+            styled(BOLD, name),
+            styled(MAGENTA, e.branch.clone().unwrap_or_else(|| "(detached)".into())),
+            cell(e.reason.clone().unwrap_or_default()),
+            styled(
+                DIM,
+                e.restore().unwrap_or_else(|| {
+                    if e.branch_deleted || e.branch.is_none() {
+                        String::new()
+                    } else {
+                        "kept".into()
+                    }
+                }),
+            ),
+        ];
+        if all_repos {
+            row.insert(2, cell(repo.clone()));
+        }
+        t.row(row);
+    }
+    t.print();
     Ok(())
 }
 
@@ -1647,16 +1783,8 @@ fn cmd_prune(cli: &Cli, apply: bool, r: &dyn clove_core::Reporter) -> Result<()>
             if !cli.json {
                 eprintln!("{} {}", paint(MAGENTA, "−"), paint(BOLD, &m.clone));
             }
-            let res = c.remove(
-                &m.clone,
-                &RemoveOptions {
-                    force: false,
-                    delete_branch: true,
-                    branch_merged: true,
-                    unlock: false,
-                },
-                r,
-            );
+            let opts = clove_core::prune::prune_options(clove_core::history::By::Prune, &m.reason);
+            let res = c.remove(&m.clone, &opts, r);
             match res {
                 Ok(()) => removed.push(m.clone.clone()),
                 Err(e) => eprintln!("{} kept {}: {e:#}", paint(YELLOW, "!"), m.clone),
@@ -2057,7 +2185,15 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
                 .as_str()
                 .map(PathBuf::from)
                 .unwrap_or(std::env::current_dir()?);
-            let c = Clove::discover(&cwd)?;
+            // Claude Code has no fallback once this hook exists, so repos
+            // clove doesn't manage get what Claude would have made.
+            let managed = Clove::discover(&cwd)
+                .ok()
+                .filter(|c| c.record().ok().flatten().is_some());
+            let Some(c) = managed else {
+                println!("{}", plain_worktree_add(&cwd, name)?.display());
+                return Ok(());
+            };
             let info = c.new_clone(
                 &NewOptions {
                     branch: Some(name.to_string()),
@@ -2074,10 +2210,15 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
                     .as_str()
                     .context("hook input has no worktree_path")?,
             );
-            let c = Clove::discover(&path).or_else(|_| {
-                Clove::discover(&input["cwd"].as_str().map(PathBuf::from).unwrap_or_default())
-            })?;
-            let name = c.resolve(&path.to_string_lossy())?;
+            let c = Clove::discover(&path)
+                .or_else(|_| Clove::discover(&input["cwd"].as_str().map(PathBuf::from).unwrap_or_default()));
+            let clone = c
+                .as_ref()
+                .ok()
+                .and_then(|c| Some((c, c.resolve(&path.to_string_lossy()).ok()?)));
+            let Some((c, name)) = clone else {
+                return plain_worktree_remove(&path);
+            };
             // Keeps the branch when it has commits its base does not.
             c.remove(
                 &name,
@@ -2086,12 +2227,102 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
                     delete_branch: true,
                     branch_merged: false,
                     unlock: false,
+                    by: clove_core::history::By::ClaudeHook,
+                    reason: None,
                 },
                 &TermReporter::new(false),
             )?;
         }
     }
     Ok(())
+}
+
+fn cmd_agents(cli: &Cli, action: &AgentsAction) -> Result<()> {
+    use clove_core::agents::{self, State};
+    let (ts, verb) = match action {
+        AgentsAction::Install => (agents::install()?, "installed"),
+        AgentsAction::Remove => (agents::remove()?, "removed"),
+        AgentsAction::Status => (agents::status()?, ""),
+    };
+    if cli.json {
+        return emit(&ts);
+    }
+    let all = agents::status()?;
+    if all.is_empty() {
+        eprintln!("no supported coding agent found (looked for ~/.claude and ~/.codex)");
+        return Ok(());
+    }
+    if ts.is_empty() && !verb.is_empty() {
+        eprintln!("{} nothing to change", paint(GREEN, "✓"));
+    }
+    for t in &ts {
+        let mark = match (verb, t.state) {
+            ("", State::Installed) => paint(GREEN, "✓"),
+            ("", State::Outdated) => paint(YELLOW, "!"),
+            ("", State::Missing) => paint(DIM, "·"),
+            _ => paint(GREEN, "✓"),
+        };
+        let what = match (verb, t.state) {
+            ("", State::Installed) => "installed",
+            ("", State::Outdated) => "outdated",
+            ("", State::Missing) => "not installed",
+            (v, _) => v,
+        };
+        eprintln!(
+            "{mark} {:<28} {:<14} {}",
+            t.what,
+            what,
+            paint(DIM, tilde(&t.path))
+        );
+    }
+    match (action, agents::summary(&all)) {
+        (AgentsAction::Status, State::Installed) => {}
+        (AgentsAction::Status, _) => eprintln!(
+            "
+{}",
+            paint(BOLD, "clove agents install")
+        ),
+        (AgentsAction::Install, _) if !ts.is_empty() => eprintln!(
+            "
+{}",
+            paint(
+                DIM,
+                "agents now reach for clove in repos it manages; `clove guide` is what they read. \
+                 Restart running agent sessions to pick it up."
+            )
+        ),
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Claude Code's own worktree: `.claude/worktrees/<name>` at the repo root,
+/// on a new `worktree-<name>` branch from the remote default branch (local
+/// HEAD when there is none).
+fn plain_worktree_add(cwd: &Path, name: &str) -> Result<PathBuf> {
+    let top = PathBuf::from(clove_core::git::out(cwd, &["rev-parse", "--show-toplevel"])?.trim());
+    let path = top.join(".claude").join("worktrees").join(name);
+    let branch = format!("worktree-{name}");
+    let base = clove_core::git::out(
+        &top,
+        &["rev-parse", "--verify", "--quiet", "refs/remotes/origin/HEAD"],
+    )
+    .map(|_| "origin/HEAD".to_string())
+    .unwrap_or_else(|_| "HEAD".into());
+    let p = path.to_string_lossy().to_string();
+    clove_core::git::run_ok(&top, &["worktree", "add", "-b", &branch, &p, &base])
+        .context("git worktree add")?;
+    Ok(path)
+}
+
+/// Removes a worktree clove didn't make, as Claude Code would: never forced,
+/// so uncommitted changes stop it. The branch stays.
+fn plain_worktree_remove(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let p = path.to_string_lossy().to_string();
+    clove_core::git::run_ok(path, &["worktree", "remove", &p]).context("git worktree remove")
 }
 
 /// `clove` with no command: the mark, where this repo stands, and what to type next.
@@ -2161,4 +2392,44 @@ fn home(cli: &Cli) -> Result<()> {
     println!();
     println!("  {}", paint(DIM, "clove --help for every command"));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Agents learn clove from `clove guide`; a command missing there is one
+    /// they won't use.
+    #[test]
+    fn the_guide_covers_every_command() {
+        let cmd = Cli::command();
+        let missing: Vec<String> = cmd
+            .get_subcommands()
+            .filter(|s| !s.is_hide_set())
+            .map(|s| s.get_name().to_string())
+            .filter(|n| {
+                ![
+                    "help",
+                    "hook",
+                    "shell-init",
+                    "tui",
+                    "completions",
+                    "guide",
+                    "agents",
+                    "service",
+                ]
+                .contains(&n.as_str())
+            })
+            .filter(|n| {
+                let aliases: Vec<String> = cmd
+                    .find_subcommand(n)
+                    .map(|s| s.get_all_aliases().map(str::to_string).collect())
+                    .unwrap_or_default();
+                !std::iter::once(n.clone())
+                    .chain(aliases)
+                    .any(|a| clove_core::agents::GUIDE.contains(&format!("clove {a}")))
+            })
+            .collect();
+        assert!(missing.is_empty(), "add to agents::GUIDE: {missing:?}");
+    }
 }

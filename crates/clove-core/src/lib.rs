@@ -7,6 +7,7 @@
 //! inputs changed since the golden commit run in the clone. On Linux the golden
 //! image and clones are btrfs subvolumes in one image per repo (see `backend`).
 
+pub mod agents;
 pub mod backend;
 pub mod brand;
 pub mod candidates;
@@ -15,6 +16,7 @@ pub mod detect;
 pub mod doctor;
 pub mod events;
 pub mod git;
+pub mod history;
 pub mod memo;
 pub mod names;
 pub mod ops;

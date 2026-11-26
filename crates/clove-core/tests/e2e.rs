@@ -233,6 +233,7 @@ fn full_lifecycle() {
             delete_branch: true,
             branch_merged: false,
             unlock: false,
+            ..Default::default()
         },
         &Silent,
     )
@@ -268,6 +269,7 @@ fn full_lifecycle() {
             delete_branch: true,
             branch_merged: false,
             unlock: false,
+            ..Default::default()
         },
         &Silent,
     )
@@ -415,6 +417,67 @@ fn full_lifecycle() {
     let lock = std::fs::read_to_string(root.join(".git/worktrees/clove-peek/locked")).unwrap();
     assert!(lock.contains("clove rm peek"), "{lock}");
 
+    // Auto-prune: a merged, clean clone goes once git has been quiet in it
+    // for an hour; a just-touched one stays. Each removal is in the history.
+    for b in ["done/old", "done/fresh"] {
+        let info = c
+            .new_clone(
+                &NewOptions {
+                    branch: Some(b.into()),
+                    ..Default::default()
+                },
+                &Silent,
+            )
+            .unwrap();
+        sh(
+            &info.path,
+            &format!("echo {b} > done.txt && git add done.txt && git commit -qm {b}"),
+        );
+    }
+    let checks = c
+        .merge_checks_with(false, |asks| {
+            let prs = asks
+                .iter()
+                .filter(|(_, b)| b.starts_with("done/"))
+                .map(|(k, b)| {
+                    let pr = clove_core::Pr {
+                        number: 7,
+                        state: clove_core::PrState::Merged,
+                        head_oid: git(&root, &["rev-parse", b]),
+                        title: String::new(),
+                        url: String::new(),
+                    };
+                    (k.clone(), pr)
+                })
+                .collect();
+            (prs, None)
+        })
+        .unwrap()
+        .clones;
+    sh(
+        &root,
+        &format!(
+            "touch -t 202001010000 {d} {a}/index {a}/HEAD {a}/logs/HEAD",
+            d = c.clone_dir("done-old").display(),
+            a = c.clone_admin("done-old").display()
+        ),
+    );
+    let gone = c.auto_prune_checks(&checks, &Silent);
+    assert_eq!(gone, ["done-old"], "{checks:?}");
+    let h = c.history();
+    assert_eq!(
+        (h[0].name.as_str(), h[0].by),
+        ("done-old", clove_core::history::By::AutoPrune)
+    );
+    assert!(h[0].branch_deleted && h[0].restore().is_some(), "{:?}", h[0]);
+    let why = c.resolve("done/old").unwrap_err().to_string();
+    assert!(
+        why.contains("auto-pruned done-old") && why.contains("git branch done/old"),
+        "{why}"
+    );
+    c.remove("done-fresh", &RemoveOptions::default(), &Silent)
+        .unwrap();
+
     // remove refuses dirty clones without --force
     std::fs::write(a.path.join("app.txt"), "dirty\n").unwrap();
     assert!(c.remove("feat-a", &RemoveOptions::default(), &Silent).is_err());
@@ -425,6 +488,7 @@ fn full_lifecycle() {
             delete_branch: true,
             branch_merged: false,
             unlock: false,
+            ..Default::default()
         },
         &Silent,
     )

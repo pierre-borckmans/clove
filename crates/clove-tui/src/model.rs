@@ -32,6 +32,8 @@ pub struct RepoData {
     pub watch: Vec<clove_core::watch::Target>,
     /// Editable settings with their value per config layer.
     pub fields: Vec<clove_core::settings::FieldState>,
+    /// Recent removals, newest first (`clove log`).
+    pub history: Vec<clove_core::history::Removed>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +89,10 @@ pub enum Task {
     Service {
         install: bool,
     },
+    /// Teach coding agents clove (`clove agents install`), or take it out.
+    Agents {
+        install: bool,
+    },
     /// Add the shell integration line to the user's rc file.
     ShellInstall,
 }
@@ -111,6 +117,7 @@ pub enum Outcome {
     Gc(Cleanup),
     Doctor(Vec<Check>),
     Service(bool),
+    Agents(Option<clove_core::agents::State>),
     /// The rc file that now loads the integration, and whether it changed.
     ShellInstalled(PathBuf, bool),
 }
@@ -126,6 +133,8 @@ pub enum Msg {
         repos: Vec<RepoTab>,
         /// Whether the launchd agents are installed.
         service: bool,
+        /// Whether coding agents know clove; None when none is installed.
+        agents: Option<clove_core::agents::State>,
     },
     Refs {
         root: PathBuf,
@@ -277,6 +286,8 @@ impl Job {
             Task::Doctor => "doctor".into(),
             Task::Service { install: true } => "install the service".into(),
             Task::Service { install: false } => "remove the service".into(),
+            Task::Agents { install: true } => "teach coding agents clove".into(),
+            Task::Agents { install: false } => "remove clove from agent instructions".into(),
             Task::ShellInstall => "install shell integration".into(),
         }
     }
@@ -630,6 +641,7 @@ pub enum SettingsAction {
     /// Setting `n` of [`clove_core::settings::FIELDS`]: toggle or type a value.
     Field(usize),
     Service,
+    Agents,
     Shell,
 }
 

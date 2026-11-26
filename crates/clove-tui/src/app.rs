@@ -126,6 +126,12 @@ pub struct App {
     pub integrated: bool,
     /// Launchd agents installed; None until the first load.
     pub service: Option<bool>,
+    /// Newest removal seen per repo, to announce auto-prunes that happen
+    /// while the TUI is open.
+    pub seen_removal: HashMap<PathBuf, u64>,
+    /// Whether coding agents know clove; None when there are none (or before
+    /// the first load).
+    pub agents: Option<clove_core::agents::State>,
     /// Lines the settings view showed last frame (for page up/down).
     pub settings_height: usize,
 }
@@ -176,6 +182,8 @@ impl App {
             start_dir: PathBuf::new(),
             integrated: false,
             service: None,
+            agents: None,
+            seen_removal: HashMap::new(),
             settings_height: 10,
         }
     }
@@ -471,7 +479,10 @@ impl App {
 
     pub fn spawn(&mut self, task: Task, after: After) -> Vec<Effect> {
         let Some(repo) = self.repo().cloned() else {
-            if matches!(task, Task::Doctor | Task::Service { .. } | Task::ShellInstall) {
+            if matches!(
+                task,
+                Task::Doctor | Task::Service { .. } | Task::Agents { .. } | Task::ShellInstall
+            ) {
                 return self.spawn_at(None, String::new(), task, after);
             }
             self.toast(ToastKind::Err, "no repository");
@@ -735,6 +746,16 @@ impl App {
                 toasts.push((ToastKind::Ok, s.to_string()));
                 Ok(s.to_string())
             }
+            Ok(Outcome::Agents(state)) => {
+                self.agents = state;
+                let s = if state == Some(clove_core::agents::State::Installed) {
+                    "coding agents now know clove; restart their sessions to pick it up"
+                } else {
+                    "clove taken out of agent instructions"
+                };
+                toasts.push((ToastKind::Ok, s.to_string()));
+                Ok(s.to_string())
+            }
             Ok(Outcome::Doctor(checks)) => {
                 if let Some(Modal::Doctor(d)) = &mut self.modal {
                     d.checks = Some(checks);
@@ -753,7 +774,10 @@ impl App {
             }
         }
         if self.repo().is_some_and(|r| r.root == repo)
-            && !matches!(task, Task::Doctor | Task::Service { .. } | Task::ShellInstall)
+            && !matches!(
+                task,
+                Task::Doctor | Task::Service { .. } | Task::Agents { .. } | Task::ShellInstall
+            )
         {
             effects.push(Effect::Load);
         }
@@ -767,9 +791,11 @@ impl App {
                 data,
                 repos,
                 service,
+                agents,
             } => {
                 self.loading = false;
                 self.service = Some(service);
+                self.agents = agents;
                 // A load for a repo we switched away from: reload the current one now.
                 let current = self.repo().is_some_and(|r| r.root == root);
                 self.loaded_ms = (current && !self.reload_queued).then_some(self.now_ms);
@@ -846,6 +872,19 @@ impl App {
         let keep_wt = self.selected_worktree().map(|w| w.path.clone());
         if let Some(t) = self.repos.iter_mut().find(|t| t.root == d.root) {
             t.summary = Some(d.summary.clone());
+        }
+        let newest = d.history.first().map_or(0, |e| e.at);
+        if let Some(prev) = self.seen_removal.insert(d.root.clone(), newest) {
+            let fresh: Vec<String> = d
+                .history
+                .iter()
+                .take_while(|e| e.at > prev)
+                .filter(|e| e.by == clove_core::history::By::AutoPrune)
+                .map(|e| e.summary(self.now_unix))
+                .collect();
+            for s in fresh {
+                self.toast(ToastKind::Info, s);
+            }
         }
         self.data.insert(d.root.clone(), d);
         if !is_current {
@@ -1583,6 +1622,7 @@ impl App {
                         delete_branch: f.delete_branch,
                         branch_merged: false,
                         unlock: false,
+                        ..Default::default()
                     },
                 };
                 return (None, self.spawn(task, After::Nothing));
@@ -1627,6 +1667,9 @@ impl App {
         ];
         v.extend((0..FIELDS.len()).map(SettingsAction::Field));
         v.push(SettingsAction::Service);
+        if self.agents.is_some() {
+            v.push(SettingsAction::Agents);
+        }
         // Nothing to do once this shell has it.
         if !self.integrated {
             v.push(SettingsAction::Shell);
@@ -1760,6 +1803,15 @@ impl App {
                 self.modal = Some(Modal::Settings(v));
                 (None, self.spawn(Task::ShellInstall, After::Nothing))
             }
+            SettingsAction::Agents => {
+                if self.running().any(|j| matches!(j.task, Task::Agents { .. })) {
+                    return (Some(Modal::Settings(v)), vec![]);
+                }
+                // Installed: take out. Missing or outdated: (re)install.
+                let install = self.agents != Some(clove_core::agents::State::Installed);
+                self.modal = Some(Modal::Settings(v));
+                (None, self.spawn(Task::Agents { install }, After::Nothing))
+            }
             SettingsAction::Service => {
                 if self.running().any(|j| matches!(j.task, Task::Service { .. })) {
                     return (Some(Modal::Settings(v)), vec![]);
@@ -1827,6 +1879,9 @@ impl App {
             KeyCode::Char('e') => return self.settings_act(v, SettingsAction::Edit(2)),
             KeyCode::Char('i') => return self.settings_act(v, SettingsAction::Shell),
             KeyCode::Char('S') => return self.settings_act(v, SettingsAction::Service),
+            KeyCode::Char('A') if self.agents.is_some() => {
+                return self.settings_act(v, SettingsAction::Agents);
+            }
             _ => {}
         }
         (Some(Modal::Settings(v)), vec![])
@@ -2057,6 +2112,7 @@ fn job_title(t: &Task) -> String {
         Task::Gc { .. } => "gc".into(),
         Task::Doctor => "doctor".into(),
         Task::Service { .. } => "service".into(),
+        Task::Agents { .. } => "agents".into(),
         Task::ShellInstall => "shell integration".into(),
     }
 }

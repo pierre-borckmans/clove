@@ -187,6 +187,7 @@ pub fn run(op: &OpRequest, r: &dyn clove_core::Reporter) -> anyhow::Result<serde
                 delete_branch: *delete_branch,
                 branch_merged: false,
                 unlock: false,
+                ..Default::default()
             };
             let c = Clove::open(root)?;
             match c.remove_or_defer(name, &opts, r)? {

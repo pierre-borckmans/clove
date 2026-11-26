@@ -168,7 +168,37 @@ pub fn machine() -> Vec<Check> {
         }
         Err(_) => out.push(check("git", Level::Fail, "git not found", None)),
     }
+    out.extend(agents());
     out
+}
+
+/// Whether the coding agents on this machine know about clove.
+fn agents() -> Option<Check> {
+    let ts = crate::agents::status().ok()?;
+    if ts.is_empty() {
+        return None;
+    }
+    let fix = Some("clove agents install".to_string());
+    Some(match crate::agents::summary(&ts) {
+        crate::agents::State::Installed => check(
+            "agents",
+            Level::Ok,
+            "coding agents know clove (clove guide)",
+            None,
+        ),
+        crate::agents::State::Missing => check(
+            "agents",
+            Level::Warn,
+            "coding agents don't know clove and will use git worktree add",
+            fix,
+        ),
+        crate::agents::State::Outdated => check(
+            "agents",
+            Level::Warn,
+            "agent instructions are partly missing or from an older clove",
+            fix,
+        ),
+    })
 }
 
 pub fn repo(c: &Clove) -> Vec<Check> {

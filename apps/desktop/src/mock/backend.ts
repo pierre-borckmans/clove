@@ -26,6 +26,7 @@ import { CARGO_OUTPUT, type MockRepo, machineChecks, PNPM_OUTPUT, seed, worktree
 
 const repos = seed();
 let serviceOn = true;
+let agentsState: "installed" | "outdated" | "missing" = "missing";
 let shellOn = false;
 const LAYERS = [
   { label: "all repos", path: () => "/Users/ada/.config/clove/config.toml" },
@@ -53,6 +54,7 @@ const FIELDS: [string, string, string, FieldKind, string | null, string][] = [
   ["refresh.auto", "auto refresh", "freshness", { type: "bool" }, "true", "refresh when a new clone finds it stale"],
   ["refresh.max_age", "max age", "freshness", { type: "duration" }, "24h", "stale after this long, e.g. 12h, 2d"],
   ["refresh.max_behind", "max behind", "freshness", { type: "int" }, "100", "stale this many commits behind"],
+  ["prune.auto", "auto prune", "cleanup", { type: "bool" }, "false", "the service removes merged, clean, idle clones"],
 ];
 const LAYER_IDS: Layer[] = ["all", "team", "you"];
 const settings = new Map<string, Record<string, string>[]>();
@@ -536,6 +538,7 @@ const commands: Record<string, (a: Args) => unknown> = {
         steps_detected: r.status.steps_detected,
         copy: null,
         refresh: { auto: true, max_age_secs: 86_400, max_behind: 100 },
+        prune: { auto: false },
         sources: [],
       },
       layers: LAYERS.map((l) => ({ label: l.label, path: l.path(r), exists: r.layers.includes(l.label) })),
@@ -560,6 +563,27 @@ const commands: Record<string, (a: Args) => unknown> = {
       for (const l of LAYERS) if (l.path(r) === a.path && !r.layers.includes(l.label)) r.layers.push(l.label);
     return null;
   },
+  agents_status: () => agentsState,
+  agents_set: (a) => {
+    agentsState = a.install ? "installed" : "missing";
+    return agentsState;
+  },
+  history: () => [
+    {
+      repo: "mono",
+      root: "/Users/ada/code/mono",
+      at: now() - 3 * 3600,
+      kind: "clone",
+      name: "fix-login-redirect",
+      path: "/Users/ada/code/mono.clove/fix-login-redirect/mono",
+      branch: "fix/login-redirect",
+      head: "4be2c19d0a77",
+      by: "auto-prune",
+      reason: "PR #1423 merged",
+      branch_deleted: true,
+      restore: "git branch fix/login-redirect 4be2c19d0a77",
+    },
+  ],
   service_status: () => serviceOn,
   service_set: (a) => {
     serviceOn = !!a.install;

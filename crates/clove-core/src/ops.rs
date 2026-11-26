@@ -105,6 +105,9 @@ pub struct RemoveOptions {
     pub branch_merged: bool,
     /// Plain worktrees only: lift a `git worktree lock` to remove it.
     pub unlock: bool,
+    /// Who asked, and why, for the removal history.
+    pub by: crate::history::By,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -968,9 +971,7 @@ impl Clove {
     }
 
     pub fn remove(&self, name: &str, opts: &RemoveOptions, r: &dyn Reporter) -> Result<()> {
-        let meta = self
-            .clone_meta(name)?
-            .with_context(|| format!("no clone named `{name}`"))?;
+        let meta = self.clone_meta(name)?.ok_or_else(|| self.no_clone(name))?;
         let mut timings = vec![];
         let store = self.store()?;
         if store.clone_attached(self, name, &meta.mount)
@@ -980,6 +981,19 @@ impl Clove {
             bail!("`{name}` has uncommitted changes; commit them, or `clove rm --force {name}` to discard");
         }
         let branch = git::current_branch(&meta.path).or(meta.branch.clone());
+        let head = git::out(&meta.path, &["rev-parse", "HEAD"])
+            .or_else(|_| {
+                git::out(
+                    &self.root,
+                    &[
+                        "rev-parse",
+                        &format!("refs/heads/{}", branch.as_deref().unwrap_or("-")),
+                    ],
+                )
+            })
+            .ok()
+            .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty());
         stop_daemons(&meta.path, &meta.mount);
         timed(r, &mut timings, "unmount", || {
             store.clone_detach(self, name, &meta.mount, opts.force)
@@ -992,32 +1006,43 @@ impl Clove {
             let _ = std::fs::remove_dir(&meta.mount);
             Ok(())
         })?;
+        let mut branch_deleted = false;
         if opts.delete_branch
-            && let Some(b) = branch
+            && let Some(b) = &branch
         {
             // A branch whose tip is already in its base loses nothing; `-d` would
             // still refuse when the main checkout's branch is behind that base.
-            let merged = git::ok(&self.root, &["merge-base", "--is-ancestor", &b, &meta.base]);
+            let merged = git::ok(&self.root, &["merge-base", "--is-ancestor", b, &meta.base]);
             let flag = if opts.force || merged || opts.branch_merged {
                 "-D"
             } else {
                 "-d"
             };
-            if let Err(e) = git::run_ok(&self.root, &["branch", flag, &b]) {
-                r.event(Event::Warn {
+            match git::run_ok(&self.root, &["branch", flag, b]) {
+                Ok(_) => branch_deleted = true,
+                Err(e) => r.event(Event::Warn {
                     message: format!("kept branch {b}: {e:#}"),
-                });
+                }),
             }
         }
+        self.record_removal(crate::history::Removed {
+            at: 0,
+            kind: crate::history::Kind::Clone,
+            name: name.to_string(),
+            path: meta.path.clone(),
+            branch,
+            head,
+            by: opts.by,
+            reason: opts.reason.clone(),
+            branch_deleted,
+        });
         Ok(())
     }
 
     /// Mounts a clone if needed and returns its worktree path.
     pub fn mount(&self, name: &str) -> Result<PathBuf> {
         let record = self.require_record()?;
-        let meta = self
-            .clone_meta(name)?
-            .with_context(|| format!("no clone named `{name}`"))?;
+        let meta = self.clone_meta(name)?.ok_or_else(|| self.no_clone(name))?;
         record.backend.store()?.clone_attach(self, name, &meta.mount)?;
         // Clones made before these existed get them on their next mount.
         let _ = self.write_clone_env(&meta.path, name);
@@ -1029,9 +1054,7 @@ impl Clove {
     }
 
     pub fn unmount(&self, name: &str, force: bool) -> Result<()> {
-        let meta = self
-            .clone_meta(name)?
-            .with_context(|| format!("no clone named `{name}`"))?;
+        let meta = self.clone_meta(name)?.ok_or_else(|| self.no_clone(name))?;
         if self.shared_volume() {
             bail!(
                 "clones share the repo's volume; `clove unmount` without arguments unmounts it when nothing uses it"
@@ -1042,9 +1065,7 @@ impl Clove {
     }
 
     pub fn info(&self, name: &str, status: bool) -> Result<CloneInfo> {
-        let meta = self
-            .clone_meta(name)?
-            .with_context(|| format!("no clone named `{name}`"))?;
+        let meta = self.clone_meta(name)?.ok_or_else(|| self.no_clone(name))?;
         let store = self.require_record()?.backend.store()?;
         let mounted = store.clone_attached(self, name, &meta.mount);
         let head_file = std::fs::read_to_string(self.clone_admin(name).join("HEAD")).unwrap_or_default();
@@ -1131,9 +1152,7 @@ impl Clove {
     /// soon as nothing does (see [`Clove::remove_pending`]) and says who holds
     /// it. Uncommitted changes refuse either way, unless `force`.
     pub fn remove_or_defer(&self, name: &str, opts: &RemoveOptions, r: &dyn Reporter) -> Result<Removal> {
-        let meta = self
-            .clone_meta(name)?
-            .with_context(|| format!("no clone named `{name}`"))?;
+        let meta = self.clone_meta(name)?.ok_or_else(|| self.no_clone(name))?;
         if !opts.force {
             let store = self.store()?;
             if store.clone_attached(self, name, &meta.mount) {
@@ -1148,6 +1167,8 @@ impl Clove {
                     let pending = serde_json::json!({
                         "delete_branch": opts.delete_branch,
                         "branch_merged": opts.branch_merged,
+                        "by": opts.by,
+                        "reason": opts.reason,
                         "asked_at": now_unix(),
                     });
                     write_json(&self.clone_dir(name).join(PENDING_FILE), &pending)?;
@@ -1187,6 +1208,8 @@ impl Clove {
                 delete_branch: opts["delete_branch"].as_bool().unwrap_or(false),
                 branch_merged: opts["branch_merged"].as_bool().unwrap_or(false),
                 unlock: false,
+                by: serde_json::from_value(opts["by"].clone()).unwrap_or_default(),
+                reason: opts["reason"].as_str().map(str::to_string),
             };
             let attached = self
                 .store()
@@ -1356,6 +1379,17 @@ impl Clove {
                     return Ok(n.clone());
                 }
             }
+        }
+        // Gone: say who removed it and how the branch comes back.
+        let gone = self.history().into_iter().find(|e| {
+            e.kind == crate::history::Kind::Clone
+                && (e.name == query
+                    || e.name == s
+                    || e.branch.as_deref() == Some(query)
+                    || p.starts_with(&e.path))
+        });
+        if let Some(e) = gone {
+            return Err(self.no_clone(&e.name));
         }
         bail!("no clone matches `{query}` (see `clove ls`)")
     }
@@ -1686,9 +1720,7 @@ impl Clove {
     /// (a pull, a rebase, a checkout): copies local files again and reruns the
     /// setup steps whose inputs changed since setup last ran. `all` reruns every step.
     pub fn setup_clone(&self, name: &str, all: bool, r: &dyn Reporter) -> Result<CloneInfo> {
-        let mut meta = self
-            .clone_meta(name)?
-            .with_context(|| format!("no clone named `{name}`"))?;
+        let mut meta = self.clone_meta(name)?.ok_or_else(|| self.no_clone(name))?;
         let wt = self.mount(name)?;
         let mut timings = vec![];
         let golden = self.golden_meta()?;

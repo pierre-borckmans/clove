@@ -3,6 +3,7 @@
 //! PR's head commit from GitHub (via `gh`), not `git branch --merged`.
 
 use crate::git;
+use crate::history::By;
 use crate::repo::{CloneInfo, Clove, read_json, write_json};
 use crate::util::now_unix;
 use crate::worktrees::OtherWorktree;
@@ -116,13 +117,8 @@ impl Clove {
         if !apply {
             return Ok(out);
         }
-        let opts = crate::ops::RemoveOptions {
-            force: false,
-            delete_branch: true,
-            branch_merged: true,
-            unlock: false,
-        };
         for m in out.checks.iter().filter(|m| m.verdict == Verdict::Prune) {
+            let opts = prune_options(By::Prune, &m.reason);
             match self.remove(&m.clone, &opts, r) {
                 Ok(()) => out.removed.push(m.clone.clone()),
                 Err(e) => {
@@ -136,6 +132,70 @@ impl Clove {
         out.removed_worktrees = removed;
         out.kept.extend(kept);
         Ok(out)
+    }
+
+    /// With `prune.auto` on: removes the clones a fresh check proves merged
+    /// and clean, unless something has them open or git saw activity in them
+    /// within [`AUTO_IDLE_SECS`]. Never mounts a clone to look inside, never
+    /// touches plain worktrees, and does nothing when GitHub can't be asked.
+    /// Each removal lands in the history.
+    pub fn auto_prune(&self, r: &dyn crate::events::Reporter) -> Result<Vec<String>> {
+        if !self.config.prune.auto {
+            return Ok(vec![]);
+        }
+        let (checks, warning) = self.merge_checks(false)?;
+        if warning.is_some() {
+            return Ok(vec![]);
+        }
+        Ok(self.auto_prune_checks(&checks, r))
+    }
+
+    /// The removal half of [`Clove::auto_prune`], on checks already made.
+    pub fn auto_prune_checks(&self, checks: &[MergeCheck], r: &dyn crate::events::Reporter) -> Vec<String> {
+        let now = crate::util::now_unix();
+        let mut removed = vec![];
+        for m in checks.iter().filter(|m| m.verdict == Verdict::Prune) {
+            let Ok(Some(meta)) = self.clone_meta(&m.clone) else {
+                continue;
+            };
+            if now.saturating_sub(self.last_activity(&m.clone)) < AUTO_IDLE_SECS {
+                continue;
+            }
+            crate::backend::stop_orphan_daemons(&meta.mount, std::time::Duration::from_secs(5));
+            if !crate::backend::users(&meta.mount).is_empty() {
+                continue;
+            }
+            let opts = prune_options(By::AutoPrune, &m.reason);
+            match self.remove(&m.clone, &opts, r) {
+                Ok(()) => removed.push(m.clone.clone()),
+                Err(e) => r.event(crate::events::Event::Warn {
+                    message: format!("auto-prune kept {}: {e:#}", m.clone),
+                }),
+            }
+        }
+        removed
+    }
+
+    /// Newest of: clone creation, and git's own files for it (index, HEAD,
+    /// reflog), which change on every commit, checkout or staged edit.
+    fn last_activity(&self, name: &str) -> u64 {
+        let admin = self.clone_admin(name);
+        let mtime = |p: std::path::PathBuf| {
+            std::fs::metadata(p)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_secs())
+        };
+        [
+            mtime(self.clone_dir(name)),
+            mtime(admin.join("index")),
+            mtime(admin.join("HEAD")),
+            mtime(admin.join("logs").join("HEAD")),
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or(0)
     }
 
     fn prune_cache_path(&self) -> std::path::PathBuf {
@@ -175,7 +235,7 @@ impl Clove {
 
     /// [`Clove::all_merge_checks`] with the PR lookup given: (clone name or
     /// worktree key, branch) pairs in, PRs by key and a warning out.
-    pub(crate) fn merge_checks_with(
+    pub fn merge_checks_with(
         &self,
         mount: bool,
         lookup: impl FnOnce(&[(String, String)]) -> (BTreeMap<String, Pr>, Option<String>),
@@ -345,6 +405,21 @@ impl Clove {
             ),
             Some(false) => mk(Verdict::Prune, reason, pr),
         }
+    }
+}
+
+/// Auto-prune leaves a clone alone until git has been quiet in it this long.
+pub const AUTO_IDLE_SECS: u64 = 3600;
+
+/// Options for removing what a check proved merged.
+pub fn prune_options(by: By, reason: &str) -> crate::ops::RemoveOptions {
+    crate::ops::RemoveOptions {
+        force: false,
+        delete_branch: true,
+        branch_merged: true,
+        unlock: false,
+        by,
+        reason: Some(reason.to_string()),
     }
 }
 

@@ -11,6 +11,8 @@ import { Switch } from "@/components/ui/switch";
 import { tildify } from "@/lib/format";
 import {
   editConfig,
+  useAgents,
+  useAgentsToggle,
   useConfigSet,
   useRepoConfig,
   useRepos,
@@ -99,11 +101,58 @@ function MachineSection({ stateHome }: { stateHome?: string }) {
           </span>
         </div>
       </Row>
+      <AgentsRow />
       <ShellRow />
       <Row label="State folder">
         <Mono>{stateHome ? tildify(stateHome) : "…"}</Mono>
       </Row>
     </Section>
+  );
+}
+
+function AgentsRow() {
+  const agents = useAgents();
+  const toggle = useAgentsToggle();
+  // Nothing to teach when no supported agent is installed.
+  if (agents.data === null) return null;
+  const state = agents.data;
+  const on = toggle.isPending ? toggle.variables : state === "installed";
+  return (
+    <Row label="Coding agents">
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-3">
+          <Switch
+            checked={!!on}
+            disabled={agents.isLoading || toggle.isPending}
+            onCheckedChange={(v) => toggle.mutate(v)}
+            aria-label="Coding agents"
+          />
+          <span className="text-[13px] text-muted-foreground">
+            {state === "installed"
+              ? "Claude Code and Codex make worktrees with clove."
+              : state === "outdated"
+                ? "Instructions from an older clove. Switch on to update them."
+                : "Off. Agents use git worktree add and don't know clove."}
+          </span>
+          {state === "outdated" && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[12.5px]"
+              disabled={toggle.isPending}
+              onClick={() => toggle.mutate(true)}
+            >
+              Update
+            </Button>
+          )}
+        </div>
+        <span className="text-[12px] text-faint">
+          A skill and a short block in <Mono className="text-faint">~/.claude/CLAUDE.md</Mono> and{" "}
+          <Mono className="text-faint">~/.codex/AGENTS.md</Mono>, plus Claude Code's worktree hooks. Same as{" "}
+          <Mono className="text-faint">clove agents install</Mono>.
+        </span>
+      </div>
+    </Row>
   );
 }
 

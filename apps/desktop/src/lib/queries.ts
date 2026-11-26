@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { api } from "./api";
 import { listen } from "./bridge";
 import { APP_LABELS } from "./prefs";
-import type { AppId, Layer } from "./types";
+import type { AppId, Layer, Removed } from "./types";
 
 export const keys = {
   repos: ["repos"] as const,
@@ -19,6 +19,8 @@ export const keys = {
   config: (root: string) => ["config", root] as const,
   prs: (root: string) => ["prs", root] as const,
   service: ["service"] as const,
+  agents: ["agents"] as const,
+  history: ["history"] as const,
   shell: ["shell"] as const,
   apps: ["apps"] as const,
   repoCandidates: ["repo-candidates"] as const,
@@ -183,6 +185,53 @@ export function useServiceToggle() {
     onError: (e) => toast.error("Could not change the service", { description: String(e) }),
     onSettled: () => qc.invalidateQueries({ queryKey: keys.service }),
   });
+}
+
+export function useAgents() {
+  return useQuery({ queryKey: keys.agents, queryFn: api.agentsStatus, staleTime: 30_000 });
+}
+
+export function useAgentsToggle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (install: boolean) => api.agentsSet(install),
+    onSuccess: (state) =>
+      toast.success(state === "installed" ? "Coding agents now know clove" : "clove taken out of agent instructions", {
+        description:
+          state === "installed"
+            ? "Claude Code and Codex use clove for worktrees. Restart running sessions to pick it up."
+            : "They go back to git worktree add",
+      }),
+    onError: (e) => toast.error("Could not change agent instructions", { description: String(e) }),
+    onSettled: () => qc.invalidateQueries({ queryKey: keys.agents }),
+  });
+}
+
+/** What clove removed in every repo, newest first. */
+export function useHistory() {
+  return useQuery({ queryKey: keys.history, queryFn: () => api.history(50), refetchInterval: POLL_MS });
+}
+
+/**
+ * Announces clones the service auto-pruned while the app is open. What
+ * happened before shows on the Cleanup page.
+ */
+export function useAutoPruneToasts() {
+  const { data } = useHistory();
+  const seen = useRef<number | null>(null);
+  useEffect(() => {
+    if (!data) return;
+    const newest = data[0]?.at ?? 0;
+    if (seen.current !== null) {
+      const since = seen.current;
+      for (const e of data.filter((e: Removed) => e.at > since && e.by === "auto-prune")) {
+        toast.info(`Auto-pruned ${e.name} in ${e.repo}`, {
+          description: [e.reason, e.restore && `branch back: ${e.restore}`].filter(Boolean).join(" · "),
+        });
+      }
+    }
+    seen.current = Math.max(seen.current ?? 0, newest);
+  }, [data]);
 }
 
 export function useShell() {

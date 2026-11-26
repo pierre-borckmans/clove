@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "./bridge";
 import type {
+  AgentsState,
   AppId,
   Check,
   Cleanup,
@@ -11,6 +12,7 @@ import type {
   OpRequest,
   OtherWorktree,
   Refs,
+  Removed,
   RepoCandidate,
   RepoConfig,
   RepoStatus,
@@ -58,6 +60,9 @@ export const api = {
     invoke<string>("config_set", { root, layer, key, value }),
   serviceStatus: () => invoke<boolean>("service_status"),
   serviceSet: (install: boolean) => invoke<boolean>("service_set", { install }),
+  agentsStatus: () => invoke<AgentsState>("agents_status"),
+  agentsSet: (install: boolean) => invoke<AgentsState>("agents_set", { install }),
+  history: (limit: number) => invoke<Removed[]>("history", { limit }),
   prs: (root: string) => invoke<MergeCheck[]>("prs", { root }),
   checkPrs: (root: string) => invoke<MergeCheck[]>("check_prs", { root }),
   branchCandidates: (root: string) => invoke<{ name: string; remote: boolean }[]>("branch_candidates", { root }),
