@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { tildify } from "@/lib/format";
+import { isMac, THIS_MACHINE } from "@/lib/platform";
 import {
   editConfig,
   useAgents,
@@ -85,19 +86,25 @@ function MachineSection({ stateHome }: { stateHome?: string }) {
   const toggle = useServiceToggle();
   const on = toggle.isPending ? toggle.variables : service.data;
   return (
-    <Section icon={<Laptop className="size-4 text-muted-foreground" />} title="This Mac">
+    <Section icon={<Laptop className="size-4 text-muted-foreground" />} title={THIS_MACHINE}>
       <Row label="Background service">
-        <div className="flex items-center gap-3">
-          <Switch
-            checked={!!on}
-            disabled={service.isLoading || toggle.isPending}
-            onCheckedChange={(v) => toggle.mutate(v)}
-            aria-label="Background service"
-          />
-          <span className="text-[13px] text-muted-foreground">
-            {on
-              ? "Refreshes stale golden images when you fetch or pull, and every 4h. Remounts clones at login."
-              : "Off. Golden images refresh only when a new clone finds them stale."}
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={!!on}
+              disabled={service.isLoading || toggle.isPending}
+              onCheckedChange={(v) => toggle.mutate(v)}
+              aria-label="Background service"
+            />
+            <span className="text-[13px] text-muted-foreground">
+              {on
+                ? "Refreshes stale golden images when you fetch or pull, and every 4h. Remounts clones at login."
+                : "Off. Golden images refresh only when a new clone finds them stale."}
+            </span>
+          </div>
+          <span className="text-[12px] text-faint">
+            {isMac ? "Two launchd agents" : "systemd user units"} running the clove CLI. Same as{" "}
+            <Mono className="text-faint">clove service install</Mono>.
           </span>
         </div>
       </Row>

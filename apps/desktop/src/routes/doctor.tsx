@@ -5,6 +5,7 @@ import { RepoMark } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
+import { THIS_MACHINE } from "@/lib/platform";
 import { copyText, keys, useRepos } from "@/lib/queries";
 import type { Check } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -46,7 +47,11 @@ export function DoctorPage() {
       </PaneHeader>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto flex max-w-[860px] flex-col gap-6 px-6 pt-5 pb-16">
-          <Section icon={<Laptop className="size-4 text-muted-foreground" />} title="This Mac" checks={machine.data} />
+          <Section
+            icon={<Laptop className="size-4 text-muted-foreground" />}
+            title={THIS_MACHINE}
+            checks={machine.data}
+          />
           {repos.map((r, i) => (
             <Section
               key={r.id}
