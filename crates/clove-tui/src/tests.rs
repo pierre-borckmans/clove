@@ -2226,7 +2226,10 @@ fn an_update_stopped_on_conflicts_offers_the_resolver() {
     };
     let (mut app, name) = conflict();
     let (s, _) = render(&mut app, 120, 40);
-    assert!(s.contains("Resolve with Claude") || s.contains("resolve with Claude"), "{s}");
+    assert!(
+        s.contains("Resolve with Claude") || s.contains("resolve with Claude"),
+        "{s}"
+    );
     assert!(s.contains("src/table.go"), "{s}");
     let fx = key(&mut app, KeyCode::Enter);
     assert!(

@@ -2664,7 +2664,10 @@ fn draw_resolve_offer(f: &mut Frame, app: &mut App, area: Rect, o: &ResolveOffer
         lines.push(Line::from(Span::raw(l)));
     }
     for file in o.files.iter().take(6) {
-        lines.push(Line::from(Span::styled(format!("  {}", trunc_left(file, iw.saturating_sub(2))), fg(AMBER))));
+        lines.push(Line::from(Span::styled(
+            format!("  {}", trunc_left(file, iw.saturating_sub(2))),
+            fg(AMBER),
+        )));
     }
     if n > 6 {
         lines.push(Line::from(Span::styled(format!("  and {} more", n - 6), muted())));
