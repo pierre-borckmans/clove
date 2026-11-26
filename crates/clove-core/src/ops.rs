@@ -1074,7 +1074,14 @@ impl Clove {
                 deps.push(Dep::git_ref(&self.common_dir, &format!("refs/heads/{b}")));
             }
             let key = format!("clone-status:{}", meta.path.display());
-            (dirty, ahead, behind) = crate::memo::get_tree(&key, &meta.path, &deps, || {
+            let recheck = |v: &(Option<bool>, Option<u32>, Option<u32>)| {
+                if v.0 == Some(true) {
+                    crate::memo::DIRTY_RECHECK
+                } else {
+                    crate::memo::MIN_RECHECK
+                }
+            };
+            (dirty, ahead, behind) = crate::memo::get_tree_by(&key, &meta.path, &deps, recheck, || {
                 let dirty = git::is_dirty(&meta.path).ok();
                 let (mut ahead, mut behind) = (None, None);
                 if let Ok(s) = git::out(

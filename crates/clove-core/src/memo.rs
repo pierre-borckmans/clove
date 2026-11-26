@@ -65,14 +65,19 @@ pub const WATCHED_TTL: Duration = Duration::from_secs(300);
 /// A tree that keeps changing (a build writing outside ignored dirs) is still
 /// asked about at most this often.
 pub const MIN_RECHECK: Duration = Duration::from_secs(5);
+/// Same, for a tree already known to have changes: more edits can't make it
+/// look any different (going clean takes a commit, stash or reset, which the
+/// index stamp catches), so agents editing in many clones stay cheap.
+pub const DIRTY_RECHECK: Duration = Duration::from_secs(60);
 
 struct Entry {
     /// Working tree this answer reads, if any: what invalidation matches on.
     tree: Option<PathBuf>,
     stamp: Stamp,
     at: Instant,
-    /// Its tree changed since: recompute once `MIN_RECHECK` has passed.
+    /// Its tree changed since: recompute once `recheck` has passed.
     stale: bool,
+    recheck: Duration,
     value: Box<dyn std::any::Any + Send>,
 }
 
@@ -84,7 +89,7 @@ static WATCHED: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(Default::defau
 /// stamped after computing, so git's own index refresh does not make the
 /// next call miss.
 pub fn get<T: Clone + Send + 'static>(key: &str, deps: &[Dep], compute: impl FnOnce() -> T) -> T {
-    lookup(key, None, deps, compute)
+    lookup(key, None, deps, |_| MIN_RECHECK, compute)
 }
 
 /// `compute`'s answer for `key`, reused for `max_age`: for numbers that drift
@@ -105,6 +110,7 @@ pub fn get_aged<T: Clone + Send + 'static>(key: &str, max_age: Duration, compute
         stamp: vec![],
         at: Instant::now(),
         stale: false,
+        recheck: MIN_RECHECK,
         value: Box::new(v.clone()),
     };
     MEMO.lock()
@@ -123,13 +129,25 @@ pub fn get_tree<T: Clone + Send + 'static>(
     deps: &[Dep],
     compute: impl FnOnce() -> T,
 ) -> T {
-    lookup(key, Some(tree), deps, compute)
+    lookup(key, Some(tree), deps, |_| MIN_RECHECK, compute)
+}
+
+/// [`get_tree`] where the answer says how soon edits are worth a recheck.
+pub fn get_tree_by<T: Clone + Send + 'static>(
+    key: &str,
+    tree: &Path,
+    deps: &[Dep],
+    recheck: impl Fn(&T) -> Duration,
+    compute: impl FnOnce() -> T,
+) -> T {
+    lookup(key, Some(tree), deps, recheck, compute)
 }
 
 fn lookup<T: Clone + Send + 'static>(
     key: &str,
     tree: Option<&Path>,
     deps: &[Dep],
+    recheck: impl Fn(&T) -> Duration,
     compute: impl FnOnce() -> T,
 ) -> T {
     let now = stamp(deps);
@@ -139,7 +157,7 @@ fn lookup<T: Clone + Send + 'static>(
         if let Some(e) = m.get(key)
             && e.stamp == now
             && ttl.is_none_or(|t| e.at.elapsed() < t)
-            && !(e.stale && e.at.elapsed() >= MIN_RECHECK)
+            && !(e.stale && e.at.elapsed() >= e.recheck)
             && let Some(v) = e.value.downcast_ref::<T>()
         {
             return v.clone();
@@ -151,6 +169,7 @@ fn lookup<T: Clone + Send + 'static>(
         stamp: stamp(deps),
         at: Instant::now(),
         stale: false,
+        recheck: recheck(&v),
         value: Box::new(v.clone()),
     };
     MEMO.lock()
@@ -168,6 +187,12 @@ pub fn invalidate_under(path: &Path) {
             e.stale = true;
         }
     }
+}
+
+/// Forgets answers about the tree at `path`: before acting on it, ask git.
+pub fn forget_tree(path: &Path) {
+    let mut m = MEMO.lock().unwrap_or_else(|e| e.into_inner());
+    m.retain(|_, e| e.tree.as_deref() != Some(path));
 }
 
 /// Forgets everything: an explicit refresh.
@@ -314,6 +339,38 @@ mod tests {
         let mut m = MEMO.lock().unwrap();
         let e = m.get_mut(key).unwrap();
         e.at -= by;
+    }
+
+    #[test]
+    fn a_dirty_tree_is_rechecked_less_often() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tree = tmp.path().join("wt");
+        let calls = AtomicUsize::new(0);
+        let key = format!("t4:{}", tree.display());
+        let ask = || {
+            get_tree_by(
+                &key,
+                &tree,
+                &[],
+                |dirty: &bool| if *dirty { DIRTY_RECHECK } else { MIN_RECHECK },
+                || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    true
+                },
+            )
+        };
+        ask();
+        invalidate_under(&tree.join("a"));
+        backdate(&key, MIN_RECHECK);
+        ask();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "dirty: edits wait for DIRTY_RECHECK"
+        );
+        backdate(&key, DIRTY_RECHECK);
+        ask();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]

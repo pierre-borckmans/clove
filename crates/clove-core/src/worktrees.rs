@@ -305,7 +305,11 @@ impl Clove {
             }
             let key = format!("wt-status:{}", w.path.display());
             let detached = w.branch.is_none();
-            let (st, detached_commits) = crate::memo::get_tree(&key, &w.path, &deps, || {
+            let recheck = |v: &(Result<String, String>, Option<u32>)| match &v.0 {
+                Ok(s) if !s.trim().is_empty() => crate::memo::DIRTY_RECHECK,
+                _ => crate::memo::MIN_RECHECK,
+            };
+            let (st, detached_commits) = crate::memo::get_tree_by(&key, &w.path, &deps, recheck, || {
                 let st = git::out(&w.path, &["status", "--short", "--untracked-files=normal"])
                     .map_err(|e| format!("{e:#}"));
                 let n = if detached {
@@ -380,6 +384,8 @@ impl Clove {
     /// branch goes only on `delete_branch`, by the same rule as clones: `-D`
     /// when merged, else `-d`.
     pub fn remove_worktree(&self, path: &Path, opts: &RemoveOptions, r: &dyn Reporter) -> Result<()> {
+        // What goes is decided on fresh answers, never remembered ones.
+        crate::memo::forget_tree(path);
         let w = self
             .other_worktrees(true)?
             .into_iter()
@@ -478,6 +484,8 @@ impl Clove {
         r: &dyn Reporter,
         create: impl FnOnce(&NewOptions) -> Result<CloneInfo>,
     ) -> Result<CloneInfo> {
+        // Whether changes get carried over is decided on a fresh answer.
+        crate::memo::forget_tree(path);
         let w = self
             .other_worktrees(true)?
             .into_iter()
