@@ -4,6 +4,7 @@ line boundaries using the character timestamps ElevenLabs returns.
 
     python3 tts/elevenlabs_vo.py --voice Sarah --audition   # full read only, to listen
     python3 tts/elevenlabs_vo.py --voice Sarah              # full read, cut into public/vo/<id>.wav
+    python3 tts/elevenlabs_vo.py --voice Eric --only logo   # re-voice one line, the others untouched
 
 The API key is read from ~/.elevenlabs_key and never printed.
 Full reads are kept in tts/eleven/<voice>-<model>.mp3 (and their timestamps).
@@ -17,6 +18,7 @@ ap.add_argument("--stability", type=float, default=0.5)
 ap.add_argument("--style", type=float, default=0.15)
 ap.add_argument("--speed", type=float, default=0.98)
 ap.add_argument("--audition", action="store_true", help="only make the full read")
+ap.add_argument("--only", help="re-voice just this line id, with its neighbours as context")
 ap.add_argument("--reuse", action="store_true", help="cut the full read already in tts/eleven/ instead of a new take")
 a = ap.parse_args()
 
@@ -49,12 +51,61 @@ for l in lines:
     pos = i + len(l["say"])
 
 name = voice["name"].split(" ")[0]
+settings = {"stability": a.stability, "similarity_boost": 0.8, "style": a.style, "use_speaker_boost": True, "speed": a.speed}
+
+
+def cut(src, t0, t1, out):
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-ss", f"{t0:.3f}", "-to", f"{t1:.3f}",
+         "-af", "afade=t=in:d=0.02,areverse,afade=t=in:d=0.06,areverse", "-ar", "48000", "-ac", "1", out],
+        check=True,
+    )
+
+
+def word_times(text, st, s, e, t0):
+    """When each word of text[s:e] starts, relative to t0: visuals cue on words."""
+    ws, w, w0 = [], "", None
+    for k in range(s, e + 1):
+        ch = text[k] if k < e else " "
+        if ch.isalnum() or ch in "'-":
+            if w0 is None:
+                w0 = st[k]
+            w += ch
+        elif w:
+            ws.append({"w": w.lower(), "t": round(w0 - t0, 3)})
+            w, w0 = "", None
+    return ws
+
+
+if a.only:
+    ids = [l["id"] for l in lines]
+    i = ids.index(a.only)
+    say = lines[i]["say"]
+    body = {"text": say, "model_id": a.model, "voice_settings": settings,
+            "previous_text": "\n\n".join(l["say"] for l in lines[max(0, i - 2):i]),
+            "next_text": lines[i + 1]["say"] if i + 1 < len(lines) else ""}
+    res = call(f"/text-to-speech/{voice['voice_id']}/with-timestamps?output_format=mp3_44100_128", body)
+    os.makedirs("tts/eleven/lines", exist_ok=True)
+    src = f"tts/eleven/lines/{name}-{a.only}.mp3"
+    open(src, "wb").write(base64.b64decode(res["audio_base64"]))
+    al = res.get("alignment") or res.get("normalized_alignment")
+    st, en = al["character_start_times_seconds"], al["character_end_times_seconds"]
+    t0, t1 = max(0.0, st[0] - 0.06), en[len(say) - 1] + 0.12
+    cut(src, t0, t1, f"public/vo/{a.only}.wav")
+    durs = json.load(open("src/durations.json"))
+    durs["durations"][a.only] = round(t1 - t0, 3)
+    words = json.load(open("src/words.json"))
+    words[a.only] = word_times(say, st, 0, len(say), t0)
+    json.dump(durs, open("src/durations.json", "w"), indent=2)
+    json.dump(words, open("src/words.json", "w"), indent=1)
+    print(f"{a.only:9} {t1 - t0:5.2f}s (one line, {len(say)} characters)")
+    raise SystemExit(0)
+
 os.makedirs("tts/eleven", exist_ok=True)
 base = f"tts/eleven/{name}-{a.model}"
 if a.reuse:
     al = json.load(open(base + ".json"))
 else:
-    settings = {"stability": a.stability, "similarity_boost": 0.8, "style": a.style, "use_speaker_boost": True, "speed": a.speed}
     res = call(
         f"/text-to-speech/{voice['voice_id']}/with-timestamps?output_format=mp3_44100_128",
         {"text": text, "model_id": a.model, "voice_settings": settings},
@@ -78,24 +129,9 @@ for idx, (l, (s, e)) in enumerate(zip(lines, starts)):
     if idx + 1 < len(lines):
         t1 = min(t1, st[starts[idx + 1][0]] - 0.02)
     out = f"public/vo/{l['id']}.wav"
-    subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", base + ".mp3", "-ss", f"{t0:.3f}", "-to", f"{t1:.3f}",
-         "-af", "afade=t=in:d=0.02,areverse,afade=t=in:d=0.06,areverse", "-ar", "48000", "-ac", "1", out],
-        check=True,
-    )
+    cut(base + ".mp3", t0, t1, out)
     durs["durations"][l["id"]] = round(t1 - t0, 3)
-    # When each word starts, relative to the scene's clip: visuals cue on words.
-    ws, w, w0 = [], "", None
-    for k in range(s, e + 1):
-        ch = text[k] if k < e else " "
-        if ch.isalnum() or ch in "'-":
-            if w0 is None:
-                w0 = st[k]
-            w += ch
-        elif w:
-            ws.append({"w": w.lower(), "t": round(w0 - t0, 3)})
-            w, w0 = "", None
-    words[l["id"]] = ws
+    words[l["id"]] = word_times(text, st, s, e, t0)
     print(f"{l['id']:9} {t1 - t0:5.2f}s")
 durs["voice"] = f"elevenlabs:{name}:{a.model}"
 json.dump(durs, open("src/durations.json", "w"), indent=2)

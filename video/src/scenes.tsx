@@ -478,7 +478,7 @@ export function Again() {
 /** 8. There's a better way: the mark. */
 export function Logo() {
   const frame = useCurrentFrame();
-  const at = cue("logo", "this", 0, -6);
+  const at = cue("logo", "meet", 0, -6);
   const word = useIn(at + 14, 200);
   const glow = useRamp(at + 8, at + 38);
   const lead = useIn(4, 200) * interpolate(frame, [at - 8, at], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
