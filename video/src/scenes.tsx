@@ -607,16 +607,41 @@ function Column({ at, os, fs, children }: { at: number; os: string; fs: string; 
   );
 }
 
+/** The copy step between a golden image and its clones, drawn left to right. */
+function Link({ label, at }: { label: string; at: number }) {
+  const frame = useCurrentFrame();
+  const d = interpolate(frame, [at, at + 18], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 14, margin: "10px 4px" }}>
+      <div style={{ flex: 1, height: 2, background: `linear-gradient(90deg, ${c.peel}, ${c.bottle})`, transformOrigin: "left", transform: `scaleX(${d})`, opacity: 0.8 }} />
+      <span style={{ fontFamily: mono, fontSize: 17, color: c.bottle, opacity: d }}>{label}</span>
+    </div>
+  );
+}
+
+/** One OS: a container holding the golden image and its clones. */
+function Pool({ caption, golden, goldenSub, link, cloneSub, at, linkAt, cloneAt }: {
+  caption: string; golden: string; goldenSub: string; link: string; cloneSub: string; at: number; linkAt: number; cloneAt: number;
+}) {
+  const clones = ["feat-login", "fix-race", "agent/parser"];
+  return (
+    <Glass tint="rgba(233,238,232,0.03)" style={{ padding: "22px 24px" }}>
+      <div style={{ fontFamily: mono, fontSize: 18, color: c.dim, marginBottom: 14 }}>{caption}</div>
+      <Box label={golden} sub={goldenSub} tint="rgba(227,201,94,0.07)" border={`${c.peel}55`} at={at} />
+      <Link label={link} at={linkAt} />
+      <div style={{ display: "flex", gap: 12 }}>
+        {clones.map((n, i) => (
+          <Box key={n} label={n} sub={cloneSub} tint="rgba(124,196,155,0.07)" border={`${c.bottle}66`} at={cloneAt + i * 5} style={{ flex: 1 }} />
+        ))}
+      </div>
+    </Glass>
+  );
+}
+
 /** 7. Under the hood: APFS clonefile on macOS, btrfs snapshots on Linux. */
 export function Internals() {
-  const frame = useCurrentFrame();
   const mac = cue("internals", "macos", 0, -6);
   const linux = cue("internals", "linux", 0, -6);
-  const arrow = interpolate(frame, [cue("internals", "copied"), cue("internals", "clonefile", 0, 8)], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-  const snaps = ["feat-login", "fix-race", "agent/parser"];
   const snapAt = cue("internals", "snapshot", 0, -4);
   return (
     <Stage push={0.02}>
@@ -626,31 +651,32 @@ export function Internals() {
       </div>
       <div style={{ display: "flex", gap: 120, marginTop: 260, alignItems: "flex-start" }}>
         <Column at={mac} os="macOS" fs="APFS">
-          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-            <Box label="golden.img" sub="the warmed image" tint="rgba(227,201,94,0.07)" border={`${c.peel}55`} at={mac + 4} />
-            <div style={{ flex: 1, position: "relative", height: 40 }}>
-              <div style={{ position: "absolute", top: 19, left: 0, height: 2, width: `${arrow * 100}%`, background: `linear-gradient(90deg, ${c.peel}, ${c.bottle})` }} />
-              <div style={{ position: "absolute", top: -14, width: "100%", textAlign: "center", fontFamily: mono, fontSize: 17, color: c.bottle, opacity: arrow }}>
-                clonefile(2)
-              </div>
-            </div>
-            <Box label="feat-login.img" sub="shares every block" tint="rgba(124,196,155,0.07)" border={`${c.bottle}66`} at={cue("internals", "clonefile")} />
-          </div>
-          <div style={{ display: "flex", gap: 14, marginTop: 34, flexWrap: "wrap" }}>
+          <Pool
+            caption="disk images · one per clone"
+            golden="golden.img"
+            goldenSub="the warmed image"
+            link="clonefile(2)"
+            cloneSub="image clone"
+            at={mac + 6}
+            linkAt={cue("internals", "copied")}
+            cloneAt={cue("internals", "clonefile")}
+          />
+          <div style={{ display: "flex", gap: 14, marginTop: 24 }}>
             <Chip at={cue("internals", "single", 0, -2)}>one syscall, any repo size</Chip>
             <Chip at={cue("internals", "call", 0, 2)}>mounted in ~0.7s</Chip>
           </div>
         </Column>
         <Column at={linux} os="Linux" fs="btrfs">
-          <Glass tint="rgba(233,238,232,0.03)" style={{ padding: "22px 24px" }}>
-            <div style={{ fontFamily: mono, fontSize: 18, color: c.dim, marginBottom: 14 }}>pool.btrfs · mounted once per repo</div>
-            <Box label=".clove-golden" sub="subvolume" tint="rgba(227,201,94,0.07)" border={`${c.peel}55`} at={linux + 6} style={{ marginBottom: 12 }} />
-            <div style={{ display: "flex", gap: 12 }}>
-              {snaps.map((n, i) => (
-                <Box key={n} label={n} sub="snapshot" tint="rgba(124,196,155,0.07)" border={`${c.bottle}66`} at={snapAt + i * 5} style={{ flex: 1 }} />
-              ))}
-            </div>
-          </Glass>
+          <Pool
+            caption="pool.btrfs · mounted once per repo"
+            golden=".clove-golden"
+            goldenSub="subvolume"
+            link="subvolume snapshot"
+            cloneSub="snapshot"
+            at={linux + 6}
+            linkAt={snapAt - 10}
+            cloneAt={snapAt}
+          />
           <div style={{ display: "flex", gap: 14, marginTop: 24 }}>
             <Chip at={cue("internals", "milliseconds", 0, -4)}>~8 ms per clone</Chip>
             <Chip at={cue("internals", "milliseconds", 0, 6)}>no mount per clone</Chip>
