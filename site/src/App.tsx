@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { CopyCommand, INSTALL } from "./components";
 import { Backdrop, FooterLinks, Nav } from "./layout";
+import { VideoDialog, WatchButton } from "./video";
 import {
   Clash,
   Cost,
@@ -87,9 +88,12 @@ function Hero() {
       <div
         data-reveal
         style={{ "--d": "240ms" } as React.CSSProperties}
-        className="mt-9 max-w-[34rem]"
+        className="mt-9 flex max-w-[50rem] flex-wrap items-center gap-3"
       >
-        <CopyCommand cmd={INSTALL} />
+        <div className="min-w-[20rem] flex-1">
+          <CopyCommand cmd={INSTALL} />
+        </div>
+        <WatchButton />
       </div>
       <div data-reveal style={{ "--d": "300ms" } as React.CSSProperties} className="mt-14">
         <Race />
@@ -306,6 +310,7 @@ export function App() {
       <Nav />
       <Hero />
       <Rail />
+      <VideoDialog />
       <main>
         <Beat
           id="clash"

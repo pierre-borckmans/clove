@@ -79,7 +79,27 @@ function tocSpy() {
   update();
 }
 
+/** The intro video overlay: opens from the hero, pauses when closed. */
+function videoDialog() {
+  const button = document.querySelector<HTMLButtonElement>("[data-watch]");
+  const dialog = document.querySelector<HTMLDialogElement>("[data-video-dialog]");
+  if (!button || !dialog || typeof dialog.showModal !== "function") return;
+  const video = dialog.querySelector("video");
+  button.hidden = false;
+  button.addEventListener("click", () => {
+    dialog.showModal();
+    video?.play().catch(() => {});
+  });
+  dialog.querySelector("[data-video-close]")?.addEventListener("click", () => dialog.close());
+  // A click on the dimmed backdrop (the dialog itself, not its content) closes it.
+  dialog.addEventListener("click", (e) => {
+    if (e.target === dialog) dialog.close();
+  });
+  dialog.addEventListener("close", () => video?.pause());
+}
+
 export function enhance() {
+  videoDialog();
   tocSpy();
   copyButtons();
   reveals();

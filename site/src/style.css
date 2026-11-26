@@ -767,3 +767,54 @@ html:not(.js) .spark {
 .rail-dot.active:hover {
   background: var(--bottle);
 }
+
+/* The intro video overlay. */
+.video-dialog {
+  width: min(1100px, 92vw);
+  max-width: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+.video-dialog::backdrop {
+  background: rgba(5, 8, 6, 0.8);
+  backdrop-filter: blur(6px);
+}
+.video-dialog[open] {
+  animation: video-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes video-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+}
+.video-frame {
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid var(--rule);
+  box-shadow: 0 40px 120px rgba(0, 0, 0, 0.7);
+  background: #000;
+}
+.video-frame video {
+  display: block;
+  width: 100%;
+}
+.video-close {
+  position: absolute;
+  top: -2.6rem;
+  right: 0;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  background: rgba(13, 17, 15, 0.8);
+  color: var(--ink-2);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.video-close:hover {
+  color: var(--ink);
+}
