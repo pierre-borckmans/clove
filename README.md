@@ -5,6 +5,10 @@
 
 # clove
 
+[![ci](https://github.com/pierre-borckmans/clove/actions/workflows/ci.yml/badge.svg)](https://github.com/pierre-borckmans/clove/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/pierre-borckmans/clove)](https://github.com/pierre-borckmans/clove/releases/latest)
+[![license](https://img.shields.io/github/license/pierre-borckmans/clove)](LICENSE)
+
 A ready git worktree in about a second, with `node_modules`, the dev shell and every other ignored file already there.
 
 ```
