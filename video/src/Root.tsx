@@ -3,7 +3,7 @@ import { linearTiming, TransitionSeries } from "@remotion/transitions";
 import { AbsoluteFill, Audio, Composition, Sequence, staticFile } from "remotion";
 import durations from "./durations.json";
 import script from "./script.json";
-import { Agents, Cost, Empty, Fast, Features, Golden, Logo, Outro, Steps, Surfaces, Worktree } from "./scenes";
+import { Agents, Cost, Empty, Fast, Features, Golden, Internals, Logo, Outro, Steps, Surfaces, Worktree } from "./scenes";
 import { Backdrop, LEAD } from "./ui";
 
 const FPS = 30;
@@ -17,6 +17,7 @@ const TAIL: Record<string, number> = {
   agents: 2.0,
   logo: 1.8,
   golden: 1.8,
+  internals: 2.2,
   fast: 2.4,
   steps: 1.6,
   surfaces: 2.0,
@@ -30,6 +31,7 @@ const SCENES: Record<string, () => React.JSX.Element> = {
   agents: Agents,
   logo: Logo,
   golden: Golden,
+  internals: Internals,
   fast: Fast,
   steps: Steps,
   surfaces: Surfaces,

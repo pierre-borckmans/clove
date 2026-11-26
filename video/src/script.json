@@ -1,13 +1,50 @@
 [
-  { "id": "worktree", "say": "You start a new task, and git gives you a fresh worktree in a second." },
-  { "id": "empty", "say": "But it starts empty. No dependencies, no dev shell, and none of your local files." },
-  { "id": "cost", "say": "On a big monorepo, getting it ready takes over a minute and gigabytes of disk. And it happens every single time." },
-  { "id": "agents", "say": "Now run five coding agents side by side. That is five minutes of waiting before anyone writes a line." },
-  { "id": "logo", "say": "This is clove." },
-  { "id": "golden", "say": "clove keeps one golden image of your repo, with dependencies installed and the environment warmed. Each worktree is a copy-on-write clone of it." },
-  { "id": "fast", "say": "So a new worktree is ready in about a second. Everything is already there, and it takes almost no disk." },
-  { "id": "steps", "say": "When a lockfile changes, only that step runs again." },
-  { "id": "surfaces", "say": "Use it from the command line, from a full-screen terminal interface, or from the Mac app." },
-  { "id": "features", "say": "It brings your clones up to date, with Claude resolving the conflicts. It cleans up after merged pull requests. And it teaches your agents to use it." },
-  { "id": "outro", "say": "That's clove. Your worktrees, ready in a second." }
+  {
+    "id": "worktree",
+    "say": "You start a new task, and git gives you a fresh worktree in a second."
+  },
+  {
+    "id": "empty",
+    "say": "But it starts empty. No dependencies, no dev shell, and none of your local files."
+  },
+  {
+    "id": "cost",
+    "say": "On a big monorepo, getting it ready takes over a minute and gigabytes of disk. And it happens every single time."
+  },
+  {
+    "id": "agents",
+    "say": "Now run five coding agents side by side. That is five minutes of waiting before anyone writes a line."
+  },
+  {
+    "id": "logo",
+    "say": "This is clove."
+  },
+  {
+    "id": "golden",
+    "say": "clove keeps one golden image of your repo, with dependencies installed and the environment warmed. Each worktree is a copy-on-write clone of it."
+  },
+  {
+    "id": "internals",
+    "say": "Under the hood, it leans on what your file system already does well. On macOS, each clone is an APFS disk image, copied whole by a single clonefile call. On Linux, it's a btrfs snapshot, taken in a few milliseconds."
+  },
+  {
+    "id": "fast",
+    "say": "So a new worktree is ready in about a second. Everything is already there, and it takes almost no disk."
+  },
+  {
+    "id": "steps",
+    "say": "When a lockfile changes, only that step runs again."
+  },
+  {
+    "id": "surfaces",
+    "say": "Use it from the command line, from a full-screen terminal interface, or from the desktop app, on macOS and Linux."
+  },
+  {
+    "id": "features",
+    "say": "It brings your clones up to date, with Claude resolving the conflicts. It cleans up after merged pull requests. And it teaches your agents to use it."
+  },
+  {
+    "id": "outro",
+    "say": "That's clove. Your worktrees, ready in a second."
+  }
 ]

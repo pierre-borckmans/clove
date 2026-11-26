@@ -1,16 +1,17 @@
 {
   "durations": {
-    "worktree": 4.52,
-    "empty": 6.473,
-    "cost": 6.658,
-    "agents": 5.683,
-    "logo": 1.144,
-    "golden": 8.76,
-    "fast": 6.17,
-    "steps": 3.72,
-    "surfaces": 5.265,
-    "features": 9.015,
-    "outro": 3.547
+    "worktree": 4.195,
+    "empty": 5.369,
+    "cost": 6.24,
+    "agents": 5.66,
+    "logo": 1.027,
+    "golden": 8.946,
+    "internals": 15.854,
+    "fast": 6.136,
+    "steps": 3.256,
+    "surfaces": 6.682,
+    "features": 8.609,
+    "outro": 2.897
   },
   "voice": "elevenlabs:Eric:eleven_multilingual_v2"
 }

@@ -352,7 +352,107 @@ export function Golden() {
   );
 }
 
-/** 7. clove new vs git worktree + setup, side by side. */
+/** A box in the under-the-hood diagrams. */
+function Box({ label, sub, tint, border, at, style }: { label: string; sub?: string; tint: string; border: string; at: number; style?: React.CSSProperties }) {
+  const p = useIn(at, 16);
+  return (
+    <Glass tint={tint} style={{ padding: "18px 24px", border: `1px solid ${border}`, opacity: p, transform: `scale(${0.92 + 0.08 * p})`, ...style }}>
+      <div style={{ fontFamily: mono, fontSize: 24, color: c.ink }}>{label}</div>
+      {sub && <div style={{ fontFamily: mono, fontSize: 17, color: c.muted, marginTop: 6 }}>{sub}</div>}
+    </Glass>
+  );
+}
+
+function Chip({ children, at, color = c.bottle }: { children: React.ReactNode; at: number; color?: string }) {
+  const p = useIn(at, 14);
+  return (
+    <span
+      style={{
+        fontFamily: mono,
+        fontSize: 18,
+        color,
+        padding: "6px 14px",
+        borderRadius: 999,
+        border: `1px solid ${color}55`,
+        background: `${color}14`,
+        opacity: p,
+        display: "inline-block",
+        transform: `translateY(${(1 - p) * 8}px)`,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Column({ at, os, fs, children }: { at: number; os: string; fs: string; children: React.ReactNode }) {
+  const p = useIn(at, 20);
+  return (
+    <div style={{ width: 700, opacity: p, transform: `translateY(${(1 - p) * 40}px)` }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 18, marginBottom: 26 }}>
+        <span style={{ fontFamily: serif, fontSize: 56, letterSpacing: -1 }}>{os}</span>
+        <span style={{ fontFamily: mono, fontSize: 20, color: c.bottle, letterSpacing: 2 }}>{fs}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** 7. Under the hood: APFS clonefile on macOS, btrfs snapshots on Linux. */
+export function Internals() {
+  const frame = useCurrentFrame();
+  const mac = cue("internals", "macos", 0, -6);
+  const linux = cue("internals", "linux", 0, -6);
+  const arrow = interpolate(frame, [cue("internals", "copied"), cue("internals", "clonefile", 0, 8)], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const snaps = ["feat-login", "fix-race", "agent/parser"];
+  const snapAt = cue("internals", "snapshot", 0, -4);
+  return (
+    <Stage push={0.02}>
+      <div style={{ position: "absolute", top: 120, left: 0, right: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 18 }}>
+        <Kicker delay={2}>Under the hood</Kicker>
+        <Words text="What your file system already does well." size={58} delay={cue("internals", "leans", 0, -4)} accent={["well."]} />
+      </div>
+      <div style={{ display: "flex", gap: 120, marginTop: 260, alignItems: "flex-start" }}>
+        <Column at={mac} os="macOS" fs="APFS">
+          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+            <Box label="golden.img" sub="the warmed image" tint="rgba(227,201,94,0.07)" border={`${c.peel}55`} at={mac + 4} />
+            <div style={{ flex: 1, position: "relative", height: 40 }}>
+              <div style={{ position: "absolute", top: 19, left: 0, height: 2, width: `${arrow * 100}%`, background: `linear-gradient(90deg, ${c.peel}, ${c.bottle})` }} />
+              <div style={{ position: "absolute", top: -14, width: "100%", textAlign: "center", fontFamily: mono, fontSize: 17, color: c.bottle, opacity: arrow }}>
+                clonefile(2)
+              </div>
+            </div>
+            <Box label="feat-login.img" sub="shares every block" tint="rgba(124,196,155,0.07)" border={`${c.bottle}66`} at={cue("internals", "clonefile")} />
+          </div>
+          <div style={{ display: "flex", gap: 14, marginTop: 34, flexWrap: "wrap" }}>
+            <Chip at={cue("internals", "single", 0, -2)}>one syscall, any repo size</Chip>
+            <Chip at={cue("internals", "call", 0, 2)}>mounted in ~0.7s</Chip>
+          </div>
+        </Column>
+        <Column at={linux} os="Linux" fs="btrfs">
+          <Glass tint="rgba(233,238,232,0.03)" style={{ padding: "22px 24px" }}>
+            <div style={{ fontFamily: mono, fontSize: 18, color: c.dim, marginBottom: 14 }}>pool.btrfs · mounted once per repo</div>
+            <Box label=".clove-golden" sub="subvolume" tint="rgba(227,201,94,0.07)" border={`${c.peel}55`} at={linux + 6} style={{ marginBottom: 12 }} />
+            <div style={{ display: "flex", gap: 12 }}>
+              {snaps.map((n, i) => (
+                <Box key={n} label={n} sub="snapshot" tint="rgba(124,196,155,0.07)" border={`${c.bottle}66`} at={snapAt + i * 5} style={{ flex: 1 }} />
+              ))}
+            </div>
+          </Glass>
+          <div style={{ display: "flex", gap: 14, marginTop: 24 }}>
+            <Chip at={cue("internals", "milliseconds", 0, -4)}>~8 ms per clone</Chip>
+            <Chip at={cue("internals", "milliseconds", 0, 6)}>no mount per clone</Chip>
+          </div>
+        </Column>
+      </div>
+    </Stage>
+  );
+}
+
+/** 8. clove new vs git worktree + setup, side by side. */
 export function Fast() {
   const frame = useCurrentFrame();
   const race = useRamp(cue("fast", "everything", 0, -6), cue("fast", "disk", 0, 10), Easing.linear);
@@ -443,7 +543,7 @@ function StepRow({ name, why, runs, i, run }: { name: string; why: string; runs:
   );
 }
 
-/** 8. Only what changed runs. */
+/** 9. Only what changed runs. */
 export function Steps() {
   const run = useRamp(cue("steps", "only"), cue("steps", "again", 0, 8));
   const rows: [string, string, boolean][] = [
@@ -484,7 +584,7 @@ function TuiShot({ name, fontSize = 15 }: { name: string; fontSize?: number }) {
   }, [handle, name]);
   if (!grid) return <Placeholder label={`TUI · ${name}`} w={1000} h={560} />;
   return (
-    <div style={{ fontFamily: mono, fontSize, lineHeight: 1.32, background: "#0b100d", padding: 18, whiteSpace: "pre" }}>
+    <div style={{ fontFamily: mono, fontSize, lineHeight: 1.18, background: "#0b100d", padding: 18, whiteSpace: "pre" }}>
       {grid.rows.map((row, y) => (
         <div key={y}>
           {row.map((cell, x) => (
@@ -573,10 +673,10 @@ function Layer({ at, next, label, children }: { at: number; next?: number; label
   );
 }
 
-/** 9. Command line, terminal UI, Mac app; one at a time, with the voice. */
+/** 10. Command line, terminal UI, desktop app; one at a time, with the voice. */
 export function Surfaces() {
   const tuiAt = cue("surfaces", "full-screen", 0, -6);
-  const appAt = cue("surfaces", "mac", 0, -8);
+  const appAt = cue("surfaces", "desktop", 0, -8);
   return (
     <Stage push={0.02}>
       <Layer at={4} next={tuiAt} label="The command line">
@@ -589,13 +689,11 @@ export function Surfaces() {
         </Terminal>
       </Layer>
       <Layer at={tuiAt} next={appAt} label="A full-screen terminal UI">
-        <div style={{ transform: "scale(0.82)", transformOrigin: "top center", marginBottom: -110 }}>
-          <Window>
-            <TuiShot name="tui-main" />
-          </Window>
-        </div>
+        <Window>
+          <TuiShot name="tui-main" fontSize={17.5} />
+        </Window>
       </Layer>
-      <Layer at={appAt} label="The Mac app">
+      <Layer at={appAt} label="The desktop app · macOS and Linux">
         <Window title="clove">
           <AppShot name="app-repo" width={1240} />
         </Window>
@@ -646,7 +744,7 @@ function Feature({
   );
 }
 
-/** 10. Update with Claude, prune, agents; timed to the three sentences. */
+/** 11. Update with Claude, prune, agents; timed to the three sentences. */
 export function Features() {
   const a = 0;
   const b = cue("features", "cleans", 0, -10);
@@ -704,7 +802,7 @@ export function Features() {
   );
 }
 
-/** 11. Install. */
+/** 12. Install. */
 export function Outro() {
   const tag = useIn(cue("outro", "worktrees", 0, -4));
   const cmd = useIn(cue("outro", "second", 0, 8));
@@ -739,7 +837,14 @@ export function Outro() {
         <Glass style={{ marginTop: 70, fontFamily: mono, fontSize: 30, padding: "22px 36px", opacity: cmd, transform: `translateY(${(1 - cmd) * 16}px)` }}>
           <span style={{ color: c.bottle }}>❯ </span>brew install pierre-borckmans/tap/clove
         </Glass>
-        <div style={{ fontFamily: mono, fontSize: 22, color: c.dim, marginTop: 26, opacity: cmd }}>github.com/pierre-borckmans/clove</div>
+        <div style={{ display: "flex", gap: 14, marginTop: 28, opacity: cmd }}>
+          {["macOS", "Linux"].map((os) => (
+            <span key={os} style={{ fontFamily: mono, fontSize: 19, color: c.muted, padding: "6px 16px", borderRadius: 999, border: `1px solid ${c.rule}` }}>
+              {os}
+            </span>
+          ))}
+        </div>
+        <div style={{ fontFamily: mono, fontSize: 22, color: c.dim, marginTop: 22, opacity: cmd }}>github.com/pierre-borckmans/clove</div>
       </div>
     </Stage>
   );
