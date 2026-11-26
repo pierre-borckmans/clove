@@ -1,11 +1,13 @@
-import { loadFont as loadMono } from "@remotion/google-fonts/JetBrainsMono";
-import { loadFont as loadSerif } from "@remotion/google-fonts/Newsreader";
+import { loadFont as loadMono } from "@remotion/google-fonts/MartianMono";
+import { loadFont as loadSerif } from "@remotion/google-fonts/IBMPlexSans";
 import { createContext, useContext, type CSSProperties, type ReactNode } from "react";
 import { AbsoluteFill, Easing, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 
+// Same pairing as clove.fast: IBM Plex Sans and Martian Mono.
 export const mono = loadMono("normal", { weights: ["400", "500", "600"] }).fontFamily;
 export const serif = loadSerif("normal", { weights: ["400", "500"] }).fontFamily;
-export const serifItalic = loadSerif("italic", { weights: ["400"] }).fontFamily;
+loadSerif("italic", { weights: ["400"] });
+export const serifItalic = serif;
 
 /** Bottle, the clove palette (brand/README.md), dark. */
 export const c = {
@@ -57,6 +59,8 @@ export function useRamp(from: number, to: number, ease = Easing.inOut(Easing.cub
 /** The living backdrop under every scene: drifting light, dot grid, grain, vignette. */
 export function Backdrop() {
   const frame = useCurrentFrame();
+  // Soft light as radial gradients, as on clove.fast: a big blur() filter
+  // rasterises at low resolution and looks blocky.
   const blob = (x: number, y: number, r: number, color: string, speed: number, phase: number) => {
     const t = frame * speed + phase;
     return (
@@ -68,18 +72,16 @@ export function Backdrop() {
           width: r,
           height: r,
           borderRadius: "50%",
-          background: color,
-          filter: "blur(140px)",
-          opacity: 0.55,
+          background: `radial-gradient(circle closest-side, ${color} 0%, transparent 100%)`,
         }}
       />
     );
   };
   return (
     <AbsoluteFill style={{ background: c.paper, overflow: "hidden" }}>
-      {blob(-200, -260, 900, "rgba(47,107,76,0.55)", 0.006, 0)}
-      {blob(1150, 520, 820, "rgba(227,201,94,0.16)", 0.005, 2)}
-      {blob(700, 150, 700, "rgba(124,196,155,0.18)", 0.004, 4)}
+      {blob(-560, -760, 1700, "rgba(47,107,76,0.5)", 0.006, 0)}
+      {blob(900, 260, 1400, "rgba(227,201,94,0.1)", 0.005, 2)}
+      {blob(420, -150, 1150, "rgba(124,196,155,0.1)", 0.004, 4)}
       <AbsoluteFill
         style={{
           backgroundImage: "radial-gradient(rgba(233,238,232,0.06) 1px, transparent 1px)",
@@ -87,9 +89,11 @@ export function Backdrop() {
           maskImage: "radial-gradient(ellipse at 50% 45%, black 20%, transparent 75%)",
         }}
       />
+      {/* Grain also dithers the gradients, so dark tones don't band. */}
       <AbsoluteFill
         style={{
-          opacity: 0.07,
+          opacity: 0.14,
+          mixBlendMode: "overlay",
           backgroundImage:
             "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")",
         }}
@@ -230,7 +234,7 @@ export function Terminal({
           {title}
         </div>
       </div>
-      <div style={{ padding: "26px 34px 30px", fontFamily: mono, fontSize: 26, lineHeight: 1.7 }}>{children}</div>
+      <div style={{ padding: "26px 34px 30px", fontFamily: mono, fontSize: 23, lineHeight: 1.75 }}>{children}</div>
     </div>
   );
 }

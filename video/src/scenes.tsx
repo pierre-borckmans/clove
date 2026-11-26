@@ -214,9 +214,9 @@ export function Clash() {
       {agents.map(([tool, branch, x, y], i) => {
         const p = useIn(6 + i * 4, 16);
         return (
-          <Glass key={i} style={{ position: "absolute", left: x, top: y, width: 300, padding: "16px 22px", fontFamily: mono, opacity: p, border: `1px solid ${red > 0.5 ? `${c.red}55` : c.rule}` }}>
+          <Glass key={i} style={{ position: "absolute", left: x, top: y, width: 340, padding: "16px 22px", fontFamily: mono, opacity: p, border: `1px solid ${red > 0.5 ? `${c.red}55` : c.rule}` }}>
             <div style={{ fontSize: 17, color: c.bottle }}>{tool}</div>
-            <div style={{ fontSize: 22, marginTop: 4 }}>wants {branch}</div>
+            <div style={{ fontSize: 19, marginTop: 4, whiteSpace: "nowrap" }}>wants {branch}</div>
           </Glass>
         );
       })}
@@ -303,7 +303,7 @@ function Missing({ label, hint, at }: { label: string; hint: string; at: number 
           <span style={{ position: "absolute", left: 0, top: "54%", height: 3, width: `${strike * 100}%`, background: c.red, borderRadius: 2 }} />
         </span>
       </div>
-      <div style={{ fontFamily: mono, fontSize: 18, color: c.muted, marginTop: 8, marginLeft: 44 }}>{hint}</div>
+      <div style={{ fontFamily: mono, fontSize: 15, color: c.muted, marginTop: 8, marginLeft: 44, whiteSpace: "nowrap" }}>{hint}</div>
     </Glass>
   );
 }
@@ -626,7 +626,7 @@ export function Golden() {
           <Mark size={46} delay={8} />
           <span style={{ fontFamily: serif, fontSize: 48 }}>golden image</span>
         </div>
-        <div style={{ fontFamily: mono, fontSize: 23, color: c.muted, marginTop: 22, lineHeight: 1.9 }}>
+        <div style={{ fontFamily: mono, fontSize: 19, color: c.muted, marginTop: 22, lineHeight: 1.95, whiteSpace: "nowrap" }}>
           <div>main @ c9483ee</div>
           {(
             [
@@ -689,8 +689,8 @@ function Box({ label, sub, tint, border, at, style }: { label: string; sub?: str
   const p = useIn(at, 16);
   return (
     <Glass tint={tint} style={{ padding: "18px 24px", border: `1px solid ${border}`, opacity: p, transform: `scale(${0.92 + 0.08 * p})`, ...style }}>
-      <div style={{ fontFamily: mono, fontSize: 24, color: c.ink }}>{label}</div>
-      {sub && <div style={{ fontFamily: mono, fontSize: 17, color: c.muted, marginTop: 6 }}>{sub}</div>}
+      <div style={{ fontFamily: mono, fontSize: 19, color: c.ink, whiteSpace: "nowrap" }}>{label}</div>
+      {sub && <div style={{ fontFamily: mono, fontSize: 14, color: c.muted, marginTop: 6, whiteSpace: "nowrap" }}>{sub}</div>}
     </Glass>
   );
 }
@@ -968,9 +968,9 @@ export function Fresh() {
         {steps.map(([n, what, ran], i) => {
           const on = prog > (i + 1) / (steps.length + 0.5);
           return (
-            <div key={n} style={{ display: "flex", gap: 16, fontFamily: mono, fontSize: 21, lineHeight: 1.9, color: on ? (ran ? c.peel : c.muted) : c.dim }}>
+            <div key={n} style={{ display: "flex", gap: 16, fontFamily: mono, fontSize: 17, lineHeight: 2.1, whiteSpace: "nowrap", color: on ? (ran ? c.peel : c.muted) : c.dim }}>
               <span style={{ width: 22 }}>{on ? (ran ? "↻" : "✓") : "·"}</span>
-              <span style={{ width: 110, color: on ? c.ink : c.dim }}>{n}</span>
+              <span style={{ width: 100, color: on ? c.ink : c.dim }}>{n}</span>
               <span>{on ? what : ""}</span>
             </div>
           );
@@ -981,9 +981,9 @@ export function Fresh() {
       </Glass>
       <div style={{ position: "absolute", left: 1400, top: 352, display: "flex", flexDirection: "column", gap: 16, opacity: 0.35 + 0.65 * right }}>
         {["feat/login", "agent/parser", "fix/race"].map((n) => (
-          <Glass key={n} style={{ width: 340, padding: "20px 24px", fontFamily: mono, fontSize: 22, display: "flex", justifyContent: "space-between", alignItems: "center", border: `1px solid ${right > 0.5 ? `${c.bottle}55` : c.rule}` }}>
+          <Glass key={n} style={{ width: 360, padding: "20px 24px", fontFamily: mono, fontSize: 18, display: "flex", justifyContent: "space-between", alignItems: "center", border: `1px solid ${right > 0.5 ? `${c.bottle}55` : c.rule}` }}>
             <span>{n}</span>
-            <span style={{ fontSize: 17, color: c.bottle, opacity: right > 0.5 ? pulse : 0.4 }}>● working</span>
+            <span style={{ fontSize: 14, color: c.bottle, opacity: right > 0.5 ? pulse : 0.4, whiteSpace: "nowrap" }}>● working</span>
           </Glass>
         ))}
       </div>
@@ -1013,10 +1013,10 @@ function Tool({ name, kind, at }: { name: string; kind: string; at: number }) {
         transform: `scale(${0.96 + 0.04 * p})`,
       }}
     >
-      <div style={{ fontSize: 26, color: lit ? c.ink : c.dim }}>
+      <div style={{ fontSize: 22, color: lit ? c.ink : c.dim, whiteSpace: "nowrap" }}>
         <span style={{ color: lit ? c.bottle : c.dim }}>{lit ? "✓" : "·"}</span> {name}
       </div>
-      <div style={{ fontSize: 16, color: c.dim, marginTop: 4 }}>{kind}</div>
+      <div style={{ fontSize: 13, color: c.dim, marginTop: 4, whiteSpace: "nowrap" }}>{kind}</div>
     </Glass>
   );
 }
@@ -1051,7 +1051,7 @@ export function Detect() {
           ))}
         </div>
         <div style={{ opacity: cfg, transform: `translateX(${(1 - cfg) * 40}px)` }}>
-          <Terminal title=".clove.toml · shared with the team" width={560}>
+          <Terminal title=".clove.toml · shared" width={560}>
             <div style={{ fontSize: 22, lineHeight: 1.7 }}>
               <Out at={conf} color={c.muted}>{"[[add_step]]"}</Out>
               <Out at={conf + 4} color={c.ink}>{'name  = "codegen"'}</Out>
