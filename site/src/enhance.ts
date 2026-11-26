@@ -1,8 +1,5 @@
-// Progressive enhancement for the prerendered page: copy buttons, the theme
-// toggle and the terminal replay. Everything here is optional.
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+// Progressive enhancement for the prerendered page: copy buttons and the
+// reveal-on-enter animations. Without it, the page shows everything, still.
 
 function copyButtons() {
   for (const b of document.querySelectorAll<HTMLButtonElement>("[data-copy]")) {
@@ -18,126 +15,73 @@ function copyButtons() {
   }
 }
 
-function themeToggle() {
-  const b = document.querySelector<HTMLButtonElement>("[data-theme-toggle]");
-  if (!b) return;
-  const root = document.documentElement;
-  const media = window.matchMedia("(prefers-color-scheme: dark)");
-  const current = () => root.dataset.theme ?? (media.matches ? "dark" : "light");
-  const label = () => {
-    b.textContent = current() === "dark" ? "light" : "dark";
-  };
-  b.hidden = false;
-  label();
-  media.addEventListener("change", label);
-  b.addEventListener("click", () => {
-    const next = current() === "dark" ? "light" : "dark";
-    root.dataset.theme = next;
-    try {
-      localStorage.setItem("theme", next);
-    } catch {}
-    label();
-  });
-}
-
-function replay() {
-  const term = document.querySelector<HTMLElement>("[data-replay]");
-  if (!term) return;
-  const lines = [...term.querySelectorAll<HTMLElement>("[data-r]")];
-  const original = lines.map((l) => l.innerHTML);
-  const clock = term.querySelector<HTMLElement>("[data-clock]");
-  const button = term.querySelector<HTMLButtonElement>("[data-replay-button]");
-  let run = 0;
-
-  async function play() {
-    const id = ++run;
-    const live = () => id === run;
-    lines.forEach((l, i) => {
-      l.innerHTML = original[i];
-      l.style.visibility = "hidden";
-    });
-    if (clock) clock.textContent = "";
-    let started = 0;
-    let ticker = 0;
-    const stopClock = () => cancelAnimationFrame(ticker);
-    const tick = () => {
-      if (clock) clock.textContent = `${((performance.now() - started) / 1000).toFixed(2)}s`;
-      ticker = requestAnimationFrame(tick);
-    };
-
-    await sleep(400);
-    for (const [i, l] of lines.entries()) {
-      if (!live()) return stopClock();
-      const kind = l.dataset.r;
-      if (kind === "cmd") {
-        const cmd = l.querySelector<HTMLElement>("[data-cmd]");
-        const text = cmd?.textContent ?? "";
-        if (cmd) cmd.textContent = "";
-        const cursor = document.createElement("span");
-        cursor.className = "term-cursor";
-        cmd?.after(cursor);
-        l.style.visibility = "visible";
-        await sleep(350);
-        for (const ch of text) {
-          if (!live()) return;
-          if (cmd) cmd.textContent += ch;
-          await sleep(28 + Math.random() * 40);
-        }
-        await sleep(300);
-        cursor.remove();
-      } else if (kind === "step") {
-        if (!started) {
-          started = performance.now();
-          tick();
-        }
-        const ms = Number(l.dataset.ms);
-        l.innerHTML = `  <span style="color:#7cc49b">◌</span> <span class="text-term-dim">${l.dataset.step}</span>\n`;
-        l.style.visibility = "visible";
-        await sleep(ms);
-        l.innerHTML = original[i];
-      } else if (kind === "show") {
-        const ready = l.textContent?.includes("ready in");
-        await sleep(Number(l.dataset.wait ?? 60));
-        if (ready && started) {
-          stopClock();
-          if (clock) clock.textContent = "";
-        }
-        l.style.visibility = "visible";
-      } else {
-        await sleep(200);
-        l.style.visibility = "visible";
-      }
-    }
+/** Marks elements `.in` the first time they enter the viewport. Plays once;
+ * it reads scroll position, never sets it. */
+function reveals() {
+  const els = document.querySelectorAll<HTMLElement>(
+    "[data-reveal], .draw, .fill, .clash, .chips, .gauge",
+  );
+  if (!("IntersectionObserver" in window)) {
+    for (const el of els) el.classList.add("in");
+    return;
   }
-
-  if (button) {
-    button.hidden = false;
-    button.addEventListener("click", () => void play());
-  }
-  if (reduced()) return;
   const io = new IntersectionObserver(
     (entries) => {
-      if (entries.some((e) => e.isIntersecting)) {
-        io.disconnect();
-        void play();
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        e.target.classList.add("in");
+        io.unobserve(e.target);
       }
     },
-    { threshold: 0.4 },
+    { rootMargin: "0px 0px -12% 0px", threshold: 0.15 },
   );
-  io.observe(term);
+  for (const el of els) io.observe(el);
 }
 
-// Full-page screenshots never scroll, so lazy images would stay blank there.
-function eagerImages() {
-  if (!new URLSearchParams(location.search).has("eager")) return;
-  for (const img of document.querySelectorAll<HTMLImageElement>("img[loading=lazy]")) {
-    img.loading = "eager";
-  }
+/** Shows the pill nav while the top nav is out of view. */
+function pillNav() {
+  const top = document.querySelector("[data-topnav]");
+  const pill = document.querySelector(".pill-nav");
+  if (!top || !pill || !("IntersectionObserver" in window)) return;
+  new IntersectionObserver(([e]) => pill.classList.toggle("show", !e.isIntersecting)).observe(top);
+}
+
+/** Highlights the docs section being read in "on this page". Reads the
+ * scroll position, never sets it. */
+function tocSpy() {
+  const links = [...document.querySelectorAll<HTMLAnchorElement>("[data-toc]")];
+  if (!links.length) return;
+  const heads = links
+    .map((a) => document.getElementById(a.dataset.toc ?? ""))
+    .filter((h): h is HTMLElement => !!h);
+  let queued = false;
+  const update = () => {
+    queued = false;
+    const line = window.innerHeight * 0.3;
+    // The last heading above a line a third of the way down the screen; at the
+    // very bottom of the page, the last one.
+    let current = heads[0];
+    for (const h of heads) if (h.getBoundingClientRect().top <= line) current = h;
+    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4)
+      current = heads[heads.length - 1];
+    for (const a of links) a.classList.toggle("active", a.dataset.toc === current?.id);
+  };
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (!queued) {
+        queued = true;
+        requestAnimationFrame(update);
+      }
+    },
+    { passive: true },
+  );
+  update();
 }
 
 export function enhance() {
-  eagerImages();
+  tocSpy();
   copyButtons();
-  themeToggle();
-  replay();
+  reveals();
+  pillNav();
 }

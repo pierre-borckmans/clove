@@ -3,32 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>clove: copy-on-write git worktrees</title>
+    <title>clove: worktrees, ready in a second</title>
     <meta
       name="description"
-      content="clove clones a prepared APFS disk image for every new git worktree, so it arrives with node_modules installed and the dev shell built. About a second on a 35k-file monorepo, down from 72."
+      content="clove gives every git worktree its dependencies, dev shell and local files, as a copy-on-write clone of one warm golden image. About a second on a big monorepo, down from 72. macOS and Linux."
     />
-    <meta name="theme-color" content="#f1f2ec" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#101412" media="(prefers-color-scheme: dark)" />
+    <link rel="canonical" href="https://clove.fast/" />
+    <meta name="theme-color" content="#0d110f" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <meta property="og:title" content="clove: copy-on-write git worktrees" />
+    <meta property="og:title" content="clove: worktrees, ready in a second" />
     <meta
       property="og:description"
-      content="A new git worktree with node_modules and the dev shell already in it, in about a second."
+      content="Every git worktree arrives with its dependencies, dev shell and local files, in about a second."
     />
+    <meta property="og:url" content="https://clove.fast/" />
     <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://clove.fast/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,300..700;1,300..700&family=Martian+Mono:wght@400..700&display=swap"
     />
     <script>
-      try {
-        const t = localStorage.getItem("theme");
-        if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
-      } catch {}
+      // Reveals start hidden only when JS runs; without it the page shows as is.
+      document.documentElement.classList.add("js");
     </script>
   </head>
   <body>
