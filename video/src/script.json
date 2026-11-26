@@ -9,7 +9,7 @@
   },
   {
     "id": "clash",
-    "say": "But in one checkout, they clash. One switches branches under another, and your login fix ends up in somebody else's pull request."
+    "say": "But in one checkout, they clash. One switches branches under another, and your login fix lands on another agent's branch."
   },
   {
     "id": "worktree",

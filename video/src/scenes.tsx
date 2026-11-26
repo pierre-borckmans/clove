@@ -205,7 +205,7 @@ export function Clash() {
         </div>
         <div style={{ fontSize: 19, marginTop: 18, lineHeight: 1.7 }}>
           <Out at={sw} color={c.muted}>codex ❯ git checkout fix/race</Out>
-          <Out at={k("login", 0, -2)} color={c.red}>✗ claude's login fix, now in codex's PR</Out>
+          <Out at={k("login", 0, -2)} color={c.red}>✗ claude's login fix, now on codex's fix/race</Out>
         </div>
       </Glass>
     </Stage>
