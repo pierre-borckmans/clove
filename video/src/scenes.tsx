@@ -1399,7 +1399,8 @@ export function Outro() {
             </span>
           ))}
         </div>
-        <div style={{ fontFamily: mono, fontSize: 22, color: c.dim, marginTop: 22, opacity: cmd }}>github.com/pierre-borckmans/clove</div>
+        <div style={{ fontFamily: mono, fontSize: 34, color: c.bottle, marginTop: 30, letterSpacing: 1, opacity: cmd, textShadow: `0 0 24px ${c.bottle}55` }}>clove.fast</div>
+        <div style={{ fontFamily: mono, fontSize: 19, color: c.dim, marginTop: 10, opacity: cmd }}>github.com/pierre-borckmans/clove</div>
       </div>
     </Stage>
   );
