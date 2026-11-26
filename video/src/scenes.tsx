@@ -343,8 +343,8 @@ export function Empty() {
             <Out at={cue("empty", "empty", 0, 10)} color={c.red}>
               protoc: command not found
             </Out>
-            <Out at={cue("empty", "vibes", 0, -4)} color={c.bottle}>
-              ✓ vibes
+            <Out at={cue("empty", "tumbleweeds", 0, -4)} color={c.dim}>
+              · a tumbleweed rolls by
             </Out>
           </Terminal>
         </div>
