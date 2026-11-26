@@ -220,7 +220,7 @@ export function Clash() {
       <svg width={1920} height={1080} style={{ position: "absolute", inset: 0 }}>
         {agents.map(([, , x, y], i) => {
           const p = interpolate(frame, [10 + i * 4, 26 + i * 4], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-          const x0 = x < 960 ? x + 300 : x;
+          const x0 = x < 960 ? x + 340 : x;
           const x1 = x < 960 ? 600 : 1320;
           return <line key={i} x1={x0} y1={y + 40} x2={x0 + (x1 - x0) * p} y2={y + 40 + (520 - y - 40) * p} stroke={wire} strokeOpacity={0.6} strokeWidth={2.5} />;
         })}
