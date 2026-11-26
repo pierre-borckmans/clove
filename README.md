@@ -96,6 +96,11 @@ clove agents install             # teach Claude Code and Codex to use clove (opt
 
 ## How it works
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/how-it-works-dark.svg">
+  <img src="brand/how-it-works.svg" alt="clove builds one golden image per repo from the base branch, local files and warm steps, then makes each clone a copy-on-write copy of it in about a second" width="100%">
+</picture>
+
 - **One golden image per repo:** a worktree of the base branch, with dependencies installed and dev environments warmed.
 - **A clone is a copy-on-write copy of it**, registered as a regular git worktree with a copy of the golden index. Inodes and timestamps are kept, so git rehashes nothing.
 - **Then only what changed runs:** clove checks out your branch and reruns the setup steps whose inputs changed since the golden commit. Same lockfile, no `pnpm install`.
