@@ -24,35 +24,49 @@ const SESSIONS: [string, string, number, number][] = [
   ["claude", "pr/4053", 795, 450],
 ];
 
+/** What an agent is up to, cycling on each card's own schedule. */
+const ACTIVITY = ["thinking…", "reading src/api.ts", "editing 3 files", "running tests", "thinking…", "grep -r \"login\"", "writing a plan"];
+
 function Session({ tool, branch, x, y, at }: { tool: string; branch: string; x: number; y: number; at: number }) {
   const frame = useCurrentFrame();
   const p = useIn(at, 12);
-  const bob = Math.sin((frame + at) / 18) * 4;
+  // Each card floats on its own path: a slow loop in both axes and a slight tilt.
+  const t = (frame + at * 11) / 30;
+  const k = 0.8 + ((at * 7) % 5) * 0.12;
+  const dx = Math.sin(t * 0.9 * k) * 9;
+  const dy = Math.sin(t * 1.3 * k + 1) * 11;
+  const tilt = Math.sin(t * 0.7 * k + 2) * 1.6;
   const spin = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[Math.floor(frame / 3 + at) % 10];
   // Same green edge and glow as the branch lines, breathing out of step per card.
   const glow = 0.5 + 0.5 * Math.sin((frame + at * 7) / 14);
+  // The status line changes every ~1.3s, offset per card; each new one fades in.
+  const period = 38 + (at % 4) * 5;
+  const step = Math.floor((frame + at * 13) / period);
+  const since = (frame + at * 13) % period;
+  const activity = ACTIVITY[(step + at) % ACTIVITY.length];
+  const fresh = Math.min(1, since / 6);
   return (
     <Glass
       tint="rgba(124,196,155,0.06)"
       style={{
         position: "absolute",
-        left: x,
-        top: y + bob,
+        left: x + dx,
+        top: y + dy,
         width: 330,
         padding: "18px 22px",
         fontFamily: mono,
         opacity: p,
-        transform: `scale(${0.7 + 0.3 * p})`,
+        transform: `scale(${0.7 + 0.3 * p}) rotate(${tilt}deg)`,
         border: `1.5px solid ${c.bottle}88`,
-        boxShadow: `0 0 ${18 + 16 * glow}px ${c.bottle}${glow > 0.5 ? "40" : "2e"}, 0 24px 60px rgba(0,0,0,0.45)`,
+        boxShadow: `0 0 ${18 + 16 * glow}px ${c.bottle}${glow > 0.5 ? "40" : "2e"}, 0 ${24 + dy}px 60px rgba(0,0,0,0.45)`,
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 18 }}>
         <span style={{ color: c.bottle }}>{tool}</span>
         <span style={{ color: c.peel, fontSize: 26, lineHeight: "20px" }}>{spin}</span>
       </div>
-      <div style={{ fontSize: 22, marginTop: 8 }}>{branch}</div>
-      <div style={{ fontSize: 16, color: c.dim, marginTop: 6 }}>thinking…</div>
+      <div style={{ fontSize: 20, marginTop: 8 }}>{branch}</div>
+      <div style={{ fontSize: 14, color: c.muted, marginTop: 6, whiteSpace: "nowrap", opacity: 0.45 + 0.55 * fresh, transform: `translateY(${(1 - fresh) * 4}px)` }}>{activity}</div>
     </Glass>
   );
 }
