@@ -214,8 +214,8 @@ export function Empty() {
         <L at={600} c="var(--red)">
           protoc: command not found
         </L>
-        <L at={1200} c="var(--bottle)">
-          ✓ vibes
+        <L at={1200} c="var(--dim)">
+          · a tumbleweed rolls by
         </L>
       </Term>
       <div className="grid gap-3">
