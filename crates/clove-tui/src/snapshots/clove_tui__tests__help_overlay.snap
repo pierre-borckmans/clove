@@ -1,6 +1,6 @@
 ---
 source: crates/clove-tui/src/tests.rs
-assertion_line: 843
+assertion_line: 845
 expression: s
 ---
 ╭ clove ──────────────╭ keys ────────────────────────────────────────────────╮─────────────────────╮
@@ -25,13 +25,13 @@ expression: s
 │                    ││             A   add a repo clove doesn't manage yet  │─────────────────────╮
 │                    ││             s   settings, service                    │                     │
 │                    ││             g   cleanup: merged clones/worktrees     │                     │
+│                    ││             L   log: what clove removed, and why     │                     │
 │                    ││             D   doctor                               │                     │
 │                    ││        ctrl-r   reload now                           │                     │
-│                    ││         q esc   quit                                 │                     │
-│ ────────────────── ││                                                      │                     │
-│ s settings         ││  PANELS                                              │                     │
-│ g cleanup          ││     < > / { }   move the detail / sidebar border     │               3.2s  │
-│ D doctor           ││             =   reset sizes · or double-click        │                6ms  │
-│ S service          ││                                                      │                     │
+│ ────────────────── ││         q esc   quit                                 │                     │
+│ s settings         ││                                                      │                     │
+│ g cleanup          ││  PANELS                                              │               3.2s  │
+│ D doctor           ││     < > / { }   move the detail / sidebar border     │                6ms  │
+│ S service          ││             =   reset sizes · or double-click        │                     │
 ╰────────────────────╯│                                                      │─────────────────────╯
  esc close            ╰──────────────────────────────────────────────────────╯

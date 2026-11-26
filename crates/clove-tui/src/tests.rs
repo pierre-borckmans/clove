@@ -2155,3 +2155,39 @@ fn the_agents_row_installs_and_removes() {
     let (s, _) = render(&mut app, 120, 60);
     assert!(!s.contains("coding agents"), "no agent on this machine, no row");
 }
+
+#[test]
+fn l_lists_what_clove_removed_and_how_to_get_it_back() {
+    use clove_core::history::{By, Kind, Removed};
+    let mut app = app_with(true, vec![]);
+    key(&mut app, KeyCode::Char('L'));
+    let (s, _) = render(&mut app, 120, 40);
+    assert!(s.contains("nothing removed yet"), "{s}");
+    key(&mut app, KeyCode::Esc);
+    let mut d = data("/work/app", status(true, 0), vec![]);
+    d.history = vec![Removed {
+        at: NOW - 7200,
+        kind: Kind::Clone,
+        name: "feat-login".into(),
+        path: "/x".into(),
+        branch: Some("feat/login".into()),
+        head: Some("0123456789abcdef".into()),
+        by: By::AutoPrune,
+        reason: Some("PR #42 merged".into()),
+        branch_deleted: true,
+    }];
+    app.apply_data(d);
+    key(&mut app, KeyCode::Char('L'));
+    let (s, _) = render(&mut app, 120, 40);
+    for want in [
+        "2h ago",
+        "auto-pruned",
+        "feat-login",
+        "PR #42 merged",
+        "git branch feat/login 0123456789ab",
+    ] {
+        assert!(s.contains(want), "{want}:\n{s}");
+    }
+    key(&mut app, KeyCode::Char('L'));
+    assert!(app.modal.is_none(), "L closes it again");
+}

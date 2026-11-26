@@ -3,6 +3,7 @@ import { AppShell } from "@/components/app-shell";
 import { Crash } from "@/components/crash";
 import { CleanupPage } from "@/routes/cleanup";
 import { DoctorPage } from "@/routes/doctor";
+import { HistoryPage } from "@/routes/history";
 import { HomePage } from "@/routes/home";
 import { PopoverPage } from "@/routes/popover";
 import { RepoPage } from "@/routes/repo";
@@ -18,6 +19,7 @@ const routeTree = rootRoute.addChildren([
     createRoute({ getParentRoute: () => shellRoute, path: "/repo/$repoId", component: RepoPage }),
     createRoute({ getParentRoute: () => shellRoute, path: "/doctor", component: DoctorPage }),
     createRoute({ getParentRoute: () => shellRoute, path: "/cleanup", component: CleanupPage }),
+    createRoute({ getParentRoute: () => shellRoute, path: "/history", component: HistoryPage }),
     createRoute({
       getParentRoute: () => shellRoute,
       path: "/settings",

@@ -1850,7 +1850,9 @@ fn hints(app: &App) -> Vec<Hint> {
             v.push(("esc", "close", Esc));
             v
         }
-        Some(Modal::Doctor(_)) => vec![("↑↓", "scroll", Down), ("esc", "close", Esc)],
+        Some(Modal::Doctor(_)) | Some(Modal::Removals(_)) => {
+            vec![("↑↓", "scroll", Down), ("esc", "close", Esc)]
+        }
         Some(Modal::Settings(sv)) => {
             let actions = app.settings_actions();
             if let Some(e) = &sv.editing {
@@ -1926,6 +1928,7 @@ fn hints(app: &App) -> Vec<Hint> {
             v.extend([
                 ("s", "settings", Char('s')),
                 ("g", "cleanup", Char('g')),
+                ("L", "log", Char('L')),
                 ("D", "doctor", Char('D')),
                 ("A", "add repo", Char('A')),
             ]);
@@ -2133,6 +2136,7 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect, list: Rect) {
         Modal::Adopt(a) => draw_adopt(f, app, area, &a),
         Modal::Gc(g) => draw_gc(f, app, area, &g),
         Modal::Doctor(d) => draw_doctor(f, app, area, d),
+        Modal::Removals(v) => draw_removals(f, app, area, v),
         Modal::Settings(v) => draw_settings(f, app, area, v),
         Modal::Job(id) => draw_job(f, app, area, id),
         Modal::AddRepo(v) => crate::add_repo::draw(f, app, area, &v),
@@ -2343,6 +2347,7 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
                 ("A", "add a repo clove doesn't manage yet"),
                 ("s", "settings, service"),
                 ("g", "cleanup: merged clones/worktrees"),
+                ("L", "log: what clove removed, and why"),
                 ("D", "doctor"),
                 ("ctrl-r", "reload now"),
                 ("q esc", "quit"),
@@ -2829,7 +2834,7 @@ fn draw_gc(f: &mut Frame, app: &mut App, area: Rect, g: &GcView) {
                 && !d.history.is_empty()
             {
                 lines.push(Line::from(""));
-                lines.push(section("recently removed · clove log"));
+                lines.push(section("recently removed · L for all"));
                 for e in d.history.iter().take(5) {
                     let (s, t) = cut(&e.summary(app.now_unix), iw.saturating_sub(2));
                     tips.add(lines.len(), 1, t);
@@ -3274,6 +3279,91 @@ fn draw_settings(f: &mut Frame, app: &mut App, area: Rect, v: SettingsView) {
     {
         f.set_cursor_position(Position::new(inner.x + x, inner.y + (line - off) as u16));
     }
+    scrollbar(
+        f,
+        Rect::new(rect.right() - 1, inner.y, 1, inner.height),
+        off,
+        view,
+        len,
+    );
+}
+
+/// `clove log` for this repo: when, by what, what, why, and how to get the
+/// branch back.
+fn draw_removals(f: &mut Frame, app: &mut App, area: Rect, v: RemovalsView) {
+    use clove_core::history::{By, Kind};
+    let w = 96.min(area.width.saturating_sub(4));
+    let iw = w.saturating_sub(6) as usize;
+    let mut lines: Vec<Line> = vec![];
+    let mut tips = SpanTips::default();
+    let history = app.current().map(|d| d.history.clone()).unwrap_or_default();
+    if history.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "nothing removed yet. Removals by hand, by prune, by auto-prune and by Claude Code land here.",
+            muted(),
+        )));
+    }
+    let nw = history.iter().map(|e| width(&e.name)).max().unwrap_or(4).min(28);
+    for e in &history {
+        let when = clove_core::history::ago(app.now_unix.saturating_sub(e.at));
+        let what = match e.by {
+            By::Hand => "removed",
+            By::Prune => "pruned",
+            By::AutoPrune => "auto-pruned",
+            By::ClaudeHook => "by Claude",
+        };
+        let (name, t) = cut(&e.name, nw);
+        tips.add(lines.len(), 3, t);
+        let mut s = vec![
+            Span::styled(pad(&when, 9), muted()),
+            Span::styled(
+                pad(what, 12),
+                if e.by == By::AutoPrune { fg(AMBER) } else { muted() },
+            ),
+            Span::styled(pad(&name, nw), bold()),
+        ];
+        if e.kind == Kind::Worktree {
+            s.push(Span::styled(" worktree", muted()));
+        }
+        let rest = iw.saturating_sub(9 + 12 + nw + 2);
+        let why = match (&e.reason, &e.branch) {
+            (Some(r), _) => r.clone(),
+            (None, Some(b)) => b.clone(),
+            (None, None) => "detached".into(),
+        };
+        let (why, t) = cut(&why, rest);
+        tips.add(lines.len(), s.len() + 1, t);
+        s.push(Span::raw("  "));
+        s.push(Span::styled(why, muted()));
+        lines.push(Line::from(s));
+        if let Some(cmd) = e.restore() {
+            let (c, t) = cut(&cmd, iw.saturating_sub(23));
+            tips.add(lines.len(), 2, t);
+            lines.push(Line::from(vec![
+                Span::raw(" ".repeat(21)),
+                Span::styled("branch back ", muted()),
+                Span::styled(c, key()),
+            ]));
+        }
+    }
+    let h = (lines.len() as u16 + 4).min(area.height.saturating_sub(2));
+    let rect = centered(area, w, h);
+    open_modal(f, &mut app.hits, area, rect);
+    let block = modal_block(vec![Span::styled("removed · clove log", title())]);
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let view = inner.height as usize;
+    let len = lines.len();
+    let mut scroll = v.scroll;
+    scroll.clamp(view, len);
+    let off = scroll.offset().min(len.saturating_sub(view));
+    if let Some(Modal::Removals(rv)) = &mut app.modal {
+        rv.scroll = scroll;
+    }
+    tips.place(&lines, inner, off, &mut app.tips);
+    let visible: Vec<Line> = lines.into_iter().skip(off).take(view).collect();
+    f.render_widget(Paragraph::new(visible), inner);
+    app.hits.push((rect, Hit::ScrollRemovals));
     scrollbar(
         f,
         Rect::new(rect.right() - 1, inner.y, 1, inner.height),

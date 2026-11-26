@@ -1,4 +1,5 @@
 import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { BrushCleaning, CircleCheck, GitMerge, Loader, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 import { PaneHeader } from "@/components/app-shell";
@@ -7,10 +8,11 @@ import { RepoMark } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
-import { bytes, since, tildify } from "@/lib/format";
+import { bytes, tildify } from "@/lib/format";
 import { keys, useHistory, useRepos } from "@/lib/queries";
-import type { Cleanup, MergeCheck, Removed, RepoSummary, WorktreeCheck } from "@/lib/types";
+import type { Cleanup, MergeCheck, RepoSummary, WorktreeCheck } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { RemovalList } from "@/routes/history";
 
 /** Something cleanup can remove: a leftover, or a provably merged clone or worktree. */
 const hasWork = (c: Cleanup) =>
@@ -91,14 +93,7 @@ export function CleanupPage() {
   );
 }
 
-const BY: Record<Removed["by"], string> = {
-  hand: "Removed",
-  prune: "Pruned",
-  "auto-prune": "Auto-pruned",
-  "claude-hook": "Removed by Claude Code",
-};
-
-/** `clove log --all-repos`: what went, when, why, and how to get the branch back. */
+/** The last few removals; the History page has them all. */
 function RecentlyRemoved() {
   const { data = [] } = useHistory();
   if (data.length === 0) return null;
@@ -106,33 +101,12 @@ function RecentlyRemoved() {
     <section className="overflow-hidden rounded-xl border bg-card">
       <div className="flex items-center gap-2.5 border-b px-4 py-2.5">
         <span className="text-[13px] font-medium">Recently removed</span>
-        <span className="text-[12px] text-muted-foreground">
-          also <span className="font-mono">clove log</span>
-        </span>
+        <div className="flex-1" />
+        <Link to="/history" className="text-[12px] text-muted-foreground hover:text-foreground">
+          All history →
+        </Link>
       </div>
-      <ul>
-        {data.slice(0, 15).map((e) => (
-          <li
-            key={`${e.root}-${e.at}-${e.name}`}
-            className="flex items-center gap-3 border-b px-4 py-2 text-[13px] last:border-b-0"
-          >
-            <span className={cn("size-1.5 shrink-0 rounded-full", e.by === "auto-prune" ? "bg-amber" : "bg-faint")} />
-            <span className="w-[86px] shrink-0 text-[12px] text-faint">{since(e.at)}</span>
-            <span className="min-w-0 flex-1 truncate">
-              <span className="text-muted-foreground">{BY[e.by]} </span>
-              <span className="font-medium">{e.name}</span>
-              {e.kind === "worktree" && <span className="text-faint"> (git worktree)</span>}
-              <span className="text-faint"> · {e.repo}</span>
-              {e.reason && <span className="text-muted-foreground"> · {e.reason}</span>}
-            </span>
-            {e.restore && (
-              <span className="selectable shrink-0 font-mono text-[11.5px] text-faint" title="Brings the branch back">
-                {e.restore}
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
+      <RemovalList entries={data.slice(0, 5)} />
     </section>
   );
 }

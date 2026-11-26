@@ -11,6 +11,7 @@ import {
   FolderPlus,
   GitBranch,
   HardDrive,
+  History,
   Plus,
   Power,
   RefreshCw,
@@ -166,6 +167,12 @@ function RootPage({ go, close }: { go: (p: Page) => void; close: () => void }) {
           onSelect={run(() => void navigate({ to: "/cleanup" }))}
         >
           <BrushCleaning /> Clean up merged clones and leftovers
+        </CommandItem>
+        <CommandItem
+          value="history log removed pruned auto-prune restore branch"
+          onSelect={run(() => void navigate({ to: "/history" }))}
+        >
+          <History /> What clove removed
         </CommandItem>
         <CommandItem value="service background refresh launchd toggle" onSelect={run(() => service.mutate(!serviceOn))}>
           <Power /> {serviceOn ? "Turn off the background service" : "Turn on the background service"}

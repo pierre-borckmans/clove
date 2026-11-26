@@ -599,9 +599,16 @@ pub struct DoctorView {
     pub scroll: Smooth,
 }
 
+/// What clove removed in this repo (`clove log`).
+#[derive(Debug, Clone, Default)]
+pub struct RemovalsView {
+    pub scroll: Smooth,
+}
+
 #[derive(Debug, Clone)]
 pub enum Modal {
     Help,
+    Removals(RemovalsView),
     New(NewForm),
     Remove(RemoveForm),
     Adopt(AdoptForm),
@@ -667,6 +674,7 @@ pub enum Hit {
     ScrollList,
     ScrollLog,
     ScrollDoctor,
+    ScrollRemovals,
     ScrollSettings,
     /// A remove-dialog row: focus it and toggle it.
     RemoveRow(RemoveItem),
@@ -713,6 +721,7 @@ impl Hit {
             Hit::ScrollList
                 | Hit::ScrollLog
                 | Hit::ScrollDoctor
+                | Hit::ScrollRemovals
                 | Hit::ScrollSettings
                 | Hit::Inert
                 | Hit::Dismiss

@@ -99,7 +99,7 @@ fn repo_data(root: &Path, git_status: bool) -> Result<Box<RepoData>, String> {
         worktrees,
         fields: clove_core::settings::fields(&c.root, &c.name, &c.config).unwrap_or_default(),
         config: c.config.clone(),
-        history: c.history().into_iter().take(20).collect(),
+        history: c.history().into_iter().take(200).collect(),
         prs,
         watch: {
             let mut t = c.watch_targets();

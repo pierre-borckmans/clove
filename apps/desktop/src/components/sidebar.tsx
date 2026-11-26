@@ -1,5 +1,5 @@
 import { Link, useParams, useRouterState } from "@tanstack/react-router";
-import { Activity, BrushCleaning, Loader, Plus, Search, Settings, Settings2, Stethoscope } from "lucide-react";
+import { Activity, BrushCleaning, History, Loader, Plus, Search, Settings, Settings2, Stethoscope } from "lucide-react";
 import type { ReactNode } from "react";
 import {
   DropdownMenu,
@@ -13,7 +13,7 @@ import {
 import { isTauri } from "@/lib/bridge";
 import { useOps } from "@/lib/ops";
 import { APP_LABELS, EDITORS, setPrefs, TERMINALS, usePrefs } from "@/lib/prefs";
-import { useInstalledApps, useRepos, useService } from "@/lib/queries";
+import { useHistory, useInstalledApps, useRepos, useService } from "@/lib/queries";
 import type { RepoSummary } from "@/lib/types";
 import { setUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,8 @@ export function Sidebar() {
   const params = useParams({ strict: false }) as { repoId?: string };
   const running = ops.filter((o) => o.status === "running");
   const prunable = repos?.reduce((a, r) => a + r.prunable, 0) ?? 0;
+  const { data: history } = useHistory();
+  const autoPruned = history?.filter((e) => e.by === "auto-prune" && Date.now() / 1000 - e.at < 86_400).length ?? 0;
 
   return (
     <aside className="flex h-full w-[236px] shrink-0 flex-col bg-sidebar">
@@ -130,6 +132,22 @@ export function Sidebar() {
         >
           Cleanup
         </NavItem>
+        <NavItem
+          to="/history"
+          icon={<History />}
+          right={
+            autoPruned > 0 ? (
+              <span
+                title="Auto-pruned in the last day"
+                className="rounded-full bg-amber/10 px-1.5 font-mono text-[10.5px] leading-[18px] text-amber"
+              >
+                {autoPruned} pruned
+              </span>
+            ) : null
+          }
+        >
+          History
+        </NavItem>
         <button
           type="button"
           onClick={() => setUi({ activity: true })}
@@ -185,7 +203,7 @@ function NavItem({
   right,
   children,
 }: {
-  to: "/doctor" | "/cleanup" | "/settings";
+  to: "/doctor" | "/cleanup" | "/history" | "/settings";
   search?: { repo?: string };
   icon: ReactNode;
   right?: ReactNode;
