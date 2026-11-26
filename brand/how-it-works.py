@@ -95,8 +95,9 @@ def render(t):
            f'copy-on-write copy of it">']
 
     # Column headings.
-    for x, label in [(SRC_X, "built from"), (GX, "clove init · clove refresh"), (CL_X, "clove new")]:
-        out.append(text(x, 62, label.upper(), 11, t["muted"], weight=600))
+    for x, label in [(SRC_X + CARD_W / 2, "built from"), (GX + GW / 2, "clove init · clove refresh"),
+                     (CL_X + CARD_W / 2, "clove new")]:
+        out.append(text(x, 62, label.upper(), 11, t["muted"], weight=600, anchor="middle"))
 
     # Sources.
     gy_mid = GY + GH / 2
@@ -159,14 +160,15 @@ def render(t):
         out.append(f'<rect x="{CL_X + CARD_W - 52}" y="{y + 14}" width="38" height="20" rx="10" fill="{t["chip"]}"/>')
         out.append(text(CL_X + CARD_W - 33, y + 28, took, 11.5, t["chip_ink"], MONO, 600, "middle"))
 
-    # Footnotes under each column.
+    # Footnotes, centred under each column.
     foot_y = GY + GH + 54
-    out.append(text(SRC_X, foot_y, "steps are detected from the repo,", 13, t["muted"], SERIF, italic=True))
-    out.append(text(SRC_X, foot_y + 18, "or listed in .clove.toml", 13, t["muted"], SERIF, italic=True))
-    out.append(text(GX, foot_y, "refreshed only when a step's", 13, t["muted"], SERIF, italic=True))
-    out.append(text(GX, foot_y + 18, "inputs change on the base", 13, t["muted"], SERIF, italic=True))
-    out.append(text(CL_X, foot_y, "regular git worktrees,", 13, t["muted"], SERIF, italic=True))
-    out.append(text(CL_X, foot_y + 18, "isolated, ~6 MB each", 13, t["muted"], SERIF, italic=True))
+    for x, lines in [
+        (SRC_X + CARD_W / 2, ["steps are detected from the repo,", "or listed in .clove.toml"]),
+        (GX + GW / 2, ["refreshed only when a step's", "inputs change on the base"]),
+        (CL_X + CARD_W / 2, ["regular git worktrees,", "isolated, ~6 MB each"]),
+    ]:
+        for i, line in enumerate(lines):
+            out.append(text(x, foot_y + i * 18, line, 13, t["muted"], SERIF, anchor="middle", italic=True))
 
     out.append("</svg>\n")
     return "\n".join(out)
