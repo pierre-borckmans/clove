@@ -59,11 +59,14 @@ clove service install            # remount clones at login, keep golden images f
 clove agents install             # teach Claude Code and Codex to use clove (optional)
 ```
 
-### macOS
+<details>
+<summary><strong>Requirements</strong></summary>
+
+#### macOS
 
 Needs APFS, the default filesystem. Tested on macOS 26, which has ASIF disk images; older versions fall back to `hdiutil` sparse images, which are implemented but untested.
 
-### Linux
+#### Linux
 
 Needs btrfs-progs (`sudo apt install btrfs-progs`) and loop devices. The host disk can be any filesystem. Kernel 6.7 or later gives exact clone sizes (simple quotas); older kernels use full qgroups, or report no sizes.
 
@@ -74,6 +77,8 @@ Needs btrfs-progs (`sudo apt install btrfs-progs`) and loop devices. The host di
 ```
 
 With it, clove mounts the repo's image as you, at `<repo>.clove`, from a desktop or over SSH. Without it, clove mounts through udisks2 if installed, which works only from a desktop session and puts clones under `/run/media/$USER/` (or `/media/$USER/`). `sudo -n` is the last resort. `clove doctor` says which one a repo uses.
+
+</details>
 
 ## Why
 
