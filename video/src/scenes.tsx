@@ -1039,26 +1039,71 @@ function TuiShot({ name, fontSize = 15 }: { name: string; fontSize?: number }) {
       .finally(() => continueRender(handle));
   }, [handle, name]);
   if (!grid) return <Placeholder label={`TUI · ${name}`} w={1000} h={560} />;
+  // A fixed cell grid: the web font lacks box drawing and block glyphs, and a
+  // fallback font's widths would drift, so lines and bars are drawn as shapes.
+  // Whole pixels, so neighbouring backgrounds and bars meet without seams.
+  const cw = Math.round(fontSize * 0.6);
+  const ch = Math.round(fontSize * 1.32);
   return (
-    <div style={{ fontFamily: mono, fontSize, lineHeight: 1.18, background: "#0b100d", padding: 18, whiteSpace: "pre" }}>
+    <div style={{ fontFamily: mono, fontSize, background: "#0b100d", padding: 18 }}>
       {grid.rows.map((row, y) => (
-        <div key={y}>
+        <div key={y} style={{ display: "flex", height: ch }}>
           {row.map((cell, x) => (
-            <span
-              key={x}
-              style={{
-                color: cell.fg ?? c.ink,
-                background: cell.bg ?? undefined,
-                fontWeight: cell.b ? 600 : 400,
-                fontStyle: cell.i ? "italic" : undefined,
-                opacity: cell.d ? 0.6 : 1,
-              }}
-            >
-              {cell.t}
-            </span>
+            <TuiCell key={x} cell={cell} w={cw} h={ch} />
           ))}
         </div>
       ))}
+    </div>
+  );
+}
+
+const BLOCKS: Record<string, number> = { "█": 1, "▉": 7 / 8, "▊": 3 / 4, "▋": 5 / 8, "▌": 1 / 2, "▍": 3 / 8, "▎": 1 / 4, "▏": 1 / 8 };
+const CORNERS: Record<string, [boolean, boolean]> = { "╭": [false, false], "╮": [true, false], "╰": [false, true], "╯": [true, true] };
+
+function TuiCell({ cell, w, h }: { cell: Cell; w: number; h: number }) {
+  const fg = cell.fg ?? c.ink;
+  const lw = Math.max(1, w / 7);
+  // Coloured cells bleed 1px right, so the camera's zoom can't open seams between them.
+  const box: React.CSSProperties = { position: "relative", width: w, height: h, flex: "none", boxShadow: cell.bg ? `1px 0 0 ${cell.bg}` : undefined, background: cell.bg ?? undefined, opacity: cell.d ? 0.6 : 1 };
+  const t = cell.t;
+  const line = (st: React.CSSProperties) => <div style={{ position: "absolute", background: fg, ...st }} />;
+  if (t === "─") return <div style={box}>{line({ left: 0, right: -1, top: (h - lw) / 2, height: lw })}</div>;
+  if (t === "│") return <div style={box}>{line({ top: 0, bottom: -1, left: (w - lw) / 2, width: lw })}</div>;
+  if (t in CORNERS) {
+    const [left, up] = CORNERS[t];
+    const r = Math.min(w, h) / 2;
+    const st: React.CSSProperties = {
+      position: "absolute",
+      boxSizing: "border-box",
+      width: w / 2 + lw / 2,
+      height: h / 2 + lw / 2,
+      [left ? "right" : "left"]: (w - lw) / 2,
+      [up ? "bottom" : "top"]: (h - lw) / 2,
+      [left ? "borderRight" : "borderLeft"]: `${lw}px solid ${fg}`,
+      [up ? "borderBottom" : "borderTop"]: `${lw}px solid ${fg}`,
+      [`border${up ? "Bottom" : "Top"}${left ? "Right" : "Left"}Radius`]: r,
+    };
+    return (
+      <div style={box}>
+        <div style={st} />
+      </div>
+    );
+  }
+  if (t in BLOCKS) return <div style={box}>{line({ left: 0, top: 0, bottom: 0, width: w * BLOCKS[t] + (BLOCKS[t] === 1 ? 1 : 0) })}</div>;
+  return (
+    <div
+      style={{
+        ...box,
+        color: fg,
+        lineHeight: `${h}px`,
+        textAlign: "center",
+        fontWeight: cell.b ? 600 : 400,
+        fontStyle: cell.i ? "italic" : undefined,
+        whiteSpace: "pre",
+        overflow: "visible",
+      }}
+    >
+      {t}
     </div>
   );
 }
