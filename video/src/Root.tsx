@@ -18,7 +18,7 @@ const TAIL: Record<string, number> = {
   again: 1.6,
   worktree: 1.4,
   empty: 1.4,
-  cost: 2.4,
+  cost: 1.8,
   logo: 1.8,
   golden: 1.8,
   internals: 2.2,

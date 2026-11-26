@@ -1258,6 +1258,11 @@ export function Features() {
 }
 
 /** 12. Install. */
+function Letter({ ch, at }: { ch: string; at: number }) {
+  const p = useIn(at, 16);
+  return <span style={{ display: "inline-block", opacity: p, transform: `translateY(${(1 - p) * 24}px)` }}>{ch}</span>;
+}
+
 export function Outro() {
   const tag = useIn(cue("outro", "worktrees", 0, -4));
   const cmd = useIn(cue("outro", "second", 0, 8));
@@ -1274,8 +1279,12 @@ export function Outro() {
       />
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 30 }}>
-          <Mark size={170} delay={0} />
-          <div style={{ fontFamily: serif, fontSize: 150, letterSpacing: -5 }}>clove</div>
+          <Mark size={170} delay={14} alive />
+          <div style={{ fontFamily: serif, fontSize: 150, letterSpacing: -5, display: "flex" }}>
+            {"clove".split("").map((ch, i) => (
+              <Letter key={i} ch={ch} at={24 + i * 3} />
+            ))}
+          </div>
         </div>
         <div
           style={{

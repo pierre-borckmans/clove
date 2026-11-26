@@ -18,6 +18,7 @@ ap.add_argument("--stability", type=float, default=0.5)
 ap.add_argument("--style", type=float, default=0.15)
 ap.add_argument("--speed", type=float, default=0.98)
 ap.add_argument("--audition", action="store_true", help="only make the full read")
+ap.add_argument("--splice", help="take a full read, but cut only this line id from it (the others keep their audio)")
 ap.add_argument("--only", help="re-voice just this line id, with its neighbours as context")
 ap.add_argument("--reuse", action="store_true", help="cut the full read already in tts/eleven/ instead of a new take")
 a = ap.parse_args()
@@ -102,7 +103,7 @@ if a.only:
     raise SystemExit(0)
 
 os.makedirs("tts/eleven", exist_ok=True)
-base = f"tts/eleven/{name}-{a.model}"
+base = f"tts/eleven/{name}-{a.model}" + (f"-splice-{a.splice}" if a.splice else "")
 if a.reuse:
     al = json.load(open(base + ".json"))
 else:
@@ -122,7 +123,12 @@ st, en = al["character_start_times_seconds"], al["character_end_times_seconds"]
 os.makedirs("public/vo", exist_ok=True)
 durs = {"durations": {}}
 words = {}
+if a.splice:
+    durs = json.load(open("src/durations.json"))
+    words = json.load(open("src/words.json"))
 for idx, (l, (s, e)) in enumerate(zip(lines, starts)):
+    if a.splice and l["id"] != a.splice:
+        continue
     t0 = max(0.0, st[s] - 0.06)
     t1 = en[e - 1] + 0.12
     # Never into the next line's first sound.
@@ -133,6 +139,7 @@ for idx, (l, (s, e)) in enumerate(zip(lines, starts)):
     durs["durations"][l["id"]] = round(t1 - t0, 3)
     words[l["id"]] = word_times(text, st, s, e, t0)
     print(f"{l['id']:9} {t1 - t0:5.2f}s")
-durs["voice"] = f"elevenlabs:{name}:{a.model}"
+if not a.splice:
+    durs["voice"] = f"elevenlabs:{name}:{a.model}"
 json.dump(durs, open("src/durations.json", "w"), indent=2)
 json.dump(words, open("src/words.json", "w"), indent=1)

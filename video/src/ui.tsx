@@ -268,7 +268,7 @@ export function Out({ at, children, color = c.muted, style }: { at: number; chil
 }
 
 /** The clove mark: a c (the golden image) holding a clove (your copy). */
-export function Mark({ size = 220, delay = 0 }: { size?: number; delay?: number }) {
+export function Mark({ size = 220, delay = 0, alive = false }: { size?: number; delay?: number; alive?: boolean }) {
   const frame = useCurrentFrame();
   const arc = interpolate(frame, [delay, delay + 26], [0, 1], {
     extrapolateLeft: "clamp",
@@ -277,17 +277,36 @@ export function Mark({ size = 220, delay = 0 }: { size?: number; delay?: number 
   });
   const leaf = useIn(delay + 16, 11);
   const len = 2 * Math.PI * 31 * 0.68;
+  // Alive: the leaf buds three copies that drift off (clones), then sways and breathes.
+  const t = Math.max(0, frame - delay - 30);
+  const sway = alive ? Math.sin(t / 16) * 5 * Math.min(1, t / 20) : 0;
+  const glow = alive ? 3 + 1.6 * (0.5 + 0.5 * Math.sin(t / 11)) : 3;
+  // Directions in degrees clockwise from up: out through the C's opening.
+  const buds = alive ? [76, 90, 104] : [];
+  const leafAt = (rot: number, sc: number) => `translate(53 51) rotate(${rot}) scale(${sc}) translate(-50 -49)`;
   return (
     <svg width={size} height={size} viewBox="0 0 100 100" style={{ overflow: "visible" }}>
       <defs>
         <filter id="leafglow" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="3" result="b" />
+          <feGaussianBlur stdDeviation={glow} result="b" />
           <feMerge>
             <feMergeNode in="b" />
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
       </defs>
+      {buds.map((ang, i) => {
+        const b = interpolate(frame, [delay + 30 + i * 4, delay + 62 + i * 4], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp", easing: Easing.out(Easing.quad) });
+        if (b <= 0 || b >= 1) return null;
+        const r = ang * (Math.PI / 180);
+        return (
+          <g key={i} transform={`translate(${Math.sin(r) * 40 * b} ${-Math.cos(r) * 40 * b})`} opacity={(1 - b) * 0.8}>
+            <g transform={leafAt(16 + (ang - 90) * 0.6 * b, 0.33 * (1 - b * 0.35))}>
+              <path d="M50 8 C62 28 74 52 70 76 C68 90 32 90 30 76 C26 52 38 28 50 8Z" fill={c.bottle} />
+            </g>
+          </g>
+        );
+      })}
       <path
         d="M73.04 29.26 A31 31 0 1 0 73.04 70.74"
         fill="none"
@@ -297,7 +316,7 @@ export function Mark({ size = 220, delay = 0 }: { size?: number; delay?: number 
         strokeDasharray={len}
         strokeDashoffset={len * (1 - arc)}
       />
-      <g filter="url(#leafglow)" transform={`translate(53 51) rotate(${16 - (1 - leaf) * 40}) scale(${0.33 * leaf}) translate(-50 -49)`}>
+      <g filter="url(#leafglow)" transform={leafAt(16 - (1 - leaf) * 40 + sway, 0.33 * leaf)}>
         <path d="M50 8 C62 28 74 52 70 76 C68 90 32 90 30 76 C26 52 38 28 50 8Z" fill={c.bottle} />
       </g>
     </svg>

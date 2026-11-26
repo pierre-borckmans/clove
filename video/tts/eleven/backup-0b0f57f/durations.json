@@ -1,0 +1,23 @@
+{
+  "durations": {
+    "intro": 4.741,
+    "parallel": 4.08,
+    "clash": 7.61,
+    "worktree": 6.635,
+    "empty": 6.159,
+    "hacks": 12.927,
+    "again": 4.138,
+    "cost": 7.238,
+    "logo": 1.899,
+    "golden": 9.259,
+    "detect": 13.752,
+    "fresh": 8.191,
+    "internals": 14.24,
+    "fast": 8.47,
+    "steps": 3.605,
+    "surfaces": 6.659,
+    "features": 9.503,
+    "outro": 3.024
+  },
+  "voice": "elevenlabs:Eric:eleven_multilingual_v2"
+}
