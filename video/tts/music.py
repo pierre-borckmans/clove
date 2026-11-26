@@ -10,22 +10,23 @@ import json, os, sys, urllib.request
 
 KEY = open(os.path.expanduser("~/.elevenlabs_music_key")).read().strip()
 
-# Seconds: playful opening, the problem, the reveal at "Meet clove",
-# the demo, the outro.
+# Seconds. Calm and restrained until "Meet clove" (71.6s), then the mood
+# turns: vivid, driving techno through the demo, resolving at the outro.
 ARC = [
-    ("opening", 12.0, ["light", "playful", "sparse", "inviting"]),
-    ("the problem", 56.5, ["curious", "a little tense", "restrained", "building slowly"]),
-    ("reveal", 4.5, ["lift", "bright swell", "release"]),
-    ("demo", 92.5, ["steady", "confident", "flowing", "optimistic"]),
-    ("outro", 8.9, ["resolving", "warm", "gentle ending", "fade out"]),
+    ("opening", 11.9, ["light", "playful", "sparse", "inviting"]),
+    ("the problem", 56.6, ["curious", "a little tense", "restrained", "building slowly", "anticipation"]),
+    ("the turn", 3.1, ["tension peaks", "riser", "short silence before the drop"]),
+    ("the drop", 12.0, ["the beat drops", "vivid", "energetic", "euphoric lift", "four on the floor"]),
+    ("demo", 83.3, ["driving melodic techno", "vivid", "propulsive", "confident", "evolving synth lines"]),
+    ("outro", 8.83, ["resolving", "warm", "beat falls away", "gentle ending", "fade out"]),
 ]
 
 STYLES = {
     "warm": ["warm ambient electronic", "soft synth pads", "gentle pulsing bass", "light arpeggio", "92 bpm"],
     "piano": ["minimal modern piano", "soft felt piano", "subtle synth pad", "airy", "88 bpm"],
-    "tech": ["modern tech product music", "clean plucked synths", "soft electronic beat", "subtle bass", "100 bpm"],
+    "tech": ["modern tech product music", "clean plucked synths", "electronic", "melodic techno after the drop", "110 bpm before the drop, 122 bpm after"],
 }
-NEGATIVE = ["vocals", "singing", "spoken word", "loud drums", "heavy distortion", "busy melody"]
+NEGATIVE = ["vocals", "singing", "spoken word", "heavy distortion", "harsh", "dubstep wobble"]
 
 
 def plan(style):
