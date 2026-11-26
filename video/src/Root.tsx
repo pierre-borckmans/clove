@@ -1,14 +1,14 @@
-import { fade } from "@remotion/transitions/fade";
 import { linearTiming, TransitionSeries } from "@remotion/transitions";
 import { AbsoluteFill, Audio, Composition, interpolate, Sequence, staticFile, useCurrentFrame } from "remotion";
 import durations from "./durations.json";
 import script from "./script.json";
 import { Again, Clash, Cost, Detect, Empty, Fast, Features, Fresh, Golden, Hacks, Internals, Intro as IntroScene, Logo, Outro, Parallel, Steps, Surfaces, Worktree } from "./scenes";
+import { focusPull } from "./focus";
 import { Backdrop, LEAD, SceneLength } from "./ui";
 
 const FPS = 30;
 /** Frames two scenes overlap while one fades into the next. */
-const XFADE = 14;
+const XFADE = 20;
 /** Breathing room after each line, in seconds, where the visual needs it. */
 const TAIL: Record<string, number> = {
   intro: 1.4,
@@ -124,7 +124,7 @@ function Intro({ music }: { music?: string }) {
           );
           return i === 0
             ? [scene]
-            : [<TransitionSeries.Transition key={`${id}-in`} presentation={fade()} timing={linearTiming({ durationInFrames: XFADE })} />, scene];
+            : [<TransitionSeries.Transition key={`${id}-in`} presentation={focusPull()} timing={linearTiming({ durationInFrames: XFADE })} />, scene];
         })}
       </TransitionSeries>
     </AbsoluteFill>

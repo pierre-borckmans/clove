@@ -9,7 +9,7 @@ const script = JSON.parse(readFileSync("src/script.json", "utf8"));
 const { durations } = JSON.parse(readFileSync("src/durations.json", "utf8"));
 const root = readFileSync("src/Root.tsx", "utf8");
 const TAIL = Object.fromEntries([...root.matchAll(/^\s+(\w+): ([\d.]+),$/gm)].map((m) => [m[1], +m[2]]));
-const LEAD = 10, XFADE = 14, FPS = 30;
+const LEAD = 10, XFADE = 20, FPS = 30;
 const only = process.argv.slice(2);
 
 if (!process.argv[2]) rmSync("out/qa", { recursive: true, force: true });
