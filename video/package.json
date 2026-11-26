@@ -17,6 +17,8 @@
     "remotion": "4.0.547"
   },
   "devDependencies": {
+    "@remotion/bundler": "4.0.547",
+    "@remotion/renderer": "4.0.547",
     "@types/react": "19.1.8",
     "typescript": "5.8.3"
   }

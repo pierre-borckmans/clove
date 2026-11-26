@@ -30,6 +30,12 @@ importers:
         specifier: 4.0.547
         version: 4.0.547(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
     devDependencies:
+      '@remotion/bundler':
+        specifier: 4.0.547
+        version: 4.0.547(postcss@8.5.33)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      '@remotion/renderer':
+        specifier: 4.0.547
+        version: 4.0.547(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@types/react':
         specifier: 19.1.8
         version: 19.1.8

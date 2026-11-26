@@ -215,19 +215,22 @@ export function Empty() {
           </Kicker>
           <div style={{ height: 28 }} />
           <Terminal title="~/src/feat-login" width={900} glow={c.red}>
-            <Typed text="pnpm dev" start={8} />
+            <Typed text="make dev" start={8} />
             <Out at={cue("empty", "empty")} color={c.red}>
               sh: next: command not found
             </Out>
-            <Out at={cue("empty", "empty", 0, 6)} color={c.dim}>
-              {"✗ node_modules missing"}
+            <Out at={cue("empty", "empty", 0, 5)} color={c.red}>
+              ModuleNotFoundError: No module named 'fastapi'
+            </Out>
+            <Out at={cue("empty", "empty", 0, 10)} color={c.red}>
+              protoc: command not found
             </Out>
           </Terminal>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 20, marginTop: 50 }}>
-          <Missing label="node_modules" hint="4,470 packages to install" at={cue("empty", "dependencies", 0, -4)} />
-          <Missing label="dev shell" hint="nix flake to evaluate" at={cue("empty", "dev", 0, -4)} />
-          <Missing label=".env" hint="local files git never had" at={cue("empty", "local", 0, -4)} />
+          <Missing label="dependencies" hint="node_modules · .venv · target/" at={cue("empty", "dependencies", 0, -4)} />
+          <Missing label="dev shell" hint="nix · mise · direnv" at={cue("empty", "dev", 0, -4)} />
+          <Missing label="local files" hint=".env · certs · local config" at={cue("empty", "local", 0, -4)} />
         </div>
       </div>
     </Stage>
@@ -262,9 +265,9 @@ export function Cost() {
   const k = useRamp(10, durationInFrames - 34, Easing.inOut(Easing.quad));
   const t = k * 72;
   const rows: [string, number, number][] = [
-    ["direnv · evaluating the nix flake", 0, 41],
-    ["pnpm install --offline", 41, 71],
-    ["copy .env and local files", 71, 72],
+    ["dev shell · nix + direnv", 0, 41],
+    ["dependencies · pnpm, uv, cargo", 41, 71],
+    ["local files · .env", 71, 72],
   ];
   return (
     <Stage>
@@ -369,7 +372,7 @@ export function Hacks() {
 function RediscoverCard({ name, i }: { name: string; i: number }) {
   const frame = useCurrentFrame();
   const p = useIn(i * 4, 16);
-  const steps = ["pnpm install", "nix develop", "make proto", "ln -s ../mono/…"];
+  const steps = ["pnpm install", "nix develop", "uv sync", "cargo build", "make proto", "ln -s ../mono/…"];
   const step = steps[Math.floor((frame + i * 11) / 22) % steps.length];
   const spin = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"[Math.floor(frame / 3 + i) % 10];
   return (
@@ -497,7 +500,7 @@ export function Golden() {
           position: "absolute",
           left: 230,
           top: 340,
-          width: 560,
+          width: 580,
           padding: "36px 42px",
           border: `1px solid ${c.peel}55`,
           boxShadow: `0 40px 120px rgba(0,0,0,0.5), 0 0 90px ${c.peel}22`,
@@ -513,9 +516,9 @@ export function Golden() {
           <div>main @ c9483ee</div>
           {(
             [
-              ["node_modules installed", cue("golden", "dependencies")],
-              ["dev shell warmed", cue("golden", "environment")],
-              [".env and local files", cue("golden", "warmed")],
+              ["dependencies · pnpm, uv, cargo", cue("golden", "dependencies")],
+              ["dev shell · nix, mise, direnv", cue("golden", "environment")],
+              ["local files · .env", cue("golden", "warmed")],
             ] as const
           ).map(([l, at]) => {
             const on = frame >= at;
@@ -538,12 +541,12 @@ export function Golden() {
           const at = fan + i * 6;
           const d = interpolate(frame, [at, at + 16], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
           const y1 = y + 36;
-          const path = `M 790 515 C 1005 515, 1005 ${y1}, 1220 ${y1}`;
+          const path = `M 810 515 C 1015 515, 1015 ${y1}, 1220 ${y1}`;
           const s = (((frame - at - 16) % 36) + 36) % 36 / 36;
           return (
             <g key={i}>
-              <path d={path} fill="none" stroke="url(#wire)" strokeWidth={2.5} strokeDasharray={480} strokeDashoffset={480 * (1 - d)} />
-              {d >= 1 && <Spark x0={790} y0={515} x1={1220} y1={y1} t={s} />}
+              <path d={path} fill="none" stroke="url(#wire)" strokeWidth={2.5} pathLength={1} strokeDasharray={1} strokeDashoffset={1 - d} />
+              {d >= 1 && <Spark x0={810} y0={515} x1={1220} y1={y1} t={s} />}
             </g>
           );
         })}
@@ -551,8 +554,8 @@ export function Golden() {
       {clones.map((l, i) => (
         <CloneCard key={l} label={l} x={1220} y={ys[i]} at={fan + 4 + i * 6} />
       ))}
-      <Out at={fan + 10} color={c.bottle} style={{ position: "absolute", left: 870, top: 440, fontFamily: mono, fontSize: 19, letterSpacing: 2 }}>
-        copy-on-write
+      <Out at={fan} color={c.bottle} style={{ position: "absolute", left: 1222, top: 172, fontFamily: mono, fontSize: 18, letterSpacing: 4 }}>
+        COPY-ON-WRITE CLONES
       </Out>
     </Stage>
   );
@@ -756,7 +759,8 @@ export function Steps() {
     ["mise", "mise.toml unchanged", false],
     ["direnv", "flake.lock unchanged", false],
     ["pnpm", "pnpm-lock.yaml changed", true],
-    ["codegen", "proto/ unchanged", false],
+    ["uv", "uv.lock unchanged", false],
+    ["cargo", "Cargo.lock unchanged", false],
   ];
   return (
     <Stage>
@@ -766,6 +770,76 @@ export function Steps() {
         {rows.map(([name, why, runs], i) => (
           <StepRow key={name} name={name} why={why} runs={runs} i={i} run={run} />
         ))}
+      </div>
+    </Stage>
+  );
+}
+
+/** A detected tool, lighting up as the voice names it. */
+function Tool({ name, kind, at }: { name: string; kind: string; at: number }) {
+  const frame = useCurrentFrame();
+  const p = useIn(at, 14);
+  const lit = frame >= at;
+  return (
+    <Glass
+      tint={lit ? "rgba(124,196,155,0.08)" : "rgba(233,238,232,0.02)"}
+      style={{
+        padding: "18px 22px",
+        fontFamily: mono,
+        border: `1px solid ${lit ? `${c.bottle}77` : c.rule}`,
+        boxShadow: lit ? `0 0 40px ${c.bottle}1f` : "none",
+        opacity: 0.35 + 0.65 * p,
+        transform: `scale(${0.96 + 0.04 * p})`,
+      }}
+    >
+      <div style={{ fontSize: 26, color: lit ? c.ink : c.dim }}>
+        <span style={{ color: lit ? c.bottle : c.dim }}>{lit ? "✓" : "·"}</span> {name}
+      </div>
+      <div style={{ fontSize: 16, color: c.dim, marginTop: 4 }}>{kind}</div>
+    </Glass>
+  );
+}
+
+/** 13. Detected on its own; anything else is a config step. */
+export function Detect() {
+  const k = (w: string, o = -3) => cue("detect", w, 0, o);
+  const tools: [string, string, number][] = [
+    ["mise", "tool versions", k("mise")],
+    ["direnv", "environment", k("direnv")],
+    ["nix", "dev shell", k("nix")],
+    ["pnpm", "node", k("pnpm")],
+    ["bun", "node", k("bun")],
+    ["yarn", "node", k("yarn")],
+    ["npm", "node", k("npm")],
+    ["uv", "python", k("uv")],
+    ["cargo", "rust", k("cargo")],
+    [".env", "local files", k("local")],
+  ];
+  const cfg = useIn(k("anything", -6), 20);
+  const conf = k("config", -2);
+  return (
+    <Stage push={0.02}>
+      <div style={{ position: "absolute", top: 200, left: 0, right: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+        <Kicker delay={2}>Detected, then configurable</Kicker>
+        <Words text="Your toolchain, found on its own." size={60} delay={k("detects", -6)} accent={["own."]} />
+      </div>
+      <div style={{ display: "flex", gap: 70, alignItems: "center", marginTop: 170 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 190px)", gap: 16 }}>
+          {tools.map(([n, kind, at]) => (
+            <Tool key={n} name={n} kind={kind} at={at} />
+          ))}
+        </div>
+        <div style={{ opacity: cfg, transform: `translateX(${(1 - cfg) * 40}px)` }}>
+          <Terminal title=".clove.toml · shared with the team" width={560}>
+            <div style={{ fontSize: 22, lineHeight: 1.7 }}>
+              <Out at={conf} color={c.muted}>{"[[add_step]]"}</Out>
+              <Out at={conf + 4} color={c.ink}>{'name  = "codegen"'}</Out>
+              <Out at={conf + 8} color={c.ink}>{'warm  = "make proto"'}</Out>
+              <Out at={conf + 12} color={c.ink}>{'setup = "make proto"'}</Out>
+              <Out at={conf + 16} color={c.peel}>{'watch = ["proto/"]'}</Out>
+            </div>
+          </Terminal>
+        </div>
       </div>
     </Stage>
   );
@@ -866,9 +940,9 @@ function Layer({ at, next, label, children }: { at: number; next?: number; label
         position: "absolute",
         left: "50%",
         top: "53%",
-        opacity: Math.min(1, p * 1.3) * (1 - back * 0.72),
+        opacity: Math.min(1, p * 1.3) * (1 - back * 0.9),
         transform: `translate(-50%, -50%) translateY(${(1 - p) * 70 - back * 150}px) scale(${(0.94 + 0.06 * p) * (1 - back * 0.14)})`,
-        filter: `blur(${back * 2.5}px)`,
+        filter: `blur(${back * 4}px)`,
       }}
     >
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 22, opacity: 1 - back }}>

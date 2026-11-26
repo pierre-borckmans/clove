@@ -48,6 +48,10 @@
     "say": "When a lockfile changes, only that step runs again."
   },
   {
+    "id": "detect",
+    "say": "It detects your toolchain on its own: mise, direnv and nix, pnpm, bun, yarn, npm, uv and cargo, plus your local files. Anything else is a step in a small config file, shared with your team."
+  },
+  {
     "id": "surfaces",
     "say": "Use it from the command line, from a full-screen terminal interface, or from the desktop app, on macOS and Linux."
   },
