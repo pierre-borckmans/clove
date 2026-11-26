@@ -36,6 +36,14 @@
     "say": "clove keeps one golden image of your repo, with dependencies installed and the environment warmed. Each worktree is a copy-on-write clone of it."
   },
   {
+    "id": "detect",
+    "say": "It detects your toolchain on its own: mise, direnv and nix, pnpm, bun, yarn, npm, uv and cargo, plus your local files. Anything else is a step in a small config file, shared with your team."
+  },
+  {
+    "id": "fresh",
+    "say": "And it stays warm on its own. Each time you pull, a background service refreshes the golden image, while your clones keep working."
+  },
+  {
     "id": "internals",
     "say": "Under the hood, it leans on what your file system already does well. On macOS, each clone is an APFS disk image, copied whole by a single clonefile call. On Linux, it's a btrfs snapshot, taken in a few milliseconds."
   },
@@ -46,10 +54,6 @@
   {
     "id": "steps",
     "say": "When a lockfile changes, only that step runs again."
-  },
-  {
-    "id": "detect",
-    "say": "It detects your toolchain on its own: mise, direnv and nix, pnpm, bun, yarn, npm, uv and cargo, plus your local files. Anything else is a step in a small config file, shared with your team."
   },
   {
     "id": "surfaces",

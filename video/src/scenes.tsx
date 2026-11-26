@@ -801,6 +801,74 @@ export function Steps() {
   );
 }
 
+/** Refreshes on pull, in the background, while the clones keep working. */
+export function Fresh() {
+  const frame = useCurrentFrame();
+  const k = (w: string, o = 0) => cue("fresh", w, 0, o);
+  const term = useIn(4, 18);
+  const wire = useRamp(k("background", -6), k("background", 8));
+  const panel = useIn(k("background", -2), 18);
+  const prog = useRamp(k("refreshes", -4), k("image", 14), Easing.inOut(Easing.quad));
+  const done = prog >= 1;
+  const right = useIn(k("clones", -10), 18);
+  const steps: [string, string, boolean][] = [
+    ["pnpm", "unchanged · reused", false],
+    ["cargo", "unchanged · reused", false],
+    ["codegen", "proto/ changed · rerun", true],
+  ];
+  const pulse = 0.8 + 0.2 * Math.sin(frame / 7);
+  return (
+    <Stage push={0.02}>
+      <div style={{ position: "absolute", top: 110, left: 150 }}>
+        <Kicker delay={2}>Always warm</Kicker>
+      </div>
+      <div style={{ position: "absolute", left: 150, top: 375, opacity: term, transform: `translateY(${(1 - term) * 30}px)` }}>
+        <Terminal title="~/src/mono" width={470}>
+          <Typed text="git pull" start={k("pull", -16)} cps={22} />
+          <Out at={k("pull", 4)} color={c.muted}>Fast-forward · 12 commits</Out>
+        </Terminal>
+      </div>
+      <div style={{ position: "absolute", left: 640, top: 474, width: 120, height: 2, background: `linear-gradient(90deg, ${c.muted}, ${c.peel})`, transformOrigin: "left", transform: `scaleX(${wire})` }} />
+      <div style={{ position: "absolute", left: 640, top: 440, width: 120, textAlign: "center", fontFamily: mono, fontSize: 16, color: c.dim, opacity: wire }}>service</div>
+      <Glass
+        tint="rgba(227,201,94,0.07)"
+        style={{ position: "absolute", left: 780, top: 340, width: 520, padding: "30px 34px", border: `1px solid ${c.peel}55`, opacity: panel, transform: `scale(${0.95 + 0.05 * panel})` }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 20 }}>
+          <span style={{ fontFamily: serif, fontSize: 38 }}>golden image</span>
+          <span style={{ fontFamily: mono, fontSize: 18, color: done ? c.bottle : c.peel }}>{done ? "gen 15 ✓" : "gen 14 → 15"}</span>
+        </div>
+        {steps.map(([n, what, ran], i) => {
+          const on = prog > (i + 1) / (steps.length + 0.5);
+          return (
+            <div key={n} style={{ display: "flex", gap: 16, fontFamily: mono, fontSize: 21, lineHeight: 1.9, color: on ? (ran ? c.peel : c.muted) : c.dim }}>
+              <span style={{ width: 22 }}>{on ? (ran ? "↻" : "✓") : "·"}</span>
+              <span style={{ width: 110, color: on ? c.ink : c.dim }}>{n}</span>
+              <span>{on ? what : ""}</span>
+            </div>
+          );
+        })}
+        <div style={{ marginTop: 18, height: 6, borderRadius: 3, background: c.rule }}>
+          <div style={{ height: 6, borderRadius: 3, width: `${prog * 100}%`, background: `linear-gradient(90deg, ${c.peel}, ${c.bottle})` }} />
+        </div>
+      </Glass>
+      <div style={{ position: "absolute", left: 1400, top: 352, display: "flex", flexDirection: "column", gap: 16, opacity: 0.35 + 0.65 * right }}>
+        {["feat/login", "agent/parser", "fix/race"].map((n) => (
+          <Glass key={n} style={{ width: 340, padding: "20px 24px", fontFamily: mono, fontSize: 22, display: "flex", justifyContent: "space-between", alignItems: "center", border: `1px solid ${right > 0.5 ? `${c.bottle}55` : c.rule}` }}>
+            <span>{n}</span>
+            <span style={{ fontSize: 17, color: c.bottle, opacity: right > 0.5 ? pulse : 0.4 }}>● working</span>
+          </Glass>
+        ))}
+      </div>
+      <div style={{ position: "absolute", top: 820, left: 0, right: 0, display: "flex", justifyContent: "center", gap: 16 }}>
+        <Chip at={k("pull", 2)}>on every fetch or pull</Chip>
+        <Chip at={k("refreshes", 12)}>only changed steps rerun</Chip>
+        <Chip at={k("clones", -2)}>clones never touched</Chip>
+      </div>
+    </Stage>
+  );
+}
+
 /** A detected tool, lighting up as the voice names it. */
 function Tool({ name, kind, at }: { name: string; kind: string; at: number }) {
   const frame = useCurrentFrame();
