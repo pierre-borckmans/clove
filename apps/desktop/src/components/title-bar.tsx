@@ -8,7 +8,7 @@ import { useOps } from "@/lib/ops";
 import { isMac } from "@/lib/platform";
 import { setPrefs, usePrefs } from "@/lib/prefs";
 import { useRepos, useService } from "@/lib/queries";
-import { setUi } from "@/lib/ui";
+import { getUi, setUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 import { Glyph } from "./glyph";
 import { Shortcut } from "./shortcut";
@@ -129,7 +129,7 @@ function Running() {
   return (
     <button
       type="button"
-      onClick={() => setUi({ activity: true })}
+      onClick={() => setUi({ activity: !getUi().activity })}
       className="flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-bottle transition-colors hover:bg-bottle-soft"
     >
       <Loader className="size-3 animate-spin [animation-duration:1.4s]" />

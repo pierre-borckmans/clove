@@ -15,7 +15,7 @@ import { MOD } from "@/lib/platform";
 import { APP_LABELS, EDITORS, setPrefs, TERMINALS, usePrefs } from "@/lib/prefs";
 import { useHistory, useInstalledApps, useRepos, useService } from "@/lib/queries";
 import type { RepoSummary } from "@/lib/types";
-import { setUi } from "@/lib/ui";
+import { getUi, setUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 import { Shortcut } from "./shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -189,7 +189,7 @@ export function Sidebar({ compact = false }: { compact?: boolean }) {
         />
         <Item
           compact={compact}
-          onClick={() => setUi({ activity: true })}
+          onClick={() => setUi({ activity: !getUi().activity })}
           icon={<Activity />}
           label="Activity"
           dot={running.length > 0 ? "bg-bottle" : undefined}
