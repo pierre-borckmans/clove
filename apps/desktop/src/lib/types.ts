@@ -324,3 +324,29 @@ export type ShellStatus = {
   rc: string | null;
   line: string | null;
 };
+
+/** A clone's changes against the merge-base with its base (`clove_core::CloneDiff`). */
+export type CloneDiff = {
+  base: string;
+  merge_base: string;
+  patch: string;
+  truncated: boolean;
+  skipped: string[];
+  attrs: FileAttrs[];
+  /** Innermost first: a file belongs to the longest `dir` prefix. */
+  packages: Package[];
+};
+
+/** A directory with a package manifest; `dir` is "" for the repo root. */
+export type Package = { dir: string; name: string; manifest: string };
+
+/** What `.gitattributes` says about a changed file, when it matters for display. */
+export type FileAttrs = {
+  path: string;
+  /** `binary` or `-diff`. */
+  binary: boolean;
+  /** `linguist-generated` or `linguist-vendored`. */
+  generated: boolean;
+  /** A `filter` (LFS) or a `diff=<driver>` textconv: no whole-file context. */
+  converted: boolean;
+};

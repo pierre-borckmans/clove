@@ -1,5 +1,7 @@
-import { Check, ChevronDown, Loader, TriangleAlert, X } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { Activity, Check, ChevronDown, Loader, TriangleAlert, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useHotkey } from "@/hooks/use-hotkey";
 import { useNow } from "@/hooks/use-now";
 import { ms } from "@/lib/format";
 import { dismissOp, forgetOp, type Op, useOps } from "@/lib/ops";
@@ -22,16 +24,15 @@ export function OpsPanel() {
     };
   }, [ops, activity]);
 
-  // An emptied Activity view closes, so it doesn't stay open with nothing in it.
-  useEffect(() => {
-    if (activity && ops.length === 0) setUi({ activity: false });
-  }, [activity, ops.length]);
+  useHotkey({ key: "Escape" }, () => setUi({ activity: false }), activity);
 
-  if (visible.length === 0 || addRepo) return null;
+  // Operations live in memory, so a fresh session has none: say so rather
+  // than open nothing.
+  if (addRepo || (visible.length === 0 && !activity)) return null;
   return (
     <div className="pointer-events-none absolute right-4 bottom-4 z-40 flex w-[380px] flex-col gap-2">
       {activity && (
-        <div className="pointer-events-auto flex items-center justify-between px-1 text-[12px] text-muted-foreground">
+        <div className="pointer-events-auto flex items-center justify-between rounded-lg border bg-popover py-1 pr-1 pl-3 text-[12px] text-muted-foreground shadow-sm backdrop-blur-xl">
           <span>Recent activity</span>
           <button
             type="button"
@@ -48,6 +49,22 @@ export function OpsPanel() {
       {visible.map((op) => (
         <OpCard key={op.id} op={op} />
       ))}
+      {activity && visible.length === 0 && (
+        <div className="pointer-events-auto flex gap-3 rounded-xl border bg-popover px-3.5 py-3 shadow-[0_8px_30px_-6px_rgb(0_0_0/0.18),0_2px_6px_-2px_rgb(0_0_0/0.08)] backdrop-blur-xl animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
+          <Activity className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <div className="text-[12.5px] leading-relaxed text-muted-foreground">
+            Nothing has run since the app opened. New clones, refreshes, updates and removals show up here as they run.{" "}
+            <Link
+              to="/history"
+              onClick={() => setUi({ activity: false })}
+              className="text-foreground underline decoration-foreground/30 underline-offset-2 hover:decoration-foreground"
+            >
+              History
+            </Link>{" "}
+            lists removed clones.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

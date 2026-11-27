@@ -1,9 +1,11 @@
+import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowDown,
   ArrowUp,
   Code,
   Copy,
   Ellipsis,
+  FileDiff,
   FolderOpen,
   GitBranch,
   GitCommitHorizontal,
@@ -33,7 +35,7 @@ import { bytes, since } from "@/lib/format";
 import { resolveInTerminal, resolverName, startOp, useOps } from "@/lib/ops";
 import { FILE_MANAGER, isMac } from "@/lib/platform";
 import { APP_LABELS, usePrefs } from "@/lib/prefs";
-import { copyPath, copyText, openIn, useMountToggle, usePrCheck, usePrs, useRepoConfig } from "@/lib/queries";
+import { copyPath, copyText, openIn, useMountToggle, usePrCheck, usePrs, useRepoConfig, useRepos } from "@/lib/queries";
 import type { CloneInfo, MergeCheck } from "@/lib/types";
 import { setUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
@@ -59,6 +61,7 @@ export function CloneList({
   const prefs = usePrefs();
   const mount = useMountToggle(root);
   const ops = useOps();
+  const openDiff = useOpenDiff(root);
   const { data: prs } = usePrs(root);
   usePrCheck(root);
 
@@ -90,6 +93,8 @@ export function CloneList({
         return void openIn(c.path, "finder");
       case "c":
         return void copyPath(c.path);
+      case "d":
+        return openDiff(c);
       case "m":
         return mount.mutate({ name: c.name, mounted: c.mounted });
       case "backspace":
@@ -103,7 +108,7 @@ export function CloneList({
     const k = e.key.toLowerCase();
     if (k === "arrowdown" || k === "j") setSelected((s) => Math.min(shown.length - 1, s + 1));
     else if (k === "arrowup" || k === "k") setSelected((s) => Math.max(0, s - 1));
-    else if (c && !(e.metaKey || e.ctrlKey) && ["enter", "e", "t", "f", "c", "m"].includes(k)) act(c, k);
+    else if (c && !(e.metaKey || e.ctrlKey) && ["enter", "e", "t", "f", "c", "d", "m"].includes(k)) act(c, k);
     else if (c && k === "backspace" && (e.metaKey || e.ctrlKey)) act(c, "backspace");
     else return;
     e.preventDefault();
@@ -212,6 +217,7 @@ export function CloneList({
         <Hint keys="enter" label={APP_LABELS[prefs.editor]} />
         <Hint keys="t" label={APP_LABELS[prefs.terminal]} />
         <Hint keys="f" label={FILE_MANAGER} />
+        <Hint keys="d" label="changes" />
         <Hint keys="c" label="copy path" />
         <Hint keys="m" label="mount" />
         <Hint keys="mod+backspace" label="remove" />
@@ -247,6 +253,7 @@ function CloneRow({
   onSelect: () => void;
 }) {
   const prefs = usePrefs();
+  const openDiff = useOpenDiff(root);
   const failed = c.failed_steps.length > 0;
   const state = busy ? "busy" : c.issue ? "warn" : !c.mounted ? "unmounted" : failed ? "warn" : "mounted";
   return (
@@ -338,7 +345,18 @@ function CloneRow({
         </div>
       </div>
 
-      <Changes clone={c} check={check} />
+      <button
+        type="button"
+        disabled={!c.mounted}
+        onClick={(e) => {
+          e.stopPropagation();
+          openDiff(c);
+        }}
+        title={c.mounted ? "View changes (D)" : undefined}
+        className="-mx-1.5 flex min-w-0 items-center self-stretch rounded-md px-1.5 text-left enabled:hover:bg-foreground/[0.04] disabled:cursor-default"
+      >
+        <Changes clone={c} check={check} />
+      </button>
 
       <span
         className="text-[12.5px] text-muted-foreground tabular-nums"
@@ -366,6 +384,11 @@ function CloneRow({
           <RowAction label={`Open in ${APP_LABELS[prefs.editor]}`} onClick={() => void openIn(c.path, prefs.editor)}>
             <Code />
           </RowAction>
+          {c.mounted && (
+            <RowAction label="View changes" onClick={() => openDiff(c)}>
+              <FileDiff />
+            </RowAction>
+          )}
           <RowAction label={`Reveal in ${FILE_MANAGER}`} onClick={() => void openIn(c.path, "finder")}>
             <FolderOpen />
           </RowAction>
@@ -479,6 +502,7 @@ function RowAction({ label, onClick, children }: { label: string; onClick: () =>
 export function CloneMenu({ clone: c, root, children }: { clone: CloneInfo; root: string; children: ReactNode }) {
   const prefs = usePrefs();
   const mount = useMountToggle(root);
+  const openDiff = useOpenDiff(root);
   const resolver = useRepoConfig(c.operation ? root : undefined).data?.config.update?.resolver;
   return (
     <DropdownMenu>
@@ -496,6 +520,12 @@ export function CloneMenu({ clone: c, root, children }: { clone: CloneInfo; root
           <FolderOpen /> Reveal in {FILE_MANAGER}
           <DropdownMenuShortcut>F</DropdownMenuShortcut>
         </DropdownMenuItem>
+        {c.mounted && (
+          <DropdownMenuItem onSelect={() => openDiff(c)}>
+            <FileDiff /> View changes
+            <DropdownMenuShortcut>D</DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => void copyPath(c.path)}>
           <Copy /> Copy path
@@ -541,4 +571,13 @@ export function CloneMenu({ clone: c, root, children }: { clone: CloneInfo; root
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+/** Opens a clone's changes in the diff view. */
+export function useOpenDiff(root: string) {
+  const navigate = useNavigate();
+  const repoId = useRepos().data?.find((r) => r.root === root)?.id;
+  return (c: CloneInfo) => {
+    if (repoId && c.mounted) void navigate({ to: "/repo/$repoId/diff/$clone", params: { repoId, clone: c.name } });
+  };
 }

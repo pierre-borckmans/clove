@@ -1,5 +1,5 @@
 import { Link, useParams, useRouterState } from "@tanstack/react-router";
-import { Activity, BrushCleaning, History, Loader, Plus, Search, Settings, Settings2, Stethoscope } from "lucide-react";
+import { Activity, BrushCleaning, History, Loader, Plus, Settings, Settings2, Stethoscope } from "lucide-react";
 import type { ReactNode } from "react";
 import {
   DropdownMenu,
@@ -10,123 +10,156 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { isTauri } from "@/lib/bridge";
 import { useOps } from "@/lib/ops";
-import { isMac, MOD } from "@/lib/platform";
+import { MOD } from "@/lib/platform";
 import { APP_LABELS, EDITORS, setPrefs, TERMINALS, usePrefs } from "@/lib/prefs";
 import { useHistory, useInstalledApps, useRepos, useService } from "@/lib/queries";
 import type { RepoSummary } from "@/lib/types";
-import { setUi } from "@/lib/ui";
+import { getUi, setUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 import { Shortcut } from "./shortcut";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
-export function Sidebar() {
+/** Widths of the sidebar, open and collapsed to a rail of icons. */
+export const SIDEBAR = 236;
+export const RAIL = 56;
+
+/**
+ * One layout for both widths. Every icon sits in a 40px slot centred on the
+ * rail, so collapsing only narrows the sidebar over still icons: labels fade,
+ * badges turn into dots on their icon, and tooltips take over the names.
+ */
+export function Sidebar({ compact = false }: { compact?: boolean }) {
   const { data: repos } = useRepos();
   const ops = useOps();
   const params = useParams({ strict: false }) as { repoId?: string };
+  const path = useRouterState({ select: (s) => s.location.pathname });
   const running = ops.filter((o) => o.status === "running");
   const prunable = repos?.reduce((a, r) => a + r.prunable, 0) ?? 0;
   const { data: history } = useHistory();
   const autoPruned = history?.filter((e) => e.by === "auto-prune" && Date.now() / 1000 - e.at < 86_400).length ?? 0;
+  const { data: serviceOn } = useService();
+  const prefs = usePrefs();
 
   return (
-    <aside className="flex h-full w-[236px] shrink-0 flex-col bg-sidebar">
-      <div data-tauri-drag-region className="flex h-[52px] shrink-0 items-center gap-2 pl-[19px]">
-        {/* Stand-ins for the traffic lights when the UI runs in a browser. */}
-        {!isTauri &&
-          isMac &&
-          ["#ff5f57", "#febc2e", "#28c840"].map((c) => (
-            <span
-              key={c}
-              className="size-3 rounded-full shadow-[inset_0_0_0_0.5px_rgb(0_0_0/0.12)]"
-              style={{ background: c }}
-            />
-          ))}
-      </div>
-      <div className="px-3">
-        <button
-          type="button"
-          onClick={() => setUi({ palette: true })}
-          className="group flex h-8 w-full items-center gap-2 rounded-md border border-sidebar-line bg-background/50 px-2.5 text-[13px] text-muted-foreground shadow-[0_1px_0_0_var(--sidebar-line)] transition-colors hover:bg-background/80 hover:text-foreground"
+    <aside className="flex h-full shrink-0 flex-col" style={{ width: SIDEBAR }}>
+      <nav className="mt-2 flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
+        <div
+          className="group/section flex items-center justify-between overflow-hidden pr-4 pl-4 transition-[height] duration-200 ease-out"
+          style={{ height: compact ? 8 : 24 }}
         >
-          <Search className="size-3.5" />
-          <span className="flex-1 text-left">Search</span>
-          <Shortcut keys="mod+k" />
-        </button>
-      </div>
-
-      <nav className="mt-5 flex min-h-0 flex-1 flex-col overflow-y-auto px-2">
-        <div className="group/section flex items-center justify-between px-2 pb-1">
-          <span className="text-[11.5px] font-medium text-muted-foreground">Repositories</span>
+          <Fade compact={compact} className="text-[11.5px] font-medium text-muted-foreground">
+            Repositories
+          </Fade>
           <button
             type="button"
             aria-label="Add repository"
+            tabIndex={compact ? -1 : 0}
             onClick={() => setUi({ addRepo: true })}
-            className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover/section:opacity-100 hover:bg-foreground/5 hover:text-foreground"
+            className={cn(
+              "rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-foreground/5 hover:text-foreground",
+              !compact && "group-hover/section:opacity-100",
+            )}
           >
             <Plus className="size-3.5" />
           </button>
         </div>
-        <div className="flex flex-col gap-px">
+        <div className="flex flex-col transition-[gap] duration-200 ease-out" style={{ gap: compact ? 4 : 1 }}>
           {repos?.map((r, i) => {
-            const busy = running.some((o) => o.req.root === r.root);
+            const busy = running.some((o) => o.req.root === r.root) || r.refreshing;
             const active = params.repoId === r.id;
             return (
-              <Link
+              <Item
                 key={r.id}
-                to="/repo/$repoId"
-                params={{ repoId: r.id }}
-                className={cn(
-                  "group flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors",
-                  active
-                    ? "bg-foreground/[0.075] font-medium text-foreground"
-                    : "text-foreground/80 hover:bg-foreground/[0.045] hover:text-foreground",
-                )}
-              >
-                <RepoMark name={r.name} active={active} />
-                <span className="min-w-0 flex-1 truncate">{r.name}</span>
-                {busy || r.refreshing ? (
-                  <Loader className="size-3 animate-spin text-bottle [animation-duration:1.4s]" />
-                ) : (
-                  <RepoState repo={r} />
-                )}
-                {!busy && i < 9 && (
-                  <span className="hidden font-mono text-[11px] text-faint group-hover:inline">
-                    {MOD}
-                    {i + 1}
-                  </span>
-                )}
-              </Link>
+                compact={compact}
+                active={active}
+                link={{ to: "/repo/$repoId", params: { repoId: r.id } }}
+                icon={<RepoMark name={r.name} active={active} />}
+                dot={
+                  busy
+                    ? null
+                    : r.generation === null
+                      ? undefined
+                      : r.error
+                        ? "bg-destructive"
+                        : r.stale
+                          ? "bg-amber"
+                          : "bg-sage"
+                }
+                spinning={busy}
+                big
+                label={r.name}
+                tip={
+                  <>
+                    {r.name}
+                    {r.clones > 0 && <span className="ml-1.5 text-faint">{r.clones} clones</span>}
+                    {i < 9 && <Shortcut keys={`mod+${i + 1}`} className="ml-1.5" />}
+                  </>
+                }
+                right={
+                  <>
+                    {busy ? (
+                      <Loader className="size-3 animate-spin text-bottle [animation-duration:1.4s]" />
+                    ) : (
+                      <RepoState repo={r} />
+                    )}
+                    {!busy && i < 9 && (
+                      <span className="hidden font-mono text-[11px] text-faint group-hover:inline">
+                        {MOD}
+                        {i + 1}
+                      </span>
+                    )}
+                  </>
+                }
+              />
             );
           })}
-          <button
-            type="button"
+          <Item
+            compact={compact}
             onClick={() => setUi({ addRepo: true })}
-            className="flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] text-muted-foreground transition-colors hover:bg-foreground/[0.045] hover:text-foreground"
-          >
-            <span className="flex size-[18px] items-center justify-center rounded-[5px] border border-dashed border-foreground/20">
-              <Plus className="size-3" />
-            </span>
-            Add repository…
-          </button>
+            muted
+            big
+            icon={
+              <span className="flex size-[18px] items-center justify-center rounded-[5px] border border-dashed border-foreground/20">
+                <Plus className="!size-3" />
+              </span>
+            }
+            label="Add repository…"
+            tip={
+              <>
+                Add repository… <Shortcut keys="mod+o" className="ml-1.5" />
+              </>
+            }
+          />
         </div>
       </nav>
 
-      <div className="flex flex-col gap-px px-2 pb-3">
-        <NavItem
-          to="/settings"
-          search={params.repoId ? { repo: params.repoId } : {}}
+      <div className="flex flex-col pb-3 transition-[gap] duration-200 ease-out" style={{ gap: compact ? 4 : 1 }}>
+        <Item
+          compact={compact}
+          active={path === "/settings"}
+          link={{ to: "/settings", search: params.repoId ? { repo: params.repoId } : {} }}
           icon={<Settings />}
+          label="Settings"
+          dot={serviceOn ? "bg-sage" : undefined}
+          tip={`Settings · background service ${serviceOn ? "on" : "off"}`}
           right={<ServiceState />}
-        >
-          Settings
-        </NavItem>
-        <NavItem to="/doctor" icon={<Stethoscope />}>
-          Doctor
-        </NavItem>
-        <NavItem
-          to="/cleanup"
+        />
+        <Item
+          compact={compact}
+          active={path === "/doctor"}
+          link={{ to: "/doctor" }}
+          icon={<Stethoscope />}
+          label="Doctor"
+        />
+        <Item
+          compact={compact}
+          active={path === "/cleanup"}
+          link={{ to: "/cleanup" }}
           icon={<BrushCleaning />}
+          label="Cleanup"
+          dot={prunable > 0 ? "bg-sage" : undefined}
+          tip={prunable > 0 ? `Cleanup · ${prunable} merged` : "Cleanup"}
           right={
             prunable > 0 ? (
               <span className="rounded-full bg-sage-soft px-1.5 font-mono text-[10.5px] leading-[18px] text-sage">
@@ -134,12 +167,15 @@ export function Sidebar() {
               </span>
             ) : null
           }
-        >
-          Cleanup
-        </NavItem>
-        <NavItem
-          to="/history"
+        />
+        <Item
+          compact={compact}
+          active={path === "/history"}
+          link={{ to: "/history" }}
           icon={<History />}
+          label="History"
+          dot={autoPruned > 0 ? "bg-amber" : undefined}
+          tip={autoPruned > 0 ? `History · ${autoPruned} pruned today` : "History"}
           right={
             autoPruned > 0 ? (
               <span
@@ -150,25 +186,167 @@ export function Sidebar() {
               </span>
             ) : null
           }
-        >
-          History
-        </NavItem>
-        <button
-          type="button"
-          onClick={() => setUi({ activity: true })}
-          className="flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] text-foreground/80 transition-colors hover:bg-foreground/[0.045] hover:text-foreground [&_svg]:size-4 [&_svg]:text-muted-foreground"
-        >
-          <Activity />
-          <span className="flex-1 text-left">Activity</span>
-          {running.length > 0 && (
-            <span className="rounded-full bg-bottle-soft px-1.5 font-mono text-[10.5px] leading-[18px] text-bottle">
-              {running.length}
-            </span>
-          )}
-        </button>
-        <PrefsMenu />
+        />
+        <Item
+          compact={compact}
+          onClick={() => setUi({ activity: !getUi().activity })}
+          icon={<Activity />}
+          label="Activity"
+          dot={running.length > 0 ? "bg-bottle" : undefined}
+          tip={running.length ? `Activity · ${running.length} running` : "Activity"}
+          right={
+            running.length > 0 ? (
+              <span className="rounded-full bg-bottle-soft px-1.5 font-mono text-[10.5px] leading-[18px] text-bottle">
+                {running.length}
+              </span>
+            ) : null
+          }
+        />
+        <PrefsMenu compact={compact} label={`Open with ${APP_LABELS[prefs.editor]}`} />
       </div>
     </aside>
+  );
+}
+
+/** Text that fades out as the sidebar collapses; its space stays so nothing shifts. */
+function Fade({ compact, className, children }: { compact: boolean; className?: string; children: ReactNode }) {
+  return (
+    <span
+      aria-hidden={compact || undefined}
+      className={cn("truncate transition-opacity duration-150", compact && "opacity-0", className)}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** A collapsed item: a square, as the rail always was. */
+const RAIL_ITEM = 36;
+
+const ITEM =
+  "group flex shrink-0 items-center overflow-hidden rounded-md text-[13px] transition-[width,height,margin,background-color,color] duration-200 ease-out [&_svg]:size-4";
+
+type LinkTarget =
+  | { to: "/repo/$repoId"; params: { repoId: string } }
+  | { to: "/doctor" | "/cleanup" | "/history" }
+  | { to: "/settings"; search: { repo?: string } };
+
+/**
+ * A sidebar row: icon slot, label, and whatever sits on the right. Its width
+ * shrinks to the icon slot with the sidebar; the tooltip only shows then.
+ */
+function Item({
+  compact,
+  active = false,
+  muted = false,
+  link,
+  onClick,
+  icon,
+  label,
+  right,
+  dot,
+  spinning = false,
+  big = false,
+  tip,
+  trigger,
+}: {
+  compact: boolean;
+  active?: boolean;
+  muted?: boolean;
+  link?: LinkTarget;
+  onClick?: () => void;
+  icon: ReactNode;
+  label: string;
+  right?: ReactNode;
+  /** A status dot on the icon, shown only when collapsed. */
+  dot?: string | null;
+  spinning?: boolean;
+  /** Repo tiles grow more than line icons. */
+  big?: boolean;
+  tip?: ReactNode;
+  /** Wraps the row, e.g. as a menu trigger. */
+  trigger?: (row: ReactNode) => ReactNode;
+}) {
+  const className = cn(
+    ITEM,
+    active
+      ? "bg-foreground/[0.075] font-medium text-foreground [&_svg]:text-foreground"
+      : cn(
+          "hover:bg-foreground/[0.045] hover:text-foreground [&_svg]:text-muted-foreground",
+          muted ? "text-muted-foreground" : "text-foreground/80",
+        ),
+  );
+  // Collapsed: 36px squares centred on the rail. Open: full-width 32px rows.
+  // The icon slot keeps its centre on the rail's axis in both.
+  const style = compact
+    ? { width: RAIL_ITEM, height: RAIL_ITEM, marginLeft: (RAIL - RAIL_ITEM) / 2 }
+    : { width: SIDEBAR - 16, height: 32, marginLeft: 8 };
+  const inner = (
+    <>
+      <span
+        className="flex shrink-0 items-center justify-center transition-[width] duration-200 ease-out"
+        style={{ width: compact ? RAIL_ITEM : RAIL - 16 }}
+      >
+        {/* Grows with the collapse; the dot and spinner ride its corner. */}
+        <span
+          className="relative flex transition-transform duration-200 ease-out"
+          style={{ transform: compact && big ? `scale(${22 / 18})` : undefined }}
+        >
+          {icon}
+          {spinning && (
+            <Loader
+              className={cn(
+                "!size-2.5 absolute -right-1 -bottom-1 animate-spin rounded-full bg-sidebar !text-bottle transition-opacity duration-200 [animation-duration:1.4s]",
+                compact ? "opacity-100" : "opacity-0",
+              )}
+            />
+          )}
+          {dot && (
+            <span
+              className={cn(
+                "absolute -top-0.5 -right-0.5 size-[5px] rounded-full ring-[1.5px] ring-sidebar transition-opacity duration-200",
+                dot,
+                compact ? "opacity-100" : "opacity-0",
+              )}
+            />
+          )}
+        </span>
+      </span>
+      <Fade compact={compact} className="min-w-0 flex-1 text-left">
+        {label}
+      </Fade>
+      <span
+        className={cn(
+          "flex shrink-0 items-center gap-1.5 pr-2 transition-opacity duration-150",
+          compact && "pointer-events-none opacity-0",
+        )}
+      >
+        {right}
+      </span>
+    </>
+  );
+  const row = link ? (
+    <Link
+      to={link.to as never}
+      params={("params" in link ? link.params : undefined) as never}
+      search={("search" in link ? link.search : undefined) as never}
+      aria-label={label}
+      className={className}
+      style={style}
+    >
+      {inner}
+    </Link>
+  ) : (
+    <button type="button" aria-label={label} onClick={onClick} className={className} style={style}>
+      {inner}
+    </button>
+  );
+  // The tooltip stays mounted either way, so collapsing never remounts the row.
+  return (
+    <Tooltip open={compact ? undefined : false}>
+      <TooltipTrigger asChild>{trigger ? trigger(row) : row}</TooltipTrigger>
+      <TooltipContent side="right">{tip ?? label}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -201,56 +379,21 @@ function ServiceState() {
   );
 }
 
-function NavItem({
-  to,
-  search,
-  icon,
-  right,
-  children,
-}: {
-  to: "/doctor" | "/cleanup" | "/history" | "/settings";
-  search?: { repo?: string };
-  icon: ReactNode;
-  right?: ReactNode;
-  children: ReactNode;
-}) {
-  const path = useRouterState({ select: (s) => s.location.pathname });
-  const active = path === to;
-  return (
-    <Link
-      to={to}
-      search={search as never}
-      className={cn(
-        "flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors [&_svg]:size-4",
-        active
-          ? "bg-foreground/[0.075] font-medium text-foreground [&_svg]:text-foreground"
-          : "text-foreground/80 hover:bg-foreground/[0.045] hover:text-foreground [&_svg]:text-muted-foreground",
-      )}
-    >
-      {icon}
-      <span className="flex-1">{children}</span>
-      {right}
-    </Link>
-  );
-}
-
-function PrefsMenu() {
+function PrefsMenu({ compact, label }: { compact: boolean; label: string }) {
   const prefs = usePrefs();
   const { data: installed } = useInstalledApps();
   const has = (id: string) => !installed || installed.includes(id as never);
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className="flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] text-foreground/80 outline-none transition-colors hover:bg-foreground/[0.045] hover:text-foreground data-[state=open]:bg-foreground/[0.045] [&_svg]:size-4 [&_svg]:text-muted-foreground"
-        >
-          <Settings2 />
-          <span className="flex-1 text-left">Open with</span>
-          <span className="text-[11.5px] text-muted-foreground">{APP_LABELS[prefs.editor]}</span>
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="start" className="w-52">
+      <Item
+        compact={compact}
+        icon={<Settings2 />}
+        label="Open with"
+        tip={label}
+        right={<span className="text-[11.5px] text-muted-foreground">{APP_LABELS[prefs.editor]}</span>}
+        trigger={(row) => <DropdownMenuTrigger asChild>{row}</DropdownMenuTrigger>}
+      />
+      <DropdownMenuContent side={compact ? "right" : "top"} align={compact ? "end" : "start"} className="w-52">
         <DropdownMenuLabel className="text-[11.5px] font-medium text-muted-foreground">Editor</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={prefs.editor} onValueChange={(v) => setPrefs({ editor: v as never })}>
           {EDITORS.filter(has).map((a) => (

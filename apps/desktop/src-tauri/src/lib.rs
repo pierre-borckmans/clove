@@ -202,6 +202,8 @@ pub fn run() {
             commands::check_prs,
             commands::branch_candidates,
             commands::cleanup,
+            commands::clone_diff,
+            commands::clone_file,
             commands::shell_status,
             commands::shell_install,
             ops::start_op,
