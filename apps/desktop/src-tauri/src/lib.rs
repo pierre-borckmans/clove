@@ -173,6 +173,7 @@ pub fn run() {
         .manage(PopoverState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::repos,
+            commands::repo_list,
             commands::repo_status,
             commands::forget_cache,
             commands::clones,

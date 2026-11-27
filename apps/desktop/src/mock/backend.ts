@@ -19,6 +19,7 @@ import type {
   Refs,
   RepoCandidate,
   RepoConfig,
+  RepoRef,
   RepoStatus,
   RepoSummary,
 } from "@/lib/types";
@@ -115,6 +116,9 @@ function emit(event: string, payload: unknown) {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// `?slow=3000` makes the git-backed reads take that long, to see loading states.
+const SLOW_MS = Number(new URLSearchParams(globalThis.location?.search).get("slow")) || 0;
+const SLOW = new Set(SLOW_MS ? ["repos", "repo_status", "clones", "worktrees"] : []);
 const now = () => Math.floor(Date.now() / 1000);
 
 function get(root: string): MockRepo {
@@ -458,6 +462,10 @@ const commands: Record<string, (a: Args) => unknown> = {
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name)),
+  repo_list: (): RepoRef[] =>
+    [...repos.values()]
+      .map((r) => ({ id: r.status.id, name: r.status.name, root: r.status.root }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
   repo_status: (a) => status(get(a.root as string)),
   clones: (a) =>
     get(a.root as string).clones.map((c) => (c.mounted ? c : { ...c, dirty: null, ahead: null, behind: null })),
@@ -707,13 +715,15 @@ export const mockBackend = {
     const f = commands[cmd];
     if (!f) throw new Error(`mock: unknown command ${cmd}`);
     await sleep(
-      cmd === "clones" || cmd === "doctor_repo"
-        ? 90
-        : cmd === "cleanup" || cmd === "repo_candidates"
-          ? 400
-          : cmd === "init_preview"
-            ? 150
-            : 25,
+      SLOW.has(cmd)
+        ? SLOW_MS
+        : cmd === "clones" || cmd === "doctor_repo"
+          ? 90
+          : cmd === "cleanup" || cmd === "repo_candidates"
+            ? 400
+            : cmd === "init_preview"
+              ? 150
+              : 25,
     );
     return (await f(args)) as T;
   },

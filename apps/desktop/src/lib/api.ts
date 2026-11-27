@@ -16,6 +16,7 @@ import type {
   Removed,
   RepoCandidate,
   RepoConfig,
+  RepoRef,
   RepoStats,
   RepoStatus,
   RepoSummary,
@@ -34,6 +35,7 @@ export function normStep(s: Partial<Step> & { name: string }): Step {
 
 export const api = {
   repos: () => invoke<RepoSummary[]>("repos"),
+  repoList: () => invoke<RepoRef[]>("repo_list"),
   forgetCache: () => invoke<null>("forget_cache"),
   status: (root: string) =>
     invoke<RepoStatus>("repo_status", { root }).then((s) => ({ ...s, steps: s.steps.map(normStep) })),

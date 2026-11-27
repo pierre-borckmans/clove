@@ -1,9 +1,9 @@
 import { useParams } from "@tanstack/react-router";
 import { Copy, Plus } from "lucide-react";
-import { useEffect } from "react";
+import { type ReactNode, useEffect } from "react";
 import { PaneHeader } from "@/components/app-shell";
-import { CloneList } from "@/components/clone-list";
-import { GoldenCard } from "@/components/golden-card";
+import { CloneList, CloneListSkeleton } from "@/components/clone-list";
+import { GoldenCard, GoldenCardSkeleton } from "@/components/golden-card";
 import { Shortcut } from "@/components/shortcut";
 import { RepoMark } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,9 @@ import { setUi } from "@/lib/ui";
 
 export function RepoPage() {
   const { repoId } = useParams({ from: "/shell/repo/$repoId" });
-  const { repo, isLoading } = useRepo(repoId);
+  const { repo, isLoading, data: summaries } = useRepo(repoId);
+  // As many placeholder rows as the repo has clones, once `repos` knows.
+  const rows = Math.min(summaries?.find((r) => r.id === repoId)?.clones || 3, 8);
   const status = useStatus(repo?.root);
   const clones = useClones(repo?.root);
   const worktrees = useWorktrees(repo?.root);
@@ -37,8 +39,21 @@ export function RepoPage() {
   if (!repo) {
     return (
       <>
-        <PaneHeader>{isLoading ? <Skeleton className="h-4 w-32" /> : <span>Repository not found</span>}</PaneHeader>
-        <div className="flex-1" />
+        <PaneHeader>
+          {isLoading ? (
+            <>
+              <Skeleton className="size-5 rounded-[5px]" />
+              <Skeleton className="h-4 w-32" />
+            </>
+          ) : (
+            <span>Repository not found</span>
+          )}
+        </PaneHeader>
+        {isLoading ? (
+          <Body golden={<GoldenCardSkeleton />} clones={<CloneListSkeleton rows={rows} />} />
+        ) : (
+          <div className="flex-1" />
+        )}
       </>
     );
   }
@@ -68,21 +83,33 @@ export function RepoPage() {
           <Shortcut keys="mod+n" className="ml-0.5 [&_kbd]:border-white/20 [&_kbd]:bg-white/15 [&_kbd]:text-white/90" />
         </Button>
       </PaneHeader>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex max-w-[1080px] flex-col gap-6 px-6 pt-5 pb-24">
-          {status.data ? <GoldenCard status={status.data} /> : <Skeleton className="h-[188px] rounded-xl" />}
-          {clones.data ? (
+      <Body
+        golden={status.data ? <GoldenCard status={status.data} /> : <GoldenCardSkeleton />}
+        clones={
+          clones.data ? (
             <CloneList
               root={repo.root}
               clones={clones.data}
               goldenGeneration={status.data?.golden?.generation ?? null}
             />
           ) : (
-            <Skeleton className="h-[240px] rounded-xl" />
-          )}
-          {worktrees.data && <WorktreeList root={repo.root} worktrees={worktrees.data} />}
-        </div>
-      </div>
+            <CloneListSkeleton rows={rows} />
+          )
+        }
+        worktrees={worktrees.data && <WorktreeList root={repo.root} worktrees={worktrees.data} />}
+      />
     </>
+  );
+}
+
+function Body({ golden, clones, worktrees }: { golden: ReactNode; clones: ReactNode; worktrees?: ReactNode }) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex max-w-[1080px] flex-col gap-6 px-6 pt-5 pb-24">
+        {golden}
+        {clones}
+        {worktrees}
+      </div>
+    </div>
   );
 }

@@ -7,7 +7,7 @@ import { isTauri } from "@/lib/bridge";
 import { useOps } from "@/lib/ops";
 import { isMac } from "@/lib/platform";
 import { setPrefs, usePrefs } from "@/lib/prefs";
-import { useRepos, useService } from "@/lib/queries";
+import { useRepo, useService } from "@/lib/queries";
 import { getUi, setUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 import { Glyph } from "./glyph";
@@ -81,7 +81,7 @@ export function TitleBar() {
 function Crumbs() {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const params = useParams({ strict: false }) as { repoId?: string; clone?: string };
-  const repo = useRepos().data?.find((r) => r.id === params.repoId);
+  const { repo } = useRepo(params.repoId);
   const parts: ReactNode[] = [];
   if (repo) {
     parts.push(

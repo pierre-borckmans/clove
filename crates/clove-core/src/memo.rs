@@ -97,14 +97,25 @@ pub fn get<T: Clone + Send + 'static>(key: &str, deps: &[Dep], compute: impl FnO
 /// `compute`'s answer for `key`, reused for `max_age`: for numbers that drift
 /// slowly and are only shown, like disk usage.
 pub fn get_aged<T: Clone + Send + 'static>(key: &str, max_age: Duration, compute: impl FnOnce() -> T) -> T {
-    {
+    let hit = || {
         let m = MEMO.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(e) = m.get(key)
-            && e.at.elapsed() < max_age
-            && let Some(v) = e.value.downcast_ref::<T>()
-        {
-            return v.clone();
-        }
+        let e = m.get(key)?;
+        (e.at.elapsed() < max_age)
+            .then(|| e.value.downcast_ref::<T>().cloned())
+            .flatten()
+    };
+    if let Some(v) = hit() {
+        return v;
+    }
+    // One computation per key, as in `lookup`: the repo page asks for status
+    // and clones at once, and both want every clone's size.
+    let gate = {
+        let mut g = GATES.lock().unwrap_or_else(|e| e.into_inner());
+        g.entry(key.to_string()).or_default().clone()
+    };
+    let _turn = gate.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(v) = hit() {
+        return v;
     }
     let v = compute();
     let entry = Entry {

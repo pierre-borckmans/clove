@@ -5,7 +5,7 @@ import { useHotkey } from "@/hooks/use-hotkey";
 import { cycleAppearance } from "@/hooks/use-theme";
 import { listen } from "@/lib/bridge";
 import { setPrefs, usePrefs } from "@/lib/prefs";
-import { useAutoPruneToasts, useRepoChanges, useRepos } from "@/lib/queries";
+import { useAutoPruneToasts, useRepoChanges, useRepoList } from "@/lib/queries";
 import { getUi, setUi } from "@/lib/ui";
 import { AddRepoDialog } from "./add-repo-dialog";
 import { CommandPalette } from "./command-palette";
@@ -20,7 +20,7 @@ export function AppShell() {
   const navigate = useNavigate();
   useRepoChanges();
   useAutoPruneToasts();
-  const { data: repos } = useRepos();
+  const { data: repos } = useRepoList();
   const params = useParams({ strict: false }) as { repoId?: string };
   const current = repos?.find((r) => r.id === params.repoId);
 

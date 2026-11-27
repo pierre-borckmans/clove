@@ -2,6 +2,9 @@
 
 export type Timing = { step: string; ms: number };
 
+/** A known repo before git is asked anything: see `repo_list`. */
+export type RepoRef = Pick<RepoSummary, "id" | "name" | "root">;
+
 export type RepoSummary = {
   id: string;
   name: string;

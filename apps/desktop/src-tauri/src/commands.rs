@@ -32,45 +32,110 @@ pub struct RepoSummary {
     pub error: Option<String>,
 }
 
+/// A known repo without asking git: enough to draw the sidebar and a repo's
+/// page while `repos` works out the rest.
+#[derive(Serialize)]
+pub struct RepoRef {
+    pub id: String,
+    pub name: String,
+    pub root: PathBuf,
+}
+
 #[tauri::command]
-pub async fn repos() -> CmdResult<Vec<RepoSummary>> {
+pub async fn repo_list() -> CmdResult<Vec<RepoRef>> {
     block(|| {
         Ok(known_repos()
             .into_iter()
             .map(|r| {
-                let id = clove_core::repo::repo_id(&r.root, &r.name);
-                match Clove::open(&r.root).and_then(|c| Ok((c.status()?, c.summary()))) {
-                    Ok((s, sum)) => RepoSummary {
-                        id: s.id,
-                        name: s.name,
-                        root: s.root,
-                        clones: s.clones,
-                        mounted: s.mounted,
-                        generation: s.golden.as_ref().map(|g| g.meta.generation),
-                        behind: s.golden.and_then(|g| g.behind),
-                        stale: sum.stale,
-                        refreshing: sum.refreshing,
-                        prunable: sum.prunable,
-                        error: None,
-                    },
-                    Err(e) => RepoSummary {
-                        id,
-                        name: r.name,
-                        root: r.root,
-                        clones: 0,
-                        mounted: 0,
-                        generation: None,
-                        behind: None,
-                        stale: false,
-                        refreshing: false,
-                        prunable: 0,
-                        error: Some(err(e)),
-                    },
+                // Same root, name and id as `Clove::open`, which `repos` uses.
+                let root = r.root.canonicalize().unwrap_or(r.root);
+                let name = root
+                    .file_name()
+                    .map_or(r.name, |n| n.to_string_lossy().to_string());
+                RepoRef {
+                    id: clove_core::repo::repo_id(&root, &name),
+                    name,
+                    root,
                 }
             })
             .collect())
     })
     .await
+}
+
+/// One thread per repo: each costs a few git calls, and a cold disk made
+/// them add up to seconds at startup.
+#[tauri::command]
+pub async fn repos() -> CmdResult<Vec<RepoSummary>> {
+    block(|| {
+        let known = known_repos();
+        Ok(std::thread::scope(|s| {
+            let handles: Vec<_> = known
+                .into_iter()
+                .map(|r| s.spawn(move || repo_summary(r)))
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("repo summary thread panicked"))
+                .collect()
+        }))
+    })
+    .await
+}
+
+/// What `status()` would report for the sidebar, without its disk usage
+/// figures and per-clone info, which the list does not show.
+fn repo_summary(r: clove_core::RepoRecord) -> RepoSummary {
+    let id = clove_core::repo::repo_id(&r.root, &r.name);
+    let read = |c: &Clove| -> anyhow::Result<(Option<u32>, Option<u32>)> {
+        c.record()?;
+        // `status()` fails on a clone without metadata; so does this.
+        for n in c.clone_names()? {
+            if c.clone_meta(&n)?.is_none() {
+                return Err(c.no_clone(&n));
+            }
+        }
+        c.freshness()?;
+        let Some(meta) = c.golden_meta()? else {
+            return Ok((None, None));
+        };
+        // Same key and dependency as `status()`, so the two share the answer.
+        let range = format!("{}..{}", meta.commit, meta.base);
+        let behind = clove_core::memo::get(
+            &format!("behind:{}:{range}", c.root.display()),
+            &[clove_core::memo::Dep::git_ref(&c.common_dir, &meta.base)],
+            || clove_core::git::count_commits(&c.root, &range),
+        );
+        Ok((Some(meta.generation), behind))
+    };
+    match Clove::open(&r.root).and_then(|c| Ok((read(&c)?, c.summary(), c))) {
+        Ok(((generation, behind), sum, c)) => RepoSummary {
+            id: c.id,
+            name: c.name,
+            root: c.root,
+            clones: sum.clones,
+            mounted: sum.mounted,
+            generation,
+            behind,
+            stale: sum.stale,
+            refreshing: sum.refreshing,
+            prunable: sum.prunable,
+            error: None,
+        },
+        Err(e) => RepoSummary {
+            id,
+            name: r.name,
+            root: r.root,
+            clones: 0,
+            mounted: 0,
+            generation: None,
+            behind: None,
+            stale: false,
+            refreshing: false,
+            prunable: 0,
+            error: Some(err(e)),
+        },
+    }
 }
 
 /// Drops remembered git answers: a manual refresh asks git again.
