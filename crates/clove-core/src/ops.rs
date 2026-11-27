@@ -264,6 +264,18 @@ impl Clove {
     fn changed_steps(&self, meta: &GoldenMeta) -> Vec<(String, u32)> {
         let base = &self.config.base;
         let mut out = vec![];
+        // One diff over every step's watched paths settles the common case
+        // (nothing moved) without a git call per step; the same commit needs
+        // none. Changed step definitions are found below either way.
+        let watched: Vec<&str> = self
+            .config
+            .steps
+            .iter()
+            .filter(|s| s.warm.is_some() || s.setup.is_some())
+            .flat_map(|s| s.watch.iter().map(String::as_str))
+            .collect();
+        let at_base = git::commit_of(&self.root, base).as_deref() == Some(meta.commit.as_str());
+        let inputs_moved = !at_base && git::any_changed(&self.root, &meta.commit, base, &watched);
         for step in &self.config.steps {
             if step.watch.is_empty() || (step.warm.is_none() && step.setup.is_none()) {
                 continue;
@@ -271,6 +283,9 @@ impl Clove {
             // Images from before step hashes were recorded have an empty map.
             if !meta.step_hashes.is_empty() && meta.step_hashes.get(&step.name) != Some(&step_hash(step)) {
                 out.push((step.name.clone(), 0));
+                continue;
+            }
+            if !inputs_moved {
                 continue;
             }
             let mut args = vec!["diff", "--quiet", meta.commit.as_str(), base.as_str(), "--"];
@@ -750,7 +765,7 @@ impl Clove {
         let result = (|| -> Result<()> {
             self.write_admin(&admin, &wt, &dir, &lock_reason(&name))?;
             timed(r, &mut timings, "checkout", || {
-                self.checkout(&wt, branch.as_deref(), &base)
+                self.checkout(&wt, branch.as_deref(), &base, &golden.commit)
             })?;
             Ok(())
         })();
@@ -799,17 +814,48 @@ impl Clove {
         self.info(&name, false)
     }
 
-    fn checkout(&self, wt: &Path, branch: Option<&str>, base: &str) -> Result<()> {
-        let Some(b) = branch else {
-            return git::run_ok(wt, &["switch", "--quiet", "--detach", base]);
+    fn checkout(&self, wt: &Path, branch: Option<&str>, base: &str, golden: &str) -> Result<()> {
+        let new_branch = branch.filter(|b| {
+            !git::ref_exists(wt, &format!("refs/heads/{b}"))
+                && !git::ref_exists(wt, &format!("refs/remotes/origin/{b}"))
+        });
+        // The image is the golden worktree, detached at its commit, with an
+        // index that matches it. When the base is that commit, files and index
+        // are already right and only HEAD has to move: no `git switch`, which
+        // stats every file of the fresh volume first (~0.7 s in a big repo).
+        // A post-checkout hook (husky, LFS) only runs under `git switch`.
+        if git::commit_of(wt, base).as_deref() == Some(golden)
+            && git::head_commit(wt).ok().as_deref() == Some(golden)
+            && !git::has_hook(wt, "post-checkout")
+        {
+            match (branch, new_branch) {
+                (None, _) => return Ok(()),
+                (Some(_), Some(b)) => {
+                    // --no-track: a feature branch must not push to its base by accident.
+                    git::run_ok(wt, &["branch", "--no-track", b, golden])?;
+                    // The reflog line `git switch` writes, so `git checkout -` works the same.
+                    let why = format!("checkout: moving from {golden} to {b}");
+                    return git::run_ok(
+                        wt,
+                        &["symbolic-ref", "-m", &why, "HEAD", &format!("refs/heads/{b}")],
+                    );
+                }
+                _ => {}
+            }
+        }
+        // Otherwise git does the work, preloading the index from threads: on a
+        // just-mounted volume that is ~3x faster than one stat at a time.
+        let switch = |args: &[&str]| {
+            let mut all = vec!["-c", "core.preloadIndex=true", "switch", "--quiet"];
+            all.extend(args);
+            git::run_ok(wt, &all)
         };
-        if git::ref_exists(wt, &format!("refs/heads/{b}")) {
-            git::run_ok(wt, &["switch", "--quiet", b])
-        } else if git::ref_exists(wt, &format!("refs/remotes/origin/{b}")) {
-            git::run_ok(wt, &["switch", "--quiet", "--track", &format!("origin/{b}")])
-        } else {
+        match (branch, new_branch) {
+            (None, _) => switch(&["--detach", base]),
+            (Some(b), None) if git::ref_exists(wt, &format!("refs/heads/{b}")) => switch(&[b]),
+            (Some(b), None) => switch(&["--track", &format!("origin/{b}")]),
             // --no-track: a feature branch must not push to its base by accident.
-            git::run_ok(wt, &["switch", "--quiet", "--no-track", "-c", b, base])
+            (Some(b), Some(_)) => switch(&["--no-track", "-c", b, base]),
         }
     }
 
@@ -826,6 +872,19 @@ impl Clove {
     ) -> Vec<String> {
         let env = self.step_env(wt, name);
         let mut failed = vec![];
+        // As in `changed_steps`: at the same commit nothing moved, and one
+        // diff over all watched paths spares the per-step ones when nothing did.
+        let moved = since.map(|(since, _)| {
+            let watched: Vec<&str> = self
+                .config
+                .steps
+                .iter()
+                .filter(|s| s.setup.is_some())
+                .flat_map(|s| s.watch.iter().map(String::as_str))
+                .collect();
+            let head = git::head_commit(wt).ok();
+            head.as_deref() != Some(since) && git::any_changed(wt, since, "HEAD", &watched)
+        });
         for step in &self.config.steps {
             let Some(cmd) = &step.setup else { continue };
             let label = format!("setup {}", step.name);
@@ -834,7 +893,7 @@ impl Clove {
             {
                 let mut args = vec!["diff", "--quiet", since, "HEAD", "--"];
                 args.extend(step.watch.iter().map(String::as_str));
-                if git::ok(wt, &args) {
+                if moved == Some(false) || git::ok(wt, &args) {
                     r.event(Event::Skip {
                         step: label,
                         reason: format!("unchanged since {since_label}"),

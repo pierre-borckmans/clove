@@ -267,7 +267,7 @@ const INSTALL_LOCKFILES: [&str; 6] = [
 pub fn nested_projects(root: &Path) -> Vec<String> {
     let mut dirs = std::collections::BTreeSet::new();
     let patterns: Vec<String> = LOCKFILES.iter().map(|f| format!("**/{f}")).collect();
-    let listed = std::process::Command::new("git")
+    let listed = std::process::Command::new(crate::git::bin())
         .arg("-C")
         .arg(root)
         .args(["ls-files", "-z", "--"])
@@ -388,7 +388,7 @@ mod tests {
         std::fs::write(r.join("scratch/yarn.lock"), "").unwrap();
         let git = |a: &[&str]| {
             assert!(
-                std::process::Command::new("git")
+                std::process::Command::new(crate::git::bin())
                     .arg("-C")
                     .arg(r)
                     .args(a)
@@ -442,7 +442,7 @@ mod tests {
             std::fs::write(p, "").unwrap();
         }
         let run = |args: &[&str]| {
-            std::process::Command::new("git")
+            std::process::Command::new(crate::git::bin())
                 .arg("-C")
                 .arg(r)
                 .args(args)

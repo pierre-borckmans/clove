@@ -22,8 +22,33 @@ impl Drop for GoldenGit {
     }
 }
 
+/// The git binary to run. On macOS, `/usr/bin/git` is a launcher that asks
+/// xcrun for the developer directory on every call: ~8 ms of a ~12 ms git
+/// call, and `clove new` makes dozens. Its exec path holds the real binary,
+/// so ask once and run that. Any other git (Homebrew, nix) runs as found.
+pub fn bin() -> &'static Path {
+    static BIN: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    BIN.get_or_init(|| resolve_bin().unwrap_or_else(|| PathBuf::from("git")))
+}
+
+fn resolve_bin() -> Option<PathBuf> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let first = std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|d| d.join("git"))
+        .find(|p| p.is_file())?;
+    if first != Path::new("/usr/bin/git") {
+        return None;
+    }
+    let out = Command::new(&first).arg("--exec-path").output().ok()?;
+    let dir = String::from_utf8(out.stdout).ok()?;
+    let real = Path::new(dir.trim()).join("git").canonicalize().ok()?;
+    real.is_file().then_some(real)
+}
+
 pub fn cmd(dir: &Path) -> Command {
-    let mut c = Command::new("git");
+    let mut c = Command::new(bin());
     // Preloading stats the index from up to 20 threads; on APFS they contend
     // in the kernel and a status costs ~10x the CPU for the same wall time.
     // A repo with core.fsmonitor on would start a daemon in every clone
@@ -60,6 +85,42 @@ pub fn common_dir(dir: &Path) -> Result<PathBuf> {
 
 pub fn head_commit(dir: &Path) -> Result<String> {
     out(dir, &["rev-parse", "HEAD"])
+}
+
+/// The commit a revision names, or None when it names none.
+pub fn commit_of(dir: &Path, rev: &str) -> Option<String> {
+    out(
+        dir,
+        &["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")],
+    )
+    .ok()
+}
+
+/// Whether anything under any of `paths` differs between two commits: one
+/// git call that lets the per-path checks after it be skipped. Same commit,
+/// no call at all.
+pub fn any_changed(dir: &Path, a: &str, b: &str, paths: &[&str]) -> bool {
+    if paths.is_empty() {
+        return false;
+    }
+    // Pathspec magic (`:!docs`, `:(glob)…`) from one step would apply to every
+    // other step's paths here: say "changed" and let the per-path checks decide.
+    if paths.iter().any(|p| p.starts_with(':')) {
+        return true;
+    }
+    let mut args = vec!["diff", "--quiet", a, b, "--"];
+    args.extend(paths);
+    !ok(dir, &args)
+}
+
+/// Whether the repo runs a hook by this name (core.hooksPath respected).
+pub fn has_hook(dir: &Path, name: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    out(dir, &["rev-parse", "--git-path", &format!("hooks/{name}")])
+        .ok()
+        .map(|p| dir.join(p))
+        .and_then(|p| p.metadata().ok())
+        .is_some_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 pub fn current_branch(dir: &Path) -> Option<String> {
@@ -119,4 +180,67 @@ pub fn count_commits(dir: &Path, range: &str) -> Option<u32> {
 pub fn split_remote_ref(dir: &Path, r: &str) -> Option<(String, String)> {
     let (remote, branch) = r.split_once('/')?;
     has_remote(dir, remote).then(|| (remote.to_string(), branch.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repo() -> tempfile::TempDir {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        run_ok(d, &["init", "--quiet", "--initial-branch=main"]).unwrap();
+        std::fs::create_dir_all(d.join("a/docs")).unwrap();
+        std::fs::write(d.join("a/x"), "1").unwrap();
+        std::fs::write(d.join("a/docs/y"), "1").unwrap();
+        let commit = |msg: &str| {
+            run_ok(d, &["add", "-A"]).unwrap();
+            run_ok(
+                d,
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-qm",
+                    msg,
+                ],
+            )
+            .unwrap();
+        };
+        commit("one");
+        std::fs::write(d.join("a/docs/y"), "2").unwrap();
+        commit("two");
+        t
+    }
+
+    #[test]
+    fn any_changed_sees_one_diff_and_stands_aside_for_magic() {
+        let t = repo();
+        let d = t.path();
+        assert!(any_changed(d, "HEAD~1", "HEAD", &["a"]));
+        assert!(!any_changed(d, "HEAD~1", "HEAD", &["a/x"]));
+        assert!(!any_changed(d, "HEAD", "HEAD", &["a"]), "same commit");
+        assert!(!any_changed(d, "HEAD~1", "HEAD", &[]));
+        // One step's exclusion must not hide another step's change.
+        assert!(any_changed(d, "HEAD~1", "HEAD", &["a/x", ":!a/docs", "a/docs/y"]));
+    }
+
+    #[test]
+    fn has_hook_needs_an_executable_and_follows_hooks_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = repo();
+        let d = t.path();
+        assert!(!has_hook(d, "post-checkout"));
+        let hook = d.join(".git/hooks/post-checkout");
+        std::fs::write(&hook, "#!/bin/sh\n").unwrap();
+        assert!(!has_hook(d, "post-checkout"), "not executable");
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(has_hook(d, "post-checkout"));
+        run_ok(d, &["config", "core.hooksPath", "elsewhere"]).unwrap();
+        assert!(!has_hook(d, "post-checkout"), "core.hooksPath moves it");
+    }
 }

@@ -145,7 +145,7 @@ fn storage() -> Vec<Check> {
 
 pub fn machine() -> Vec<Check> {
     let mut out = storage();
-    match run(Command::new("git").arg("--version")) {
+    match run(Command::new(crate::git::bin()).arg("--version")) {
         Ok(v) => {
             let ver = v.trim_start_matches("git version ").to_string();
             let ok = ver
