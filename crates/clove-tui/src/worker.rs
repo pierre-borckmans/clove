@@ -250,9 +250,21 @@ fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Res
     let root = root.ok_or("no repository")?;
     let c = Clove::open(root).map_err(e)?;
     match task {
-        Task::Init => c.init(r).map(Outcome::Golden).map_err(e),
-        Task::Refresh => c.refresh(r).map(Outcome::Golden).map_err(e),
-        Task::New(opts) => c.new_clone(&opts, r).map(Outcome::Clone).map_err(e),
+        Task::Init => c
+            .init(r)
+            .inspect(|_| c.spawn_spare_fill())
+            .map(Outcome::Golden)
+            .map_err(e),
+        Task::Refresh => c
+            .refresh(r)
+            .inspect(|_| c.spawn_spare_fill())
+            .map(Outcome::Golden)
+            .map_err(e),
+        Task::New(opts) => c
+            .new_clone(&opts, r)
+            .inspect(|_| c.spawn_spare_fill())
+            .map(Outcome::Clone)
+            .map_err(e),
         Task::Remove { name, opts } => match c.remove_or_defer(&name, &opts, r).map_err(e)? {
             clove_core::Removal::Removed => Ok(Outcome::Removed),
             clove_core::Removal::WhenFree(users) => {

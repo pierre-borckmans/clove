@@ -201,6 +201,32 @@ fn agents() -> Option<Check> {
     })
 }
 
+/// The clone `new` claims, mounted ahead of time.
+fn spare(c: &Clove) -> Option<Check> {
+    use crate::spare::SpareState::*;
+    let (level, detail, fix) = match c.spare_state() {
+        Off => return None,
+        Ready(g) => (Level::Ok, format!("mounted, gen {g}"), None),
+        Filling => (Level::Ok, "being made".to_string(), None),
+        Missing => (
+            Level::Ok,
+            "none yet; the next new mounts its own and makes one".to_string(),
+            Some("clove spare".into()),
+        ),
+        Stale(why) => (
+            Level::Warn,
+            format!("unusable: {why}"),
+            Some("clove spare".into()),
+        ),
+        Unsupported(why) => (
+            Level::Warn,
+            format!("off on this machine: {why}"),
+            Some("clove spare (tries again), or clove config set spare false".into()),
+        ),
+    };
+    Some(check("spare clone", level, detail, fix))
+}
+
 pub fn repo(c: &Clove) -> Vec<Check> {
     let mut out = vec![];
     let src = if c.config.steps_detected {
@@ -351,6 +377,7 @@ pub fn repo(c: &Clove) -> Vec<Check> {
                     None,
                 ));
             }
+            out.extend(spare(c));
         }
         Ok(None) => out.push(check(
             "golden",

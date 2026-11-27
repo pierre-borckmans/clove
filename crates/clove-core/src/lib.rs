@@ -28,6 +28,7 @@ pub mod repo;
 pub mod service;
 pub mod settings;
 pub mod shellrc;
+pub mod spare;
 pub mod stats;
 pub mod steps;
 pub mod update;

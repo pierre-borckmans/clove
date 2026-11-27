@@ -77,6 +77,7 @@ const FIELDS: [string, string, string, FieldKind, string | null, string][] = [
   ["image_size", "image size", "clones", { type: "size" }, "300G", "maximum size of each image"],
   ["fetch", "fetch", "clones", { type: "bool" }, "true", "fetch the base ref before creating a clone"],
   ["fetch_interval", "fetch at most", "clones", { type: "seconds" }, "5m", "skip that fetch when recent, e.g. 5m"],
+  ["spare", "spare clone", "clones", { type: "bool" }, "true", "keep one clone mounted ahead of time (macOS)"],
   [
     "exec",
     "environment",
@@ -613,6 +614,7 @@ const commands: Record<string, (a: Args) => unknown> = {
         image_size: "300G",
         fetch: true,
         fetch_interval: 300,
+        spare: true,
         exec: "auto",
         env: {},
         steps: r.status.steps,

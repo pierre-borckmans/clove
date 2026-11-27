@@ -171,6 +171,27 @@ pub(crate) trait Store: Sync {
     /// (bytes the clone references, bytes only it holds).
     fn clone_bytes(&self, c: &Clove, name: &str, mount: &Path) -> (u64, u64);
 
+    /// Spare: a copy of generation `g` made and mounted ahead of time, so
+    /// `new` only moves it into place. Ok(false) when the backend has none.
+    fn spare_create(&self, _c: &Clove, _g: u32) -> Result<bool> {
+        Ok(false)
+    }
+    fn spare_attach(&self, _c: &Clove) -> Result<()> {
+        Ok(())
+    }
+    fn spare_attached(&self, _c: &Clove) -> bool {
+        false
+    }
+    /// Makes the spare clone `name`, mounted at `mount`. On error the spare
+    /// stays where it was.
+    fn spare_claim(&self, _c: &Clove, _name: &str, _mount: &Path) -> Result<()> {
+        bail!("this backend keeps no spare")
+    }
+    /// Detaches the spare and deletes its storage.
+    fn spare_discard(&self, _c: &Clove) -> Result<()> {
+        Ok(())
+    }
+
     /// Unmounts the volume all clones share, when the backend has one.
     /// Ok(false) when clones are mounted one by one (macOS).
     fn unmount_volume(&self, c: &Clove, force: bool) -> Result<bool>;
