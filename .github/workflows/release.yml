@@ -1,7 +1,9 @@
 name: release
 # Push a tag like v0.2.0: builds the CLI for macOS and Linux, publishes a
 # GitHub release with checksums, and updates the formula in
-# pierre-borckmans/homebrew-tap.
+# pierre-borckmans/homebrew-tap. The tag sets the version: every build
+# stamps it into Cargo.toml first (scripts/ci/set-version.sh), so a release
+# needs no version bump on main.
 #
 # With the Apple secrets set (see RELEASING.md), the macOS CLI is signed with
 # Developer ID and sent to Apple's notary service, and the Mac app is built,
@@ -46,12 +48,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - name: Check the tag matches the crate version
+      - name: Stamp the tag's version
         shell: bash
-        run: |
-          want="${GITHUB_REF_NAME#v}"
-          have=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          [ "$want" = "$have" ] || { echo "tag $GITHUB_REF_NAME but Cargo.toml says $have"; exit 1; }
+        run: scripts/ci/set-version.sh "$GITHUB_REF_NAME"
       - run: cargo build --release --locked -p clove-cli --target ${{ matrix.target }}
       - name: Import the Developer ID certificate
         if: env.SIGN == 'true'
@@ -132,6 +131,8 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: scripts/ci/import-cert.sh
+      - name: Stamp the tag's version
+        run: scripts/ci/set-version.sh "$GITHUB_REF_NAME"
       - name: Build, sign and notarize
         working-directory: apps/desktop
         env:
@@ -216,6 +217,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/desktop/pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
+      - name: Stamp the tag's version
+        run: scripts/ci/set-version.sh "$GITHUB_REF_NAME"
       - name: Build
         working-directory: apps/desktop
         run: |
