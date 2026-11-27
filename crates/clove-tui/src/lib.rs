@@ -6,6 +6,7 @@
 
 mod add_repo;
 mod app;
+mod diffview;
 mod fmt;
 mod model;
 mod panes;
@@ -41,6 +42,8 @@ pub fn run(start_dir: &Path) -> Result<()> {
     if !std::io::stderr().is_terminal() {
         anyhow::bail!("clove's terminal UI needs a terminal");
     }
+    // Last known clone statuses at once; git is asked in the background.
+    clove_core::memo::serve_saved(true);
     let (repos, idx, notice) = worker::discover(start_dir);
     let mut app = App::new(repos, idx);
     app.start_dir = start_dir.to_path_buf();
@@ -49,6 +52,8 @@ pub fn run(start_dir: &Path) -> Result<()> {
     app.now_unix = clove_core::util::now_unix();
 
     let (tx, rx) = mpsc::channel::<Msg>();
+    // Before the screen is taken over: diff tints follow the terminal's background.
+    theme::detect_background();
     let mut term = Term::enter()?;
     let start = Instant::now();
     let mut effects = vec![];
@@ -76,6 +81,9 @@ pub fn run(start_dir: &Path) -> Result<()> {
         }
         if app.needs_pr_check() {
             effects.push(Effect::CheckPrs);
+        }
+        if app.needs_upgrade_check() && std::env::var_os("CLOVE_NO_UPDATE_CHECK").is_none() {
+            effects.push(Effect::CheckUpgrade { force: false });
         }
         for e in effects.drain(..) {
             perform(e, &mut app, &tx, &mut term);
@@ -200,6 +208,11 @@ fn perform(e: Effect, app: &mut App, tx: &mpsc::Sender<Msg>, term: &mut Term) {
                 Err(e) => app.toast(model::ToastKind::Err, format!("{e:#}")),
             }
             app.loaded_ms = None;
+        }
+        Effect::LoadDiff { root, name } => worker::load_diff(tx.clone(), root, name),
+        Effect::CheckUpgrade { force } => {
+            app.upgrade_checked_ms = Some(app.now_ms);
+            worker::check_upgrade(tx.clone(), force);
         }
         Effect::FindRepos => add_repo::find(tx.clone()),
         Effect::PreviewInit(path) => add_repo::preview(tx.clone(), path),

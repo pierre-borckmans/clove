@@ -103,6 +103,19 @@ enum Cmd {
         #[arg(add = ArgValueCompleter::new(complete::clones))]
         clone: String,
     },
+    /// A clone's changes against its base: committed, staged, unstaged and
+    /// untracked. Pages the patch in a terminal; `--stat` counts per file.
+    Diff {
+        /// The clone (default: the one you are in).
+        #[arg(add = ArgValueCompleter::new(complete::clones))]
+        clone: Option<String>,
+        /// Changed lines per file instead of the patch.
+        #[arg(long)]
+        stat: bool,
+        /// Counts per package (the nearest package.json, Cargo.toml, go.mod…).
+        #[arg(long)]
+        packages: bool,
+    },
     /// Run a command inside a clone, in its dev environment (direnv/mise).
     #[command(visible_alias = "exec")]
     Run {
@@ -209,6 +222,16 @@ enum Cmd {
         #[arg(long)]
         all_repos: bool,
     },
+    /// How fast clones come: median and p90, where the time goes, which
+    /// clones reran setup, golden image builds, and the recent creations.
+    Stats {
+        /// Recent creations listed, newest first.
+        #[arg(short = 'n', long, default_value_t = 10)]
+        limit: usize,
+        /// Every repo clove manages, not just this one.
+        #[arg(long)]
+        all_repos: bool,
+    },
     /// Find leftovers from interrupted operations.
     Gc {
         /// Remove them (default: only list).
@@ -242,6 +265,14 @@ enum Cmd {
     /// background by `clove rm`).
     #[command(hide = true)]
     RemovePending,
+    /// Make the spare clone `new` claims, mounted ahead of time (run in the
+    /// background after new, init, refresh and at login). macOS.
+    #[command(hide = true)]
+    Spare {
+        /// Detach and delete it instead.
+        #[arg(long)]
+        discard: bool,
+    },
     /// Delete the golden image and clove's state for this repo.
     Deinit,
     /// Background agents: remount clones at login, keep golden images fresh.
@@ -274,6 +305,19 @@ enum Cmd {
     /// Terminal UI: repos, clones, live progress. Bare `clove` opens it too.
     #[command(alias = "ui")]
     Tui,
+    /// Upgrade clove (and the app) with Homebrew, then restart the service.
+    /// Other installs get the download link.
+    Upgrade {
+        /// Only ask GitHub for the latest release and say.
+        #[arg(long)]
+        check: bool,
+        /// A quiet `--check` for the hint other commands print.
+        #[arg(long, hide = true, requires = "check")]
+        background: bool,
+        /// From the app: wait for this pid to quit, upgrade, open the app again.
+        #[arg(long, hide = true, value_name = "PID")]
+        relaunch_app: Option<u32>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -420,6 +464,7 @@ fn main() {
     clap_complete::CompleteEnv::with_factory(Cli::command).complete();
     let cli = Cli::parse();
     let json = cli.json;
+    let hint = wants_upgrade_hint(&cli);
     if let Err(e) = run(cli) {
         if json {
             println!("{}", serde_json::json!({ "error": format!("{e:#}") }));
@@ -428,6 +473,38 @@ fn main() {
         }
         std::process::exit(1);
     }
+    if hint && let Some(v) = clove_core::upgrade::hint() {
+        eprintln!(
+            "{}",
+            paint(DIM, format!("clove v{v} is available: clove upgrade"))
+        );
+    }
+}
+
+/// Commands a person typed in a terminal get the "new version" hint; ones
+/// that scripts, shells and hooks run, or that print paths, don't.
+fn wants_upgrade_hint(cli: &Cli) -> bool {
+    let quiet_cmd = matches!(
+        cli.cmd,
+        None | Some(
+            Cmd::Upgrade { .. }
+                | Cmd::Hook { .. }
+                | Cmd::ShellInit { .. }
+                | Cmd::CheckPrs
+                | Cmd::RemovePending
+                | Cmd::Spare { .. }
+                | Cmd::Cd { .. }
+                | Cmd::Path { .. }
+                | Cmd::Run { .. }
+                | Cmd::Guide
+                | Cmd::Tui
+        )
+    );
+    !quiet_cmd
+        && !cli.json
+        && std::env::var_os("CLOVE_NO_UPDATE_CHECK").is_none()
+        && std::io::stdin().is_terminal()
+        && std::io::stderr().is_terminal()
 }
 
 fn repo(cli: &Cli) -> Result<Clove> {
@@ -485,6 +562,7 @@ fn run(cli: Cli) -> Result<()> {
             }
             fstab_prompt(&c, cli.json)?;
             let meta = c.init(r)?;
+            c.spawn_spare_fill();
             if cli.json {
                 return emit(&meta);
             }
@@ -554,6 +632,7 @@ fn run(cli: Cli) -> Result<()> {
                 }
                 match c.refresh_with(&clove_core::RefreshOptions { full: *full }, r) {
                     Ok(meta) => {
+                        c.spawn_spare_fill();
                         if !cli.json {
                             timing_bars(&meta.timings);
                             eprintln!(
@@ -614,6 +693,15 @@ fn run(cli: Cli) -> Result<()> {
             cmd_update(
                 &cli, clones, *all, mode, strategy, *autostash, !*no_fetch, *resolve, r,
             )?;
+        }
+        Cmd::Diff {
+            clone,
+            stat,
+            packages,
+        } => {
+            let c = repo(&cli)?;
+            let name = c.resolve(clone.as_deref().unwrap_or("."))?;
+            cmd_diff(&cli, &c, &name, *stat, *packages)?;
         }
         Cmd::Setup { clone, all } => {
             let c = repo(&cli)?;
@@ -819,6 +907,8 @@ fn run(cli: Cli) -> Result<()> {
                         Err(e) => eprintln!("{} {n}: {e:#}", paint(YELLOW, "!")),
                     }
                 }
+                // At login (--all-repos) spares are gone with the reboot.
+                c.spawn_spare_fill();
             }
             if cli.json {
                 return emit(&serde_json::json!({ "mounted": mounted }));
@@ -856,6 +946,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Doctor => cmd_doctor(&cli)?,
         Cmd::Prune { apply } => cmd_prune(&cli, *apply, r)?,
         Cmd::Log { limit, all_repos } => cmd_log(&cli, *limit, *all_repos)?,
+        Cmd::Stats { limit, all_repos } => cmd_stats(&cli, *limit, *all_repos)?,
         Cmd::Gc { apply } => {
             let c = repo(&cli)?;
             let actions = c.gc(*apply)?;
@@ -886,6 +977,19 @@ fn run(cli: Cli) -> Result<()> {
         }
         Cmd::RemovePending => {
             repo(&cli)?.wait_and_remove_pending(std::time::Duration::from_secs(12 * 3600), &Silent)?;
+        }
+        Cmd::Spare { discard } => {
+            let c = repo(&cli)?;
+            if *discard {
+                c.discard_spare(false)?;
+            } else {
+                c.fill_spare(true)?;
+            }
+            let state = format!("{:?}", c.spare_state());
+            if cli.json {
+                return emit(&serde_json::json!({ "spare": state }));
+            }
+            eprintln!("{} spare: {state}", paint(DIM, "·"));
         }
         Cmd::Config {
             action: Some(action), ..
@@ -1029,6 +1133,72 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Cmd::Tui => run_tui(&cli)?,
+        Cmd::Upgrade {
+            check,
+            background,
+            relaunch_app,
+        } => cmd_upgrade(&cli, *check, *background, *relaunch_app, r)?,
+    }
+    Ok(())
+}
+
+fn cmd_upgrade(
+    cli: &Cli,
+    check: bool,
+    background: bool,
+    relaunch_app: Option<u32>,
+    r: &dyn clove_core::Reporter,
+) -> Result<()> {
+    use clove_core::upgrade;
+    if background {
+        upgrade::background_check();
+        return Ok(());
+    }
+    if check {
+        let st = upgrade::check(true);
+        if cli.json {
+            return emit(&st);
+        }
+        if let Some(e) = &st.error {
+            bail!("couldn't ask GitHub for the latest release: {e}");
+        }
+        match &st.latest {
+            Some(l) if st.available => {
+                eprintln!(
+                    "{} clove v{} is available (you have {})",
+                    paint(YELLOW, "↑"),
+                    l.version,
+                    st.current
+                );
+                eprintln!("  {}", paint(DIM, &l.url));
+                if st.cli == upgrade::Source::Brew {
+                    eprintln!("  upgrade: {}", paint(BOLD, "clove upgrade"));
+                }
+            }
+            _ => eprintln!("{} clove {} is up to date", paint(GREEN, "✓"), st.current),
+        }
+        return Ok(());
+    }
+    let opts = upgrade::UpgradeOptions { relaunch_app };
+    let up = upgrade::upgrade(r, &opts)?;
+    if cli.json {
+        return emit(&up);
+    }
+    match up.to.as_deref() {
+        Some(to) if upgrade::newer(to, &up.from) => {
+            eprintln!("{} clove {} → {to}", paint(GREEN, "✓"), up.from);
+        }
+        Some(to) => eprintln!("{} clove {to}: no newer CLI in the tap", paint(GREEN, "✓")),
+        None => eprintln!("{} upgraded", paint(GREEN, "✓")),
+    }
+    if up.app && relaunch_app.is_none() {
+        eprintln!(
+            "  {}",
+            paint(
+                DIM,
+                "the app was upgraded too; it opens on the new version next time"
+            )
+        );
     }
     Ok(())
 }
@@ -1246,6 +1416,7 @@ fn cmd_new(cli: &Cli, a: &NewArgs, r: &dyn clove_core::Reporter) -> Result<()> {
         eprintln!("{} {}", paint(GREEN, "+"), paint(BOLD, label));
     }
     let info = c.new_clone(&opts, r)?;
+    c.spawn_spare_fill();
     if cli.json {
         emit(&info)?;
     } else {
@@ -1656,6 +1827,7 @@ fn cmd_adopt(
     }
     let was_inside = std::env::current_dir().is_ok_and(|d| d.starts_with(&w.path));
     let info = c.adopt(&w.path, &clove_core::AdoptOptions { name, no_setup }, r)?;
+    c.spawn_spare_fill();
     if cli.json {
         return emit(&info);
     }
@@ -1867,6 +2039,158 @@ fn print_update(name: &str, u: &clove_core::update::Update) {
             );
         }
     }
+}
+
+/// `clove stats`: per repo, how long clones take and where the time goes.
+fn cmd_stats(cli: &Cli, limit: usize, all_repos: bool) -> Result<()> {
+    use clove_core::stats::{FAST_MS, RERAN_MS};
+    let repos: Vec<Clove> = if all_repos {
+        clove_core::known_repos()
+            .into_iter()
+            .filter_map(|r| Clove::open(&r.root).ok())
+            .collect()
+    } else {
+        vec![repo(cli)?]
+    };
+    if cli.json {
+        let v: Vec<serde_json::Value> = repos
+            .iter()
+            .map(|c| {
+                let mut created = c.created();
+                created.truncate(limit);
+                serde_json::json!({
+                    "repo": c.name,
+                    "root": c.root,
+                    "stats": c.stats(),
+                    "created": created,
+                    "golden_builds": c.golden_builds(),
+                })
+            })
+            .collect();
+        return emit(&v);
+    }
+    let now = clove_core::util::now_unix();
+    for (i, c) in repos.iter().enumerate() {
+        if i > 0 {
+            println!();
+        }
+        let created = c.created();
+        let s = clove_core::stats::stats(&created, &c.golden_builds());
+        if s.clones == 0 {
+            println!("{}  {}", paint(BOLD, &c.name), paint(DIM, "no clones made yet"));
+            continue;
+        }
+        println!(
+            "{}  {} clone{} · median {} · p90 {} · {} of {} under {}",
+            paint(BOLD, &c.name),
+            s.clones,
+            if s.clones == 1 { "" } else { "s" },
+            paint(BOLD, secs(s.median_ms)),
+            secs(s.p90_ms),
+            s.fast,
+            s.clones,
+            secs(FAST_MS),
+        );
+        if let Some(m) = s.clean_median_ms {
+            println!(
+                "  {} median {} when no setup step had to rerun",
+                paint(GREEN, "clove itself:"),
+                paint(BOLD, secs(m)),
+            );
+        }
+        if s.reran > 0 {
+            println!(
+                "  {} {} of {} reran setup (over {}): the branch changed what the golden image had set up",
+                paint(YELLOW, "setup:"),
+                s.reran,
+                s.clones,
+                secs(RERAN_MS),
+            );
+        }
+        if let Some(g) = s.golden_median_ms {
+            println!(
+                "  {} {} build{} logged · median {}",
+                paint(DIM, "golden:"),
+                s.golden_builds,
+                if s.golden_builds == 1 { "" } else { "s" },
+                secs(g),
+            );
+        }
+        println!(
+            "\n  {}",
+            paint(DIM, "WHERE THE TIME GOES (median, when the step ran)")
+        );
+        // Bars are on the scale of a clone that reran nothing, so clove's own
+        // steps stay readable; a rerun step past it overflows with ▸.
+        let scale = s.clean_median_ms.unwrap_or(s.median_ms).max(1.0);
+        let name_w = s.steps.iter().map(|x| x.step.len()).max().unwrap_or(4);
+        for x in &s.steps {
+            if x.max_ms < 5.0 {
+                continue;
+            }
+            let cells = ((x.median_ms / scale) * 24.0).round().max(1.0) as usize;
+            let bar = if cells > 24 {
+                format!("{}▸", "█".repeat(24))
+            } else {
+                "█".repeat(cells)
+            };
+            let runs = if x.runs < s.clones {
+                paint(DIM, format!("  in {} of {}", x.runs, s.clones))
+            } else {
+                String::new()
+            };
+            println!(
+                "  {:<name_w$}  {:>6}  {}  {}{runs}",
+                x.step,
+                secs(x.median_ms),
+                paint(DIM, format!("p90 {:>6}", secs(x.p90_ms))),
+                paint(
+                    if x.step.starts_with("setup ") {
+                        YELLOW
+                    } else {
+                        CYAN
+                    },
+                    bar
+                ),
+            );
+        }
+        println!("\n  {}", paint(DIM, "RECENT"));
+        let mut t = Table::new(&["WHEN", "NAME", "TOTAL", "MOUNT", "CHECKOUT", "SETUP", "OTHER"]);
+        for e in created.iter().take(limit) {
+            let step = |name: &str| e.timings.iter().find(|t| t.step == name).map(|t| t.ms);
+            let fmt = |ms: Option<f64>| ms.map(secs).unwrap_or_else(|| "–".into());
+            let total_style = if e.total_ms < FAST_MS {
+                GREEN
+            } else if e.reran() {
+                YELLOW
+            } else {
+                RED
+            };
+            let other = e.untimed_ms()
+                + e.timings
+                    .iter()
+                    .filter(|t| {
+                        !["mount", "checkout"].contains(&t.step.as_str()) && !t.step.starts_with("setup ")
+                    })
+                    .map(|t| t.ms)
+                    .sum::<f64>();
+            t.row(vec![
+                styled(DIM, clove_core::history::ago(now.saturating_sub(e.at))),
+                styled(BOLD, e.name.clone()),
+                styled(total_style, secs(e.total_ms)),
+                cell(fmt(step("mount"))),
+                cell(fmt(step("checkout"))),
+                if e.reran() {
+                    styled(YELLOW, secs(e.setup_ms()))
+                } else {
+                    cell(secs(e.setup_ms()))
+                },
+                styled(DIM, secs(other)),
+            ]);
+        }
+        t.print();
+    }
+    Ok(())
 }
 
 fn cmd_log(cli: &Cli, limit: usize, all_repos: bool) -> Result<()> {
@@ -2525,6 +2849,7 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
                 },
                 &TermReporter::new(false),
             )?;
+            c.spawn_spare_fill();
             println!("{}", info.path.display());
         }
         HookAction::WorktreeRemove => {
@@ -2727,6 +3052,170 @@ fn plain_worktree_remove(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// `clove diff`: the patch (paged in a terminal), per-file or per-package
+/// counts, or with --json everything a script or agent needs.
+fn cmd_diff(cli: &Cli, c: &Clove, name: &str, stat: bool, packages: bool) -> Result<()> {
+    use clove_core::patch::{self, Change};
+    let d = c.diff(name)?;
+    let files = patch::parse(&d.patch);
+    if cli.json {
+        let list: Vec<_> = files
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "path": f.path,
+                    "old_path": f.old_path,
+                    "change": f.change,
+                    "added": f.added,
+                    "removed": f.removed,
+                    "binary": f.binary,
+                    "fold": patch::fold(f, patch::attrs_of(&d, &f.path)),
+                    "group": patch::group_of(&f.path, &d.packages).0,
+                })
+            })
+            .collect();
+        let mut v = serde_json::to_value(&d)?;
+        v["files"] = serde_json::json!(list);
+        println!("{}", serde_json::to_string_pretty(&v)?);
+        return Ok(());
+    }
+    let tty = std::io::stdout().is_terminal();
+    if files.is_empty() {
+        eprintln!("{name} matches {}: nothing committed, staged or modified", d.base);
+        return Ok(());
+    }
+    if stat || packages {
+        let (a, r) = files
+            .iter()
+            .fold((0, 0), |(a, r), f| (a + f.added, r + f.removed));
+        let nums = |a: u32, r: u32| {
+            format!(
+                "{} {}",
+                paint(GREEN, format!("{:>6}", format!("+{a}"))),
+                paint(RED, format!("{:<6}", format!("−{r}")))
+            )
+        };
+        if packages {
+            let mut groups: Vec<(String, u32, u32, usize)> = vec![];
+            for f in &files {
+                let key = patch::group_of(&f.path, &d.packages).0;
+                match groups.iter_mut().find(|g| g.0 == key) {
+                    Some(g) => {
+                        g.1 += f.added;
+                        g.2 += f.removed;
+                        g.3 += 1;
+                    }
+                    None => groups.push((key, f.added, f.removed, 1)),
+                }
+            }
+            groups.sort_by_key(|g| std::cmp::Reverse(g.1 + g.2));
+            for (key, a, r, n) in &groups {
+                let label = if key.is_empty() { "(repository root)" } else { key };
+                println!(
+                    "{} {label} {}",
+                    nums(*a, *r),
+                    paint(DIM, format!("{n} file{}", if *n == 1 { "" } else { "s" }))
+                );
+            }
+        } else {
+            for f in &files {
+                let mark = match f.change {
+                    Change::Added => paint(GREEN, "A"),
+                    Change::Deleted => paint(RED, "D"),
+                    Change::Renamed => paint(CYAN, "R"),
+                    Change::Modified => paint(YELLOW, "M"),
+                };
+                let from = f
+                    .old_path
+                    .as_ref()
+                    .map(|o| paint(DIM, format!(" ← {o}")))
+                    .unwrap_or_default();
+                let bin = if f.binary {
+                    paint(DIM, " binary")
+                } else {
+                    String::new()
+                };
+                println!("{} {mark} {}{from}{bin}", nums(f.added, f.removed), f.path);
+            }
+        }
+        println!(
+            "{} {}",
+            nums(a, r),
+            paint(
+                DIM,
+                format!(
+                    "{} files vs {} (from {})",
+                    files.len(),
+                    d.base,
+                    &d.merge_base[..d.merge_base.len().min(10)]
+                )
+            )
+        );
+        return Ok(());
+    }
+    if !tty {
+        // `clove diff | head` closes the pipe early: that is not an error.
+        let _ = std::io::Write::write_all(&mut std::io::stdout(), d.patch.as_bytes());
+        return Ok(());
+    }
+    // In a terminal: colour it like git, and page it like git.
+    let mut out = String::with_capacity(d.patch.len() + d.patch.len() / 8);
+    for line in d.patch.lines() {
+        let style = if line.starts_with("diff --git") || line.starts_with("+++ ") || line.starts_with("--- ")
+        {
+            BOLD
+        } else if line.starts_with("@@") {
+            CYAN
+        } else if line.starts_with('+') {
+            GREEN
+        } else if line.starts_with('-') {
+            RED
+        } else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        out.push_str(&paint(style, line));
+        out.push('\n');
+    }
+    page(&out)
+}
+
+fn stdout_write(text: &str) -> std::io::Result<()> {
+    std::io::Write::write_all(&mut std::io::stdout(), text.as_bytes())
+}
+
+/// Writes through `$PAGER` (default `less -FRX`), or straight out without one.
+fn page(text: &str) -> Result<()> {
+    use std::io::Write;
+    let pager = std::env::var("PAGER").ok().filter(|p| !p.trim().is_empty());
+    let mut cmd = match &pager {
+        Some(p) => {
+            let mut c = std::process::Command::new("sh");
+            c.arg("-c").arg(p);
+            c
+        }
+        None => {
+            let mut c = std::process::Command::new("less");
+            c.arg("-FRX");
+            c
+        }
+    };
+    match cmd.stdin(std::process::Stdio::piped()).spawn() {
+        Ok(mut child) => {
+            if let Some(mut stdin) = child.stdin.take() {
+                // A pager quit early closes the pipe: not an error.
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            child.wait()?;
+        }
+        Err(_) => {
+            let _ = stdout_write(text);
+        }
+    }
+    Ok(())
+}
+
 /// `clove` with no command: the mark, where this repo stands, and what to type next.
 fn tui_dir(cli: &Cli) -> Result<PathBuf> {
     Ok(match &cli.dir {
@@ -2819,6 +3308,7 @@ mod tests {
                     "guide",
                     "agents",
                     "service",
+                    "upgrade",
                 ]
                 .contains(&n.as_str())
             })

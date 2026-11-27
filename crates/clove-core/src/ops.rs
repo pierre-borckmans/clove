@@ -264,6 +264,18 @@ impl Clove {
     fn changed_steps(&self, meta: &GoldenMeta) -> Vec<(String, u32)> {
         let base = &self.config.base;
         let mut out = vec![];
+        // One diff over every step's watched paths settles the common case
+        // (nothing moved) without a git call per step; the same commit needs
+        // none. Changed step definitions are found below either way.
+        let watched: Vec<&str> = self
+            .config
+            .steps
+            .iter()
+            .filter(|s| s.warm.is_some() || s.setup.is_some())
+            .flat_map(|s| s.watch.iter().map(String::as_str))
+            .collect();
+        let at_base = git::commit_of(&self.root, base).as_deref() == Some(meta.commit.as_str());
+        let inputs_moved = !at_base && git::any_changed(&self.root, &meta.commit, base, &watched);
         for step in &self.config.steps {
             if step.watch.is_empty() || (step.warm.is_none() && step.setup.is_none()) {
                 continue;
@@ -271,6 +283,9 @@ impl Clove {
             // Images from before step hashes were recorded have an empty map.
             if !meta.step_hashes.is_empty() && meta.step_hashes.get(&step.name) != Some(&step_hash(step)) {
                 out.push((step.name.clone(), 0));
+                continue;
+            }
+            if !inputs_moved {
                 continue;
             }
             let mut args = vec!["diff", "--quiet", meta.commit.as_str(), base.as_str(), "--"];
@@ -291,7 +306,7 @@ impl Clove {
         out
     }
 
-    fn lock(&self) -> Result<FileLock> {
+    pub(crate) fn lock(&self) -> Result<FileLock> {
         std::fs::create_dir_all(&self.state)?;
         FileLock::acquire(&self.lock_path())
     }
@@ -581,6 +596,7 @@ impl Clove {
             copied,
         };
         write_json(&gen_dir.join("meta.json"), &meta)?;
+        self.record_golden(&meta);
         Ok(meta)
     }
 
@@ -716,7 +732,7 @@ impl Clove {
 
         // Copy the image and the matching index snapshot under the short lock so a
         // concurrent refresh cannot swap generations in between.
-        let golden = {
+        let (golden, claimed) = {
             let _lock = self.lock()?;
             let generation = self
                 .current_generation()?
@@ -726,19 +742,36 @@ impl Clove {
             // Only clean up after taking ownership of the slot.
             self.reserve_clone(&name, request_id)
                 .with_context(|| format!("reserve clone `{name}`"))?;
-            timed(r, &mut timings, "clone image", || {
-                store.clone_create(self, generation, &name, &mount)
-            })
-            .inspect_err(|_| {
-                // A failed create can leave someone else's subvolume at the mount path.
-                let _ = std::fs::remove_dir_all(&dir);
-            })?;
+            // A spare of this generation is already mounted: rename it into place.
+            let start = std::time::Instant::now();
+            let claimed = self.claim_spare(&meta, &name, &mount);
+            if claimed {
+                let step = "claim spare".to_string();
+                let took = start.elapsed();
+                r.event(Event::Start { step: step.clone() });
+                r.event(Event::Done {
+                    step: step.clone(),
+                    took,
+                });
+                timings.push(Timing {
+                    step,
+                    ms: took.as_secs_f64() * 1000.0,
+                });
+            } else {
+                timed(r, &mut timings, "clone image", || {
+                    store.clone_create(self, generation, &name, &mount)
+                })
+                .inspect_err(|_| {
+                    // A failed create can leave someone else's subvolume at the mount path.
+                    let _ = std::fs::remove_dir_all(&dir);
+                })?;
+            }
             for f in ["HEAD", "index"] {
                 std::fs::copy(gen_dir.join(f), dir.join(f))
                     .with_context(|| format!("copy {f} from {}", gen_dir.display()))
                     .map_err(cleanup)?;
             }
-            meta
+            (meta, claimed)
         };
 
         // Fetch runs while the image mounts; both take ~1s.
@@ -750,7 +783,11 @@ impl Clove {
                 t
             });
             let mut t = vec![];
-            let a = timed(r, &mut t, "mount", || store.clone_attach(self, &name, &mount));
+            let a = if claimed {
+                Ok(())
+            } else {
+                timed(r, &mut t, "mount", || store.clone_attach(self, &name, &mount))
+            };
             (fetch.join().unwrap_or_default(), a.map(|_| t))
         });
         timings.extend(attach.map_err(cleanup)?);
@@ -759,7 +796,7 @@ impl Clove {
         let result = (|| -> Result<()> {
             self.write_admin(&admin, &wt, &dir, &lock_reason(&name))?;
             timed(r, &mut timings, "checkout", || {
-                self.checkout(&wt, branch.as_deref(), &base)
+                self.checkout(&wt, branch.as_deref(), &base, &golden.commit)
             })?;
             Ok(())
         })();
@@ -805,7 +842,9 @@ impl Clove {
             setup_commit,
         };
         write_json(&dir.join("meta.json"), &meta).map_err(cleanup)?;
-        self.info(&name, false).map_err(cleanup)
+        let info = self.info(&name, false).map_err(cleanup)?;
+        self.record_created(&meta);
+        Ok(info)
     }
 
     fn request_staging(&self, id: &str) -> Result<PathBuf> {
@@ -844,17 +883,48 @@ impl Clove {
         result.with_context(|| format!("publish {}", dir.display()))
     }
 
-    fn checkout(&self, wt: &Path, branch: Option<&str>, base: &str) -> Result<()> {
-        let Some(b) = branch else {
-            return git::run_ok(wt, &["switch", "--quiet", "--detach", base]);
+    fn checkout(&self, wt: &Path, branch: Option<&str>, base: &str, golden: &str) -> Result<()> {
+        let new_branch = branch.filter(|b| {
+            !git::ref_exists(wt, &format!("refs/heads/{b}"))
+                && !git::ref_exists(wt, &format!("refs/remotes/origin/{b}"))
+        });
+        // The image is the golden worktree, detached at its commit, with an
+        // index that matches it. When the base is that commit, files and index
+        // are already right and only HEAD has to move: no `git switch`, which
+        // stats every file of the fresh volume first (~0.7 s in a big repo).
+        // A post-checkout hook (husky, LFS) only runs under `git switch`.
+        if git::commit_of(wt, base).as_deref() == Some(golden)
+            && git::head_commit(wt).ok().as_deref() == Some(golden)
+            && !git::has_hook(wt, "post-checkout")
+        {
+            match (branch, new_branch) {
+                (None, _) => return Ok(()),
+                (Some(_), Some(b)) => {
+                    // --no-track: a feature branch must not push to its base by accident.
+                    git::run_ok(wt, &["branch", "--no-track", b, golden])?;
+                    // The reflog line `git switch` writes, so `git checkout -` works the same.
+                    let why = format!("checkout: moving from {golden} to {b}");
+                    return git::run_ok(
+                        wt,
+                        &["symbolic-ref", "-m", &why, "HEAD", &format!("refs/heads/{b}")],
+                    );
+                }
+                _ => {}
+            }
+        }
+        // Otherwise git does the work, preloading the index from threads: on a
+        // just-mounted volume that is ~3x faster than one stat at a time.
+        let switch = |args: &[&str]| {
+            let mut all = vec!["-c", "core.preloadIndex=true", "switch", "--quiet"];
+            all.extend(args);
+            git::run_ok(wt, &all)
         };
-        if git::ref_exists(wt, &format!("refs/heads/{b}")) {
-            git::run_ok(wt, &["switch", "--quiet", b])
-        } else if git::ref_exists(wt, &format!("refs/remotes/origin/{b}")) {
-            git::run_ok(wt, &["switch", "--quiet", "--track", &format!("origin/{b}")])
-        } else {
+        match (branch, new_branch) {
+            (None, _) => switch(&["--detach", base]),
+            (Some(b), None) if git::ref_exists(wt, &format!("refs/heads/{b}")) => switch(&[b]),
+            (Some(b), None) => switch(&["--track", &format!("origin/{b}")]),
             // --no-track: a feature branch must not push to its base by accident.
-            git::run_ok(wt, &["switch", "--quiet", "--no-track", "-c", b, base])
+            (Some(b), Some(_)) => switch(&["--no-track", "-c", b, base]),
         }
     }
 
@@ -871,6 +941,19 @@ impl Clove {
     ) -> Vec<String> {
         let env = self.step_env(wt, name);
         let mut failed = vec![];
+        // As in `changed_steps`: at the same commit nothing moved, and one
+        // diff over all watched paths spares the per-step ones when nothing did.
+        let moved = since.map(|(since, _)| {
+            let watched: Vec<&str> = self
+                .config
+                .steps
+                .iter()
+                .filter(|s| s.setup.is_some())
+                .flat_map(|s| s.watch.iter().map(String::as_str))
+                .collect();
+            let head = git::head_commit(wt).ok();
+            head.as_deref() != Some(since) && git::any_changed(wt, since, "HEAD", &watched)
+        });
         for step in &self.config.steps {
             let Some(cmd) = &step.setup else { continue };
             let label = format!("setup {}", step.name);
@@ -879,7 +962,7 @@ impl Clove {
             {
                 let mut args = vec!["diff", "--quiet", since, "HEAD", "--"];
                 args.extend(step.watch.iter().map(String::as_str));
-                if git::ok(wt, &args) {
+                if moved == Some(false) || git::ok(wt, &args) {
                     r.event(Event::Skip {
                         step: label,
                         reason: format!("unchanged since {since_label}"),
@@ -1231,7 +1314,18 @@ impl Clove {
         self.store()?.clone_detach(self, name, &meta.mount, force)
     }
 
+    /// With `status` in a UI (see [`crate::memo::serve_saved`]), the status
+    /// may be the last known one; see [`CloneInfo::status_pending`].
     pub fn info(&self, name: &str, status: bool) -> Result<CloneInfo> {
+        self.info_with(name, status, true)
+    }
+
+    /// With the status git gives now, for decisions such as pruning.
+    pub fn info_live(&self, name: &str) -> Result<CloneInfo> {
+        self.info_with(name, true, false)
+    }
+
+    fn info_with(&self, name: &str, status: bool, saved_ok: bool) -> Result<CloneInfo> {
         let meta = self.clone_meta(name)?.ok_or_else(|| self.no_clone(name))?;
         let store = self.require_record()?.backend.store()?;
         let mounted = store.clone_attached(self, name, &meta.mount);
@@ -1256,6 +1350,7 @@ impl Clove {
             None => (meta.branch.clone(), None),
         };
         let (mut dirty, mut ahead, mut behind) = (None, None, None);
+        let mut status_pending = false;
         if status && mounted {
             // Reused until the clone's index, HEAD, branch or base moves, or
             // its tree changes (see `memo`).
@@ -1277,17 +1372,13 @@ impl Clove {
                     crate::memo::MIN_RECHECK
                 }
             };
-            (dirty, ahead, behind) = crate::memo::get_tree_by(&key, &meta.path, &deps, recheck, || {
-                let dirty = git::is_dirty(&meta.path).ok();
+            let (path, base) = (meta.path.clone(), meta.base.clone());
+            let saved = crate::memo::get_tree_saved(&key, &meta.path, &deps, saved_ok, recheck, move || {
+                let dirty = git::is_dirty(&path).ok();
                 let (mut ahead, mut behind) = (None, None);
                 if let Ok(s) = git::out(
-                    &meta.path,
-                    &[
-                        "rev-list",
-                        "--left-right",
-                        "--count",
-                        &format!("{}...HEAD", meta.base),
-                    ],
+                    &path,
+                    &["rev-list", "--left-right", "--count", &format!("{base}...HEAD")],
                 ) {
                     let mut it = s.split_whitespace().filter_map(|n| n.parse().ok());
                     behind = it.next();
@@ -1295,12 +1386,21 @@ impl Clove {
                 }
                 (dirty, ahead, behind)
             });
+            (dirty, ahead, behind) = saved.value.unwrap_or_default();
+            status_pending = saved.pending;
         }
-        let (image_bytes, own_bytes) = crate::memo::get_aged(
-            &format!("clone-bytes:{}:{name}", self.root.display()),
-            crate::memo::SIZE_TTL,
-            || store.clone_bytes(self, name, &meta.mount),
-        );
+        let key = format!("clone-bytes:{}:{name}", self.root.display());
+        let (image_bytes, own_bytes) = if crate::memo::serving_saved() {
+            // Measured in the background, where `self` can't go.
+            let (root, owned, mount) = (self.root.clone(), name.to_string(), meta.mount.clone());
+            crate::memo::get_aged_saved(&key, &self.clone_dir(name), crate::memo::SIZE_TTL, move || {
+                Clove::open(&root).map_or((0, 0), |c| store.clone_bytes(&c, &owned, &mount))
+            })
+        } else {
+            crate::memo::get_aged(&key, crate::memo::SIZE_TTL, || {
+                store.clone_bytes(self, name, &meta.mount)
+            })
+        };
         let issue = self.clone_issue(name, &meta.path, mounted);
         Ok(CloneInfo {
             name: meta.name,
@@ -1321,6 +1421,7 @@ impl Clove {
             issue,
             removing_when_free: self.clone_dir(name).join(PENDING_FILE).exists(),
             operation: crate::update::operation(&self.clone_admin(name)),
+            status_pending,
         })
     }
 
@@ -1687,7 +1788,8 @@ impl Clove {
                 let empty = std::fs::read_dir(e.path())
                     .map(|mut d| d.next().is_none())
                     .unwrap_or(false);
-                if !names.contains(&n) && empty {
+                // The spare's mount point is handled below, with the spare.
+                if !names.contains(&n) && empty && e.path() != self.spare_mount() {
                     actions.push(format!("remove empty mount point {}", e.path().display()));
                     if apply {
                         let _ = std::fs::remove_dir(e.path());
@@ -1717,6 +1819,21 @@ impl Clove {
             if apply {
                 backend::stop_processes(&[pid], std::time::Duration::from_secs(5));
             }
+        }
+        match self.spare_state() {
+            crate::spare::SpareState::Stale(why) => {
+                actions.push(format!("detach and delete the spare clone: {why}"));
+                if apply {
+                    self.discard_spare(true)?;
+                }
+            }
+            crate::spare::SpareState::Off if self.spare_exists() => {
+                actions.push("detach and delete the spare clone (spare = false)".into());
+                if apply {
+                    self.discard_spare(false)?;
+                }
+            }
+            _ => {}
         }
         if store.golden_stuck(self)
             && let Ok(lock) = FileLock::try_acquire(&self.state.join("refresh.lock"))
@@ -1755,6 +1872,11 @@ impl Clove {
         let mut t = vec![];
         let store = self.store()?;
         timed(r, &mut t, "delete golden", || {
+            // A mounted spare lives in the state folder, which goes next.
+            self.discard_spare(false)?;
+            if backend::is_mounted(&self.spare_mount()) {
+                bail!("a spare clone is being made; try again in a few seconds");
+            }
             store.golden_reset(self)?;
             if let Some(rec) = self.record()? {
                 let _ = std::fs::remove_dir_all(self.admin_dir(&rec.golden_admin));

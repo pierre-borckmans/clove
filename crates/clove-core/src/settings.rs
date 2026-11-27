@@ -601,6 +601,7 @@ warm = \"pnpm install\"
             image_size: "300G".into(),
             fetch: true,
             fetch_interval: 300,
+            spare: true,
             exec: config::Exec::Auto,
             env: Default::default(),
             steps: vec![],

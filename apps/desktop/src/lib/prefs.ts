@@ -2,10 +2,32 @@ import { useSyncExternalStore } from "react";
 import { FILE_MANAGER } from "./platform";
 import type { AppId } from "./types";
 
-export type Prefs = { editor: AppId; terminal: AppId };
+export type Prefs = {
+  editor: AppId;
+  terminal: AppId;
+  diffStyle: "split" | "unified";
+  diffWrap: boolean;
+  diffSort: "path" | "changes";
+  diffGroup: boolean;
+  /** Diff view file tree width, px. */
+  diffTree: number;
+  sidebarCollapsed: boolean;
+  /** System follows macOS/Linux appearance; light and dark pin it. */
+  appearance: "system" | "light" | "dark";
+};
 
 const KEY = "clove.prefs";
-const DEFAULTS: Prefs = { editor: "vscode", terminal: "terminal" };
+const DEFAULTS: Prefs = {
+  editor: "vscode",
+  terminal: "terminal",
+  diffStyle: "split",
+  diffWrap: false,
+  diffSort: "path",
+  diffGroup: false,
+  diffTree: 256,
+  sidebarCollapsed: false,
+  appearance: "system",
+};
 const subs = new Set<() => void>();
 
 function read(): Prefs {
@@ -26,6 +48,21 @@ export function setPrefs(p: Partial<Prefs>) {
     // Storage can be unavailable; the choice then lasts for this session.
   }
   for (const s of subs) s();
+}
+
+/** Calls `cb` on every change, including ones made in the app's other window. */
+export function subscribePrefs(cb: () => void): () => void {
+  subs.add(cb);
+  return () => subs.delete(cb);
+}
+
+// The main window and the menu-bar popover share storage: keep them in step.
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    if (e.key !== KEY) return;
+    current = read();
+    for (const s of subs) s();
+  });
 }
 
 export function usePrefs(): Prefs {

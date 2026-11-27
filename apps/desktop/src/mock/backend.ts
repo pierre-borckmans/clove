@@ -19,15 +19,52 @@ import type {
   Refs,
   RepoCandidate,
   RepoConfig,
+  RepoRef,
   RepoStatus,
   RepoSummary,
+  UpgradeState,
 } from "@/lib/types";
+import { MOCK_ATTRS, MOCK_PACKAGES, MOCK_PATCH } from "./diff";
 import { CARGO_OUTPUT, type MockRepo, machineChecks, PNPM_OUTPUT, seed, worktreeCheck } from "./fixtures";
+import { mockStats } from "./stats";
 
 const repos = seed();
 let serviceOn = true;
 let agentsState: "installed" | "outdated" | "missing" = "missing";
 let shellOn = false;
+
+// A Homebrew install one release behind. `start_upgrade` "relaunches" (a
+// reload) on the new version, remembered for the browser tab's session.
+const MOCK_LATEST = "0.2.0";
+const mockUpgraded = (() => {
+  try {
+    return sessionStorage.getItem("clove-mock-upgraded") === "1";
+  } catch {
+    return false;
+  }
+})();
+function mockUpgrade(): UpgradeState {
+  const current = mockUpgraded ? MOCK_LATEST : "0.1.22";
+  return {
+    current,
+    latest: {
+      version: MOCK_LATEST,
+      url: `https://github.com/pierre-borckmans/clove/releases/tag/v${MOCK_LATEST}`,
+      notes:
+        "## What's Changed\n* feat: updates in the CLI, TUI and app by @ada in #15\n* perf: clove new in ~1 s on a fresh golden image by @ada in #13\n\n**Full Changelog**: v0.1.22...v0.2.0",
+      published_at: "2026-11-27T13:57:33Z",
+    },
+    available: current !== MOCK_LATEST,
+    checked_at: now(),
+    error: null,
+    upgrade_error: null,
+    cli: "brew",
+    cli_path: "/opt/homebrew/bin/clove",
+    cli_version: current,
+    app_source: "brew",
+    restart_to: null,
+  };
+}
 const LAYERS = [
   { label: "all repos", path: () => "/Users/ada/.config/clove/config.toml" },
   { label: "team", path: (r: MockRepo) => `${r.status.root}/.clove.toml` },
@@ -40,6 +77,7 @@ const FIELDS: [string, string, string, FieldKind, string | null, string][] = [
   ["image_size", "image size", "clones", { type: "size" }, "300G", "maximum size of each image"],
   ["fetch", "fetch", "clones", { type: "bool" }, "true", "fetch the base ref before creating a clone"],
   ["fetch_interval", "fetch at most", "clones", { type: "seconds" }, "5m", "skip that fetch when recent, e.g. 5m"],
+  ["spare", "spare clone", "clones", { type: "bool" }, "true", "keep one clone mounted ahead of time (macOS)"],
   [
     "exec",
     "environment",
@@ -113,6 +151,9 @@ function emit(event: string, payload: unknown) {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// `?slow=3000` makes the git-backed reads take that long, to see loading states.
+const SLOW_MS = Number(new URLSearchParams(globalThis.location?.search).get("slow")) || 0;
+const SLOW = new Set(SLOW_MS ? ["repos", "repo_status", "clones", "worktrees"] : []);
 const now = () => Math.floor(Date.now() / 1000);
 
 function get(root: string): MockRepo {
@@ -456,6 +497,10 @@ const commands: Record<string, (a: Args) => unknown> = {
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name)),
+  repo_list: (): RepoRef[] =>
+    [...repos.values()]
+      .map((r) => ({ id: r.status.id, name: r.status.name, root: r.status.root }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
   repo_status: (a) => status(get(a.root as string)),
   clones: (a) =>
     get(a.root as string).clones.map((c) => (c.mounted ? c : { ...c, dirty: null, ahead: null, behind: null })),
@@ -569,6 +614,7 @@ const commands: Record<string, (a: Args) => unknown> = {
         image_size: "300G",
         fetch: true,
         fetch_interval: 300,
+        spare: true,
         exec: "auto",
         env: {},
         steps: r.status.steps,
@@ -606,6 +652,7 @@ const commands: Record<string, (a: Args) => unknown> = {
     agentsState = a.install ? "installed" : "missing";
     return agentsState;
   },
+  stats: () => [...repos.values()].map((r) => mockStats(r.status.name, r.status.root, r.clones)),
   history: () => [
     {
       repo: "mono",
@@ -668,10 +715,45 @@ const commands: Record<string, (a: Args) => unknown> = {
   open_in: () => null,
   copy_text: (a) => navigator.clipboard?.writeText(a.text as string).catch(() => undefined) ?? null,
   start_op: (a) => startOp(a.op as OpRequest),
+  upgrade_status: () => mockUpgrade(),
+  check_upgrade: () => mockUpgrade(),
+  clear_upgrade_error: () => null,
+  start_upgrade: () => {
+    try {
+      sessionStorage.setItem("clove-mock-upgraded", "1");
+    } catch {}
+    setTimeout(() => location.reload(), 1500);
+    return null;
+  },
+  restart_app: () => {
+    location.reload();
+    return null;
+  },
+  open_release: (a) => {
+    window.open(a.url as string, "_blank");
+    return null;
+  },
   open_main: () => null,
   hide_popover: () => null,
   quit: () => null,
   forget_cache: () => null,
+  clone_diff: (a) => {
+    // `?diff=<url>`: a real clove_core::CloneDiff as JSON, to try the view on a real branch.
+    const src = new URLSearchParams(location.search).get("diff");
+    if (src) return fetch(src).then((r) => r.json());
+    const c = get(a.root as string).clones.find((x) => x.name === a.name);
+    const dirty = !!(c?.dirty || c?.ahead);
+    return {
+      base: "origin/main",
+      merge_base: "a41c0e9d3b7f",
+      patch: dirty ? MOCK_PATCH : "",
+      truncated: false,
+      skipped: [],
+      attrs: dirty ? MOCK_ATTRS : [],
+      packages: dirty ? MOCK_PACKAGES : [],
+    };
+  },
+  clone_file: () => "",
 };
 
 // Repos "on disk" the add-repo dialog offers: root, branch, seconds since last use.
@@ -687,13 +769,15 @@ export const mockBackend = {
     const f = commands[cmd];
     if (!f) throw new Error(`mock: unknown command ${cmd}`);
     await sleep(
-      cmd === "clones" || cmd === "doctor_repo"
-        ? 90
-        : cmd === "cleanup" || cmd === "repo_candidates"
-          ? 400
-          : cmd === "init_preview"
-            ? 150
-            : 25,
+      SLOW.has(cmd)
+        ? SLOW_MS
+        : cmd === "clones" || cmd === "doctor_repo"
+          ? 90
+          : cmd === "cleanup" || cmd === "repo_candidates"
+            ? 400
+            : cmd === "init_preview"
+              ? 150
+              : 25,
     );
     return (await f(args)) as T;
   },

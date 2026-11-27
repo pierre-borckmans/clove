@@ -4,6 +4,7 @@ import type {
   AppId,
   Check,
   Cleanup,
+  CloneDiff,
   CloneInfo,
   Discovered,
   InitPreview,
@@ -15,10 +16,13 @@ import type {
   Removed,
   RepoCandidate,
   RepoConfig,
+  RepoRef,
+  RepoStats,
   RepoStatus,
   RepoSummary,
   ShellStatus,
   Step,
+  UpgradeState,
 } from "./types";
 
 /**
@@ -32,6 +36,7 @@ export function normStep(s: Partial<Step> & { name: string }): Step {
 
 export const api = {
   repos: () => invoke<RepoSummary[]>("repos"),
+  repoList: () => invoke<RepoRef[]>("repo_list"),
   forgetCache: () => invoke<null>("forget_cache"),
   status: (root: string) =>
     invoke<RepoStatus>("repo_status", { root }).then((s) => ({ ...s, steps: s.steps.map(normStep) })),
@@ -65,13 +70,26 @@ export const api = {
   agentsStatus: () => invoke<AgentsState>("agents_status"),
   agentsSet: (install: boolean) => invoke<AgentsState>("agents_set", { install }),
   history: (limit: number) => invoke<Removed[]>("history", { limit }),
+  stats: (limit: number) => invoke<RepoStats[]>("stats", { limit }),
   prs: (root: string) => invoke<MergeCheck[]>("prs", { root }),
   checkPrs: (root: string) => invoke<MergeCheck[]>("check_prs", { root }),
   branchCandidates: (root: string) => invoke<{ name: string; remote: boolean }[]>("branch_candidates", { root }),
   cleanup: (root: string, apply: boolean) => invoke<Cleanup>("cleanup", { root, apply }),
+  cloneDiff: (root: string, name: string) => invoke<CloneDiff>("clone_diff", { root, name }),
+  /** A file at `rev`, or as it is in the worktree when `rev` is null. */
+  cloneFile: (root: string, name: string, rev: string | null, path: string) =>
+    invoke<string>("clone_file", { root, name, rev, path }),
   shellStatus: () => invoke<ShellStatus>("shell_status"),
   shellInstall: () => invoke<ShellStatus>("shell_install"),
   startOp: (op: OpRequest) => invoke<string>("start_op", { op }),
+  upgradeStatus: () => invoke<UpgradeState>("upgrade_status"),
+  /** Asks GitHub when forced, else only when the shared cache is an hour old. */
+  checkUpgrade: (force: boolean) => invoke<UpgradeState>("check_upgrade", { force }),
+  clearUpgradeError: () => invoke<null>("clear_upgrade_error"),
+  /** Quits; `clove upgrade` replaces the app and opens it again. */
+  startUpgrade: () => invoke<null>("start_upgrade"),
+  restartApp: () => invoke<null>("restart_app"),
+  openRelease: (url: string) => invoke<null>("open_release", { url }),
   openMain: (route?: string, action?: string) => invoke<void>("open_main", { route, action }),
   hidePopover: () => invoke<void>("hide_popover"),
   quit: () => invoke<void>("quit"),

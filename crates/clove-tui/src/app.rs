@@ -46,6 +46,15 @@ pub enum Effect {
         root: PathBuf,
         name: String,
     },
+    /// Read a clone's changes for the diff view.
+    LoadDiff {
+        root: PathBuf,
+        name: String,
+    },
+    /// Ask for the latest release: from the hourly cache unless `force`.
+    CheckUpgrade {
+        force: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,9 +71,13 @@ pub enum Exit {
 pub const RELOAD_MS: u64 = 15_000;
 /// Reload interval without a watcher.
 pub const RELOAD_UNWATCHED_MS: u64 = 3000;
+/// Reload interval while clone statuses are being asked in the background.
+pub const PENDING_RELOAD_MS: u64 = 500;
 /// How often an open TUI asks GitHub about PRs: merges by other tools and
 /// agents show up without the background service.
 pub const PR_CHECK_MS: u64 = 5 * 60 * 1000;
+/// How often an open TUI looks for a new clove (the check itself is cached hourly).
+pub const UPGRADE_CHECK_MS: u64 = 60 * 60 * 1000;
 const DOUBLE_CLICK_MS: u64 = 400;
 
 pub struct App {
@@ -138,8 +151,16 @@ pub struct App {
     /// Whether coding agents know clove; None when there are none (or before
     /// the first load).
     pub agents: Option<clove_core::agents::State>,
+    /// Split or unified, wrap, sort and grouping of the diff view.
+    pub diff_prefs: crate::diffview::DiffPrefs,
     /// Lines the settings view showed last frame (for page up/down).
     pub settings_height: usize,
+    /// The latest release and how clove was installed; None until asked.
+    pub upgrade: Option<Box<clove_core::upgrade::Status>>,
+    /// When the TUI last asked (see `UPGRADE_CHECK_MS`).
+    pub upgrade_checked_ms: Option<u64>,
+    /// The version an upgrade from here installed: this process is older.
+    pub upgraded_to: Option<String>,
 }
 
 impl App {
@@ -189,6 +210,10 @@ impl App {
             integrated: false,
             service: None,
             agents: None,
+            upgrade: None,
+            upgrade_checked_ms: None,
+            upgraded_to: None,
+            diff_prefs: Default::default(),
             seen_removal: HashMap::new(),
             settings_height: 10,
         }
@@ -309,8 +334,47 @@ impl App {
                 .is_none_or(|t| self.now_ms.saturating_sub(*t) >= PR_CHECK_MS)
     }
 
+    pub fn needs_upgrade_check(&self) -> bool {
+        self.upgrade_checked_ms
+            .is_none_or(|t| self.now_ms.saturating_sub(t) >= UPGRADE_CHECK_MS)
+    }
+
+    /// The newer release to offer, unless this session already installed it.
+    pub fn upgrade_available(&self) -> Option<&str> {
+        let u = self.upgrade.as_ref()?;
+        let v = u.latest.as_ref()?.version.as_str();
+        (u.available && self.upgraded_to.is_none()).then_some(v)
+    }
+
+    /// `K`: upgrade when a newer clove is known, else check now.
+    pub fn upgrade_key(&mut self) -> Vec<Effect> {
+        if self.running().any(|j| matches!(j.task, Task::Upgrade)) {
+            self.toast(ToastKind::Info, "already upgrading: l shows it");
+            return vec![];
+        }
+        if let Some(v) = &self.upgraded_to {
+            let v = v.clone();
+            self.toast(
+                ToastKind::Info,
+                format!("clove {v} is installed: quit and reopen to use it"),
+            );
+            return vec![];
+        }
+        if self.upgrade_available().is_some() {
+            return self.spawn(Task::Upgrade, After::Nothing);
+        }
+        self.toast(ToastKind::Info, "checking for a new clove…");
+        vec![Effect::CheckUpgrade { force: true }]
+    }
+
     pub fn needs_reload(&self) -> bool {
-        let every = if self.watching {
+        // Statuses shown from the saved copy: pick up git's answers soon.
+        let pending = self
+            .current()
+            .is_some_and(|d| d.clones.iter().any(|c| c.status_pending));
+        let every = if pending {
+            PENDING_RELOAD_MS
+        } else if self.watching {
             RELOAD_MS
         } else {
             RELOAD_UNWATCHED_MS
@@ -456,7 +520,11 @@ impl App {
     /// Something shows progress or is about to change: toasts, jobs, a load,
     /// a tooltip on its way.
     fn waiting(&self) -> bool {
-        !self.toasts.is_empty() || self.running().next().is_some() || self.loading || self.tip_pending()
+        !self.toasts.is_empty()
+            || self.running().next().is_some()
+            || self.loading
+            || self.tip_pending()
+            || matches!(&self.modal, Some(Modal::Diff(v)) if v.busy())
     }
 
     /// A tooltip may be about to show: keep redrawing so it appears on time.
@@ -487,7 +555,11 @@ impl App {
         let Some(repo) = self.repo().cloned() else {
             if matches!(
                 task,
-                Task::Doctor | Task::Service { .. } | Task::Agents { .. } | Task::ShellInstall
+                Task::Doctor
+                    | Task::Service { .. }
+                    | Task::Agents { .. }
+                    | Task::ShellInstall
+                    | Task::Upgrade
             ) {
                 return self.spawn_at(None, String::new(), task, after);
             }
@@ -836,6 +908,27 @@ impl App {
                 }
                 Ok(String::new())
             }
+            Ok(Outcome::Upgraded(u)) => {
+                let s = match u.to {
+                    Some(to) if clove_core::upgrade::newer(&to, &u.from) => {
+                        let s = format!("clove {} → {to}: quit and reopen the TUI to use it", u.from);
+                        self.upgraded_to = Some(to);
+                        s
+                    }
+                    Some(to) => format!("clove {to}: no newer CLI in the tap"),
+                    None => "upgraded".into(),
+                };
+                if let Some(v) = &u.app_pending {
+                    toasts.push((
+                        ToastKind::Warn,
+                        format!(
+                            "the app's v{v} isn't in the tap yet (Apple is notarizing it): update it later"
+                        ),
+                    ));
+                }
+                toasts.push((ToastKind::Ok, s.clone()));
+                Ok(s)
+            }
         };
         if let Some(job) = self.job_mut(id) {
             job.result = Some(summary);
@@ -850,7 +943,11 @@ impl App {
         if self.repo().is_some_and(|r| r.root == repo)
             && !matches!(
                 task,
-                Task::Doctor | Task::Service { .. } | Task::Agents { .. } | Task::ShellInstall
+                Task::Doctor
+                    | Task::Service { .. }
+                    | Task::Agents { .. }
+                    | Task::ShellInstall
+                    | Task::Upgrade
             )
         {
             effects.push(Effect::Load);
@@ -860,6 +957,22 @@ impl App {
 
     pub fn on_msg(&mut self, msg: Msg) -> Vec<Effect> {
         match msg {
+            Msg::Diff { root, name, result } => {
+                match &mut self.modal {
+                    Some(Modal::Diff(v)) if v.root == root && v.name == name => v.set(match result {
+                        Ok((data, hl)) => crate::diffview::Load::Ready(data, hl),
+                        Err(e) => crate::diffview::Load::Failed(e),
+                    }),
+                    // Closed meanwhile: stop highlighting what nobody will see.
+                    _ => {
+                        if let Ok((_, hl)) = result {
+                            hl.stop();
+                        }
+                    }
+                }
+                vec![]
+            }
+            Msg::DiffHighlighted => vec![],
             Msg::Loaded {
                 root,
                 data,
@@ -902,6 +1015,22 @@ impl App {
             }
             Msg::PrsChecked => {
                 self.loaded_ms = None;
+                vec![]
+            }
+            Msg::Upgrade { status, forced } => {
+                if forced {
+                    match (&status.error, &status.latest) {
+                        (Some(e), _) => {
+                            self.toast(ToastKind::Err, format!("couldn't check for a new clove: {e}"))
+                        }
+                        (None, Some(l)) if status.available => self.toast(
+                            ToastKind::Info,
+                            format!("clove {} is available: K upgrades", l.version),
+                        ),
+                        _ => self.toast(ToastKind::Ok, format!("clove {} is up to date", status.current)),
+                    }
+                }
+                self.upgrade = Some(status);
                 vec![]
             }
             Msg::Refs {
@@ -1162,6 +1291,7 @@ impl App {
                 self.filtering = true;
             }
             KeyCode::Char('?') => self.modal = Some(Modal::Help),
+            KeyCode::Char('v') => return self.open_diff(),
             KeyCode::Char('g') => {
                 if self.repo().is_none() {
                     return vec![];
@@ -1176,10 +1306,17 @@ impl App {
                 self.modal = Some(Modal::Removals(RemovalsView::default()));
                 return vec![];
             }
+            KeyCode::Char('t') => {
+                if self.current().is_some() {
+                    self.modal = Some(Modal::Stats(RemovalsView::default()));
+                }
+                return vec![];
+            }
             KeyCode::Char('D') => {
                 self.modal = Some(Modal::Doctor(DoctorView::default()));
                 return self.spawn(Task::Doctor, After::Nothing);
             }
+            KeyCode::Char('K') => return self.upgrade_key(),
             KeyCode::Char('s') | KeyCode::Char(',') => {
                 if self.current().is_some() {
                     self.modal = Some(Modal::Settings(SettingsView::default()));
@@ -1227,6 +1364,79 @@ impl App {
             vec![Effect::SaveLayout]
         } else {
             vec![]
+        }
+    }
+
+    /// `v`: the selected clone's changes against its base.
+    fn open_diff(&mut self) -> Vec<Effect> {
+        let Some(root) = self.root() else { return vec![] };
+        let Some(c) = self.selected_clone().cloned() else {
+            self.toast(ToastKind::Info, "select a clone to see its changes");
+            return vec![];
+        };
+        if !c.mounted {
+            self.toast(ToastKind::Info, format!("{} is unmounted: m mounts it", c.name));
+            return vec![];
+        }
+        self.modal = Some(Modal::Diff(Box::new(crate::diffview::DiffView::new(
+            root.clone(),
+            c.name.clone(),
+            c.branch.clone(),
+        ))));
+        vec![Effect::LoadDiff { root, name: c.name }]
+    }
+
+    fn diff_key(
+        &mut self,
+        mut v: Box<crate::diffview::DiffView>,
+        k: KeyEvent,
+    ) -> (Option<Modal>, Vec<Effect>) {
+        use crate::diffview::KeyResult;
+        // `{` `}` move the border between the file list and the diff, `=` resets it.
+        let resize = match k.code {
+            KeyCode::Char('{') => Some(-2),
+            KeyCode::Char('}') => Some(2),
+            KeyCode::Char('=') => Some(0),
+            _ => None,
+        };
+        if let Some(delta) = resize {
+            let split = &mut self.panes.diff;
+            let changed = if delta == 0 {
+                split.reset_all();
+                true
+            } else {
+                split.move_divider(panes::DIFF_FILES, delta)
+            };
+            let effects = if changed { vec![Effect::SaveLayout] } else { vec![] };
+            return (Some(Modal::Diff(v)), effects);
+        }
+        let mut prefs = self.diff_prefs;
+        let r = v.key(k, &mut prefs);
+        self.diff_prefs = prefs;
+        match r {
+            KeyResult::Close => {
+                v.stop();
+                (None, vec![])
+            }
+            KeyResult::Reload => {
+                v.reloading();
+                let e = Effect::LoadDiff {
+                    root: v.root.clone(),
+                    name: v.name.clone(),
+                };
+                (Some(Modal::Diff(v)), vec![e])
+            }
+            KeyResult::Edit(path) => {
+                let clone = self
+                    .current()
+                    .and_then(|d| d.clones.iter().find(|c| c.name == v.name))
+                    .map(|c| c.path.join(&path));
+                (
+                    Some(Modal::Diff(v)),
+                    clone.map(Effect::OpenEditor).into_iter().collect(),
+                )
+            }
+            KeyResult::None => (Some(Modal::Diff(v)), vec![]),
         }
     }
 
@@ -1556,8 +1766,10 @@ impl App {
             Modal::Gc(g) => self.gc_key(g, k),
             Modal::Doctor(d) => self.doctor_key(d, k),
             Modal::Removals(v) => self.removals_key(v, k),
+            Modal::Stats(v) => self.stats_key(v, k),
             Modal::ResolveOffer(o) => self.resolve_offer_key(o, k),
             Modal::Settings(v) => self.settings_key(v, k),
+            Modal::Diff(v) => self.diff_key(v, k),
             Modal::Job(id) => self.job_key(id, k),
             Modal::AddRepo(v) => self.add_repo_key(v, k),
         };
@@ -2049,6 +2261,18 @@ impl App {
         (Some(Modal::Removals(v)), vec![])
     }
 
+    fn stats_key(&mut self, mut v: RemovalsView, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('t') | KeyCode::Enter => return (None, vec![]),
+            KeyCode::Up | KeyCode::Char('k') => v.scroll.set(v.scroll.target().saturating_sub(1)),
+            KeyCode::Down | KeyCode::Char('j') => v.scroll.set(v.scroll.target() + 1),
+            KeyCode::PageUp => v.scroll.set(v.scroll.target().saturating_sub(10)),
+            KeyCode::PageDown | KeyCode::Char(' ') => v.scroll.set(v.scroll.target() + 10),
+            _ => {}
+        }
+        (Some(Modal::Stats(v)), vec![])
+    }
+
     fn doctor_key(&mut self, mut d: DoctorView, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
         match k.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('D') | KeyCode::Enter => {
@@ -2128,6 +2352,8 @@ impl App {
                                     | Hit::ScrollDoctor
                                     | Hit::ScrollRemovals
                                     | Hit::ScrollSettings
+                                    | Hit::ScrollDiff
+                                    | Hit::ScrollDiffList
                             )
                     })
                     .map(|(_, h)| *h);
@@ -2148,8 +2374,13 @@ impl App {
                             v.scroll.set(t.max(0) as usize);
                         }
                     }
+                    Some(h @ (Hit::ScrollDiff | Hit::ScrollDiffList)) => {
+                        if let Some(Modal::Diff(v)) = &mut self.modal {
+                            v.wheel(h == Hit::ScrollDiffList, d);
+                        }
+                    }
                     Some(Hit::ScrollRemovals) => {
-                        if let Some(Modal::Removals(v)) = &mut self.modal {
+                        if let Some(Modal::Removals(v) | Modal::Stats(v)) = &mut self.modal {
                             let t = v.scroll.target() as isize + d * 2;
                             v.scroll.set(t.max(0) as usize);
                         }
@@ -2177,6 +2408,13 @@ impl App {
                     if double {
                         self.last_click = None;
                         return self.cd_selected();
+                    }
+                    vec![]
+                }
+                Some(Hit::DiffEntry(i)) => {
+                    let prefs = self.diff_prefs;
+                    if let Some(Modal::Diff(v)) = &mut self.modal {
+                        v.click_entry(i, prefs);
                     }
                     vec![]
                 }
@@ -2287,6 +2525,7 @@ fn job_title(t: &Task) -> String {
         Task::Agents { .. } => "agents".into(),
         Task::Update { name, .. } => format!("update {name}"),
         Task::ShellInstall => "shell integration".into(),
+        Task::Upgrade => "upgrade".into(),
     }
 }
 

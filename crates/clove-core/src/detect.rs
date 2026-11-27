@@ -144,12 +144,14 @@ fn find_steps(root: &Path, max_installs: usize) -> Vec<Step> {
     for d in &dirs {
         if root.join(d).join("uv.lock").exists() {
             // Virtualenvs embed absolute paths, so each clone re-syncs (fast with uv's cache).
+            // A PYTHONPATH from the repo's env (e.g. a nix shell) leaks into isolated
+            // builds and shadows their setuptools, so sdists fail to build.
             out.push(in_dir(
                 d,
                 Step {
                     name: "uv".into(),
-                    warm: Some("uv sync --frozen".into()),
-                    setup: Some("uv sync --frozen".into()),
+                    warm: Some(UV_SYNC.into()),
+                    setup: Some(UV_SYNC.into()),
                     ..Default::default()
                 },
             ));
@@ -267,7 +269,7 @@ const INSTALL_LOCKFILES: [&str; 6] = [
 pub fn nested_projects(root: &Path) -> Vec<String> {
     let mut dirs = std::collections::BTreeSet::new();
     let patterns: Vec<String> = LOCKFILES.iter().map(|f| format!("**/{f}")).collect();
-    let listed = std::process::Command::new("git")
+    let listed = std::process::Command::new(crate::git::bin())
         .arg("-C")
         .arg(root)
         .args(["ls-files", "-z", "--"])
@@ -309,6 +311,8 @@ fn shell_quote(s: &str) -> String {
         format!("'{}'", s.replace('\'', r"'\''"))
     }
 }
+
+const UV_SYNC: &str = "env -u PYTHONPATH uv sync --frozen";
 
 pub fn resolve_exec(exec: Exec, root: &Path) -> Exec {
     if exec != Exec::Auto {
@@ -388,7 +392,7 @@ mod tests {
         std::fs::write(r.join("scratch/yarn.lock"), "").unwrap();
         let git = |a: &[&str]| {
             assert!(
-                std::process::Command::new("git")
+                std::process::Command::new(crate::git::bin())
                     .arg("-C")
                     .arg(r)
                     .args(a)
@@ -442,7 +446,7 @@ mod tests {
             std::fs::write(p, "").unwrap();
         }
         let run = |args: &[&str]| {
-            std::process::Command::new("git")
+            std::process::Command::new(crate::git::bin())
                 .arg("-C")
                 .arg(r)
                 .args(args)

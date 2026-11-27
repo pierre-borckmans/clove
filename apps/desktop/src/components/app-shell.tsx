@@ -1,23 +1,29 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Outlet, useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { useHotkey } from "@/hooks/use-hotkey";
+import { cycleAppearance } from "@/hooks/use-theme";
 import { listen } from "@/lib/bridge";
-import { useAutoPruneToasts, useRepoChanges, useRepos } from "@/lib/queries";
+import { setPrefs, usePrefs } from "@/lib/prefs";
+import { keys, useAutoPruneToasts, useCheckUpgradeNow, useRepoChanges, useRepoList, useUpgrade } from "@/lib/queries";
 import { getUi, setUi } from "@/lib/ui";
 import { AddRepoDialog } from "./add-repo-dialog";
 import { CommandPalette } from "./command-palette";
 import { NewCloneDialog } from "./new-clone-dialog";
 import { OpsPanel } from "./ops-panel";
 import { RemoveCloneDialog } from "./remove-clone-dialog";
-import { Sidebar } from "./sidebar";
+import { RAIL, SIDEBAR, Sidebar } from "./sidebar";
+import { TitleBar } from "./title-bar";
+import { UpgradeDialog } from "./upgrade-dialog";
 import { AdoptDialog, RemoveWorktreeDialog } from "./worktree-dialogs";
 
 export function AppShell() {
   const navigate = useNavigate();
   useRepoChanges();
   useAutoPruneToasts();
-  const { data: repos } = useRepos();
+  useUpgradeWatch();
+  const { data: repos } = useRepoList();
   const params = useParams({ strict: false }) as { repoId?: string };
   const current = repos?.find((r) => r.id === params.repoId);
 
@@ -30,6 +36,9 @@ export function AppShell() {
     setUi({ palette: false });
     void navigate({ to: "/settings", search: current ? { repo: current.id } : {} });
   });
+  const collapsed = usePrefs().sidebarCollapsed;
+  useHotkey({ key: "b", meta: true }, () => setPrefs({ sidebarCollapsed: !collapsed }));
+  useHotkey({ key: "l", meta: true, shift: true }, cycleAppearance);
   // The webview would reload on ⌘R; refetch instead.
   useHotkey({ key: "r", meta: true }, () => window.dispatchEvent(new Event("clove:refetch")));
   useEffect(() => {
@@ -63,21 +72,58 @@ export function AppShell() {
   }, [navigate]);
 
   return (
-    <div className="flex h-full">
-      <Sidebar />
-      <main className="relative my-2 mr-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[10px] bg-background shadow-[var(--pane-shadow)]">
-        <Outlet />
-        <OpsPanel />
-      </main>
+    <div className="flex h-full flex-col bg-sidebar">
+      <TitleBar />
+      <div className="flex min-h-0 flex-1">
+        <div
+          className="h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-out"
+          style={{ width: collapsed ? RAIL : SIDEBAR }}
+        >
+          <Sidebar compact={collapsed} />
+        </div>
+        <main className="relative mr-2 mb-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[10px] bg-background shadow-[var(--pane-shadow)]">
+          <Outlet />
+          <OpsPanel />
+        </main>
+      </div>
       <CommandPalette />
       <NewCloneDialog />
       <AddRepoDialog />
       <RemoveCloneDialog />
       <RemoveWorktreeDialog />
       <AdoptDialog />
+      <UpgradeDialog />
       <Toaster position="bottom-right" offset={{ right: 16, bottom: 16 }} />
     </div>
   );
+}
+
+/**
+ * Update checks beyond the query's own poll: "Check for Updates…" from the
+ * app or tray menu, a recheck after the Mac wakes (a timer that fell far
+ * behind), and the dialog after a failed update relaunched the app.
+ */
+function useUpgradeWatch() {
+  const qc = useQueryClient();
+  const { mutate: checkNow } = useCheckUpgradeNow();
+  const { data } = useUpgrade();
+  const failed = !!data?.upgrade_error;
+  useEffect(() => {
+    if (failed) setUi({ upgrade: true });
+  }, [failed]);
+  useEffect(() => {
+    const un = listen("check-updates", () => checkNow());
+    let last = Date.now();
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      if (now - last > 3 * 60_000) void qc.invalidateQueries({ queryKey: keys.upgrade });
+      last = now;
+    }, 60_000);
+    return () => {
+      void un.then((f) => f());
+      window.clearInterval(timer);
+    };
+  }, [qc, checkNow]);
 }
 
 /** A pane header that doubles as the window's drag region. */

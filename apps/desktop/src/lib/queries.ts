@@ -4,10 +4,13 @@ import { toast } from "sonner";
 import { api } from "./api";
 import { listen } from "./bridge";
 import { APP_LABELS } from "./prefs";
-import type { AppId, Layer, Removed } from "./types";
+import type { AppId, Layer, Removed, RepoRef } from "./types";
+import { setUi } from "./ui";
 
 export const keys = {
   repos: ["repos"] as const,
+  /** Under `repos`, so whatever refreshes the repos refreshes this too. */
+  repoList: ["repos", "list"] as const,
   status: (root: string) => ["status", root] as const,
   clones: (root: string) => ["clones", root] as const,
   worktrees: (root: string) => ["worktrees", root] as const,
@@ -16,15 +19,18 @@ export const keys = {
   doctorRepo: (root: string) => ["doctor", "repo", root] as const,
   gc: (root: string) => ["gc", root] as const,
   cleanup: (root: string) => ["cleanup", root] as const,
+  diff: (root: string, name: string) => ["diff", root, name] as const,
   config: (root: string) => ["config", root] as const,
   prs: (root: string) => ["prs", root] as const,
   service: ["service"] as const,
   agents: ["agents"] as const,
   history: ["history"] as const,
+  stats: ["stats"] as const,
   shell: ["shell"] as const,
   apps: ["apps"] as const,
   repoCandidates: ["repo-candidates"] as const,
   initPreview: (dir: string) => ["init-preview", dir] as const,
+  upgrade: ["upgrade"] as const,
 };
 
 /**
@@ -33,6 +39,7 @@ export const keys = {
  * catches the rest, like a clone's working tree getting dirty.
  */
 export const POLL_MS = 15_000;
+const PENDING_POLL_MS = 500;
 
 /** Refetches repo data as soon as the backend sees it change on disk. */
 export function useRepoChanges() {
@@ -40,12 +47,12 @@ export function useRepoChanges() {
   useEffect(() => {
     const un = listen<{ treesOnly?: boolean } | null>("repos-changed", (change) => {
       // Edits inside working trees change clone and worktree status only.
-      const only = change?.treesOnly ? ["clones", "worktrees"] : null;
+      const only = change?.treesOnly ? ["clones", "worktrees", "diff"] : null;
       void qc.invalidateQueries({
         predicate: (q) => {
           const k = String(q.queryKey[0]);
           if (only) return only.includes(k);
-          return !["prs-check", "doctor", "apps", "shell", "repo-candidates", "init-preview"].includes(k);
+          return !["prs-check", "doctor", "apps", "shell", "repo-candidates", "init-preview", "upgrade"].includes(k);
         },
       });
     });
@@ -73,10 +80,20 @@ export function useRepos() {
   return useQuery({ queryKey: keys.repos, queryFn: api.repos, refetchInterval: POLL_MS });
 }
 
-/** The repo for a route id, from the repos list. */
+/**
+ * Known repos without their status. It answers in a millisecond where
+ * `useRepos` runs git in every repo, so pages and the sidebar draw from it first.
+ */
+export function useRepoList() {
+  return useQuery({ queryKey: keys.repoList, queryFn: api.repoList, refetchInterval: POLL_MS });
+}
+
+/** The repo for a route id: from the repos list, or the quick list until that loads. */
 export function useRepo(id: string | undefined) {
   const q = useRepos();
-  return { ...q, repo: q.data?.find((r) => r.id === id) };
+  const list = useRepoList();
+  const repo: RepoRef | undefined = q.data?.find((r) => r.id === id) ?? list.data?.find((r) => r.id === id);
+  return { ...q, isLoading: q.isLoading || list.isLoading, repo };
 }
 
 export function useStatus(root: string | undefined) {
@@ -93,7 +110,8 @@ export function useClones(root: string | undefined) {
     queryKey: keys.clones(root ?? ""),
     queryFn: () => api.clones(root as string, true),
     enabled: !!root,
-    refetchInterval: POLL_MS,
+    // Statuses shown from the saved copy: pick up git's answers soon.
+    refetchInterval: (q) => (q.state.data?.some((c) => c.status_pending) ? PENDING_POLL_MS : POLL_MS),
   });
 }
 
@@ -165,6 +183,36 @@ export function usePrCheck(root: string | undefined) {
     refetchInterval: 5 * 60_000,
     refetchOnWindowFocus: false,
     retry: false,
+  });
+}
+
+/**
+ * The latest release and the versions in play. Polls every 10 minutes and on
+ * focus, which also notices a CLI or app upgraded by hand; GitHub itself is
+ * asked at most hourly (clove-core's cache, shared with the CLI and TUI).
+ */
+export function useUpgrade() {
+  return useQuery({
+    queryKey: keys.upgrade,
+    queryFn: () => api.checkUpgrade(false),
+    refetchInterval: 10 * 60_000,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+/** A forced check; says "up to date" or opens the update dialog. */
+export function useCheckUpgradeNow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.checkUpgrade(true),
+    onSuccess: (s) => {
+      qc.setQueryData(keys.upgrade, s);
+      if (s.error) toast.error("Could not check for updates", { description: s.error });
+      else if (s.available || s.restart_to) setUi({ upgrade: true });
+      else toast.success(`clove ${s.current} is up to date`);
+    },
+    onError: (e) => toast.error("Could not check for updates", { description: String(e) }),
   });
 }
 
@@ -308,3 +356,19 @@ export async function copyText(text: string, label: string) {
 }
 
 export const copyPath = (path: string) => copyText(path, "Path copied");
+
+/** A clone's patch; refetched when its tree changes, like the clone list. */
+export function useCloneDiff(root: string | undefined, name: string) {
+  return useQuery({
+    queryKey: keys.diff(root ?? "", name),
+    queryFn: () => api.cloneDiff(root as string, name),
+    enabled: !!root,
+    refetchInterval: POLL_MS,
+    retry: false,
+  });
+}
+
+/** Clone timings per repo (`clove stats --all-repos`). */
+export function useStats() {
+  return useQuery({ queryKey: keys.stats, queryFn: () => api.stats(12), refetchInterval: POLL_MS });
+}

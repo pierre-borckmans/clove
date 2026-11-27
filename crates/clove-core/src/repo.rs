@@ -99,6 +99,10 @@ pub struct CloneInfo {
     /// A `clove update` (or a rebase or merge) stopped on conflicts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation: Option<crate::update::Strategy>,
+    /// `dirty`, `ahead` and `behind` are the last known values (or none yet)
+    /// while git is asked again in the background (see `memo::serve_saved`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub status_pending: bool,
 }
 
 pub struct Clove {
@@ -179,6 +183,15 @@ impl Clove {
     }
     pub fn golden_worktree(&self) -> PathBuf {
         self.golden_mount().join(&self.name)
+    }
+    /// A clone made ahead of time (see `spare`): its image and record.
+    pub fn spare_dir(&self) -> PathBuf {
+        self.state.join("spare")
+    }
+    /// Next to the clones: a mount point can only be renamed within its
+    /// folder (EXDEV otherwise). Clone names never start with a dot.
+    pub fn spare_mount(&self) -> PathBuf {
+        self.clone_root().join(".clove-spare")
     }
     pub fn clone_dir(&self, name: &str) -> PathBuf {
         self.state.join("clones").join(name)

@@ -1,6 +1,5 @@
 ---
 source: crates/clove-tui/src/tests.rs
-assertion_line: 333
 expression: s
 ---
 ╭ clove ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -28,4 +27,4 @@ expression: s
 │ D doctor           ││                                                                                        ││                                              │
 │ S service     ● on ││                                                                                        ││                                              │
 ╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
- ⏎ cd  n new  d remove  u unmount  U update  r refresh  o open  / filter  tab repo  s settings  g cleanup  L log  D doctor  A add repo  ? help  q quit
+ ⏎ cd  v changes  n new  d remove  u unmount  U update  r refresh  o open  / filter  tab repo  s settings  g cleanup  L log  t timings  ? help  q quit

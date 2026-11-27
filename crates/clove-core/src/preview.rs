@@ -105,7 +105,7 @@ mod tests {
     use super::*;
 
     fn git(dir: &Path, args: &[&str]) {
-        let ok = std::process::Command::new("git")
+        let ok = std::process::Command::new(crate::git::bin())
             .arg("-C")
             .arg(dir)
             .args(args)
@@ -154,6 +154,7 @@ mod tests {
                 image_size: "300G".into(),
                 fetch: true,
                 fetch_interval: 300,
+                spare: true,
                 exec: Exec::None,
                 env: Default::default(),
                 steps: crate::detect::steps(&r, 10),

@@ -17,6 +17,11 @@ const shots = {
     await p.waitForSelector("text=Golden image");
     await wait(400);
   },
+  diff: async (p) => {
+    await p.goto(`${base}/?theme=${p.theme}${MONO}/diff/feat-onboarding-checklist`);
+    await p.waitForSelector("text=session.ts");
+    await wait(900);
+  },
   "new-clone": async (p) => {
     await shots.repo(p);
     await p.keyboard.press("Meta+n");

@@ -2,6 +2,9 @@
 
 export type Timing = { step: string; ms: number };
 
+/** A known repo before git is asked anything: see `repo_list`. */
+export type RepoRef = Pick<RepoSummary, "id" | "name" | "root">;
+
 export type RepoSummary = {
   id: string;
   name: string;
@@ -80,6 +83,8 @@ export type CloneInfo = {
   removing_when_free?: boolean;
   /** A `clove update` (or a rebase or merge) stopped on conflicts. */
   operation?: "rebase" | "merge";
+  /** dirty/ahead/behind are the last known values while git is asked again. */
+  status_pending?: boolean;
 };
 
 /** A plain git worktree clove didn't make (clove_core::OtherWorktree). */
@@ -217,6 +222,7 @@ export type Config = {
   image_size: string;
   fetch: boolean;
   fetch_interval: number;
+  spare: boolean;
   exec: "auto" | "direnv" | "mise" | "none";
   env: Record<string, string>;
   steps: Step[];
@@ -323,4 +329,94 @@ export type ShellStatus = {
   installed: boolean;
   rc: string | null;
   line: string | null;
+};
+
+/** A clone's changes against the merge-base with its base (`clove_core::CloneDiff`). */
+export type CloneDiff = {
+  base: string;
+  merge_base: string;
+  patch: string;
+  truncated: boolean;
+  skipped: string[];
+  attrs: FileAttrs[];
+  /** Innermost first: a file belongs to the longest `dir` prefix. */
+  packages: Package[];
+};
+
+/** A directory with a package manifest; `dir` is "" for the repo root. */
+export type Package = { dir: string; name: string; manifest: string };
+
+/** What `.gitattributes` says about a changed file, when it matters for display. */
+export type FileAttrs = {
+  path: string;
+  /** `binary` or `-diff`. */
+  binary: boolean;
+  /** `linguist-generated` or `linguist-vendored`. */
+  generated: boolean;
+  /** A `filter` (LFS) or a `diff=<driver>` textconv: no whole-file context. */
+  converted: boolean;
+};
+
+/** One `clove new`, as it went (`clove_core::stats::Created`). */
+export type Created = {
+  at: number;
+  name: string;
+  branch: string | null;
+  base: string;
+  golden_generation: number;
+  total_ms: number;
+  timings: Timing[];
+  failed_steps: string[];
+};
+
+export type StepStat = { step: string; runs: number; median_ms: number; p90_ms: number; max_ms: number };
+
+/** How fast clones come in one repo (`clove_core::stats::Stats`). */
+export type Stats = {
+  clones: number;
+  median_ms: number;
+  p90_ms: number;
+  fastest_ms: number;
+  slowest_ms: number;
+  fast: number;
+  reran: number;
+  clean_median_ms: number | null;
+  steps: StepStat[];
+  golden_builds: number;
+  golden_median_ms: number | null;
+};
+
+export type GoldenBuild = {
+  at: number;
+  generation: number;
+  commit: string;
+  base: string;
+  total_ms: number;
+  timings: Timing[];
+};
+
+export type RepoStats = { repo: string; root: string; stats: Stats; created: Created[]; golden_builds: GoldenBuild[] };
+
+export type InstallSource = "brew" | "manual";
+
+/** A GitHub release (`clove_core::upgrade::Release`). */
+export type Release = { version: string; url: string; notes: string; published_at: string | null };
+
+/** Where clove stands against its latest release (`upgrade::UpgradeState`). */
+export type UpgradeState = {
+  /** The running app's version. */
+  current: string;
+  latest: Release | null;
+  available: boolean;
+  checked_at: number;
+  /** Why the last check failed. */
+  error: string | null;
+  /** Why the last upgrade failed (shown once after the app reopens). */
+  upgrade_error: string | null;
+  cli: InstallSource;
+  cli_path: string | null;
+  cli_version: string | null;
+  app_source: InstallSource;
+  /** A newer app is installed on disk than the one running. */
+  restart_to: string | null;
 };

@@ -36,6 +36,10 @@ impl Image {
         c.clone_dir(name).join(self.0.file_name())
     }
 
+    fn spare_image(&self, c: &Clove) -> PathBuf {
+        c.spare_dir().join(self.0.file_name())
+    }
+
     fn create(&self, path: &Path, size: &str, volume_name: &str) -> Result<()> {
         match self.0 {
             Backend::Asif => run(Command::new("diskutil")
@@ -156,6 +160,50 @@ impl Store for Image {
     fn clone_bytes(&self, c: &Clove, name: &str, _mount: &Path) -> (u64, u64) {
         let image = self.clone_image(c, name);
         (allocated_bytes(&image), private_bytes(&image))
+    }
+
+    fn spare_create(&self, c: &Clove, g: u32) -> Result<bool> {
+        std::fs::create_dir_all(c.spare_dir())?;
+        clonefile(&self.golden_image(c, g), &self.spare_image(c))?;
+        Ok(true)
+    }
+
+    fn spare_attach(&self, c: &Clove) -> Result<()> {
+        self.attach(&self.spare_image(c), &c.spare_mount())
+    }
+
+    fn spare_attached(&self, c: &Clove) -> bool {
+        is_mounted(&c.spare_mount()) && self.spare_image(c).is_file()
+    }
+
+    // APFS lets a mounted volume's mount point be renamed, and the mount
+    // table follows: the clone is mounted at its path without a new mount.
+    fn spare_claim(&self, c: &Clove, name: &str, mount: &Path) -> Result<()> {
+        let (image, to) = (self.spare_image(c), self.clone_image(c, name));
+        if let Some(parent) = mount.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(&image, &to).with_context(|| format!("move {}", image.display()))?;
+        let moved = std::fs::rename(c.spare_mount(), mount)
+            .with_context(|| format!("move the spare's mount point to {}", mount.display()));
+        if moved.is_ok() && is_mounted(mount) {
+            return Ok(());
+        }
+        if moved.is_ok() {
+            let _ = std::fs::rename(mount, c.spare_mount());
+        }
+        let _ = std::fs::rename(&to, &image);
+        moved?;
+        bail!("the mount did not follow its renamed mount point")
+    }
+
+    fn spare_discard(&self, c: &Clove) -> Result<()> {
+        detach(&c.spare_mount(), true)?;
+        let _ = std::fs::remove_dir(c.spare_mount());
+        match std::fs::remove_file(self.spare_image(c)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
+            _ => Ok(()),
+        }
     }
 
     fn unmount_volume(&self, _c: &Clove, _force: bool) -> Result<bool> {

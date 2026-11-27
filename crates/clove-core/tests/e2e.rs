@@ -5,6 +5,7 @@
 #![cfg(target_os = "macos")]
 
 use clove_core::opencode::{WorktreeEntry, list_worktrees};
+use clove_core::spare::SpareState;
 use clove_core::{Clove, Event, NewOptions, RefreshOptions, RemoveOptions, Silent, Verdict};
 use std::path::Path;
 use std::process::Command;
@@ -49,14 +50,15 @@ impl Drop for UnmountOnDrop {
     fn drop(&mut self) {
         let out = Command::new("mount").output().unwrap();
         for line in String::from_utf8_lossy(&out.stdout).lines() {
-            if let Some((_, rest)) = line.split_once(" on ")
+            if let Some((dev, rest)) = line.split_once(" on ")
                 && let Some((point, _)) = rest.split_once(" (")
                 && point.starts_with(&*self.0.to_string_lossy())
             {
                 let _ = Command::new("diskutil")
                     .args(["unmount", "force", point])
                     .output();
-                let _ = Command::new("diskutil").args(["eject", point]).output();
+                // By device: once unmounted, the path names nothing to eject.
+                let _ = Command::new("diskutil").args(["eject", dev]).output();
             }
         }
     }
@@ -303,6 +305,51 @@ fn full_lifecycle() {
     )
     .unwrap();
 
+    // a spare mounted ahead of time becomes the next clone: no copy, no mount
+    assert_eq!(c.fill_spare(false).unwrap(), SpareState::Ready(1));
+    assert_eq!(
+        c.fill_spare(false).unwrap(),
+        SpareState::Ready(1),
+        "kept when usable"
+    );
+    let s = c
+        .new_clone_with_request(
+            &NewOptions {
+                branch: Some("from-spare".into()),
+                ..Default::default()
+            },
+            Some("from-spare-request"),
+            &Silent,
+        )
+        .expect("new from spare");
+    let steps: Vec<&str> = s.timings.iter().map(|t| t.step.as_str()).collect();
+    assert!(
+        steps.contains(&"claim spare") && !steps.contains(&"mount"),
+        "{steps:?}"
+    );
+    assert!(s.mounted);
+    assert_eq!(
+        git(&s.path, &["status", "--porcelain"]),
+        "",
+        "claimed clone starts clean"
+    );
+    assert!(git(&root, &["worktree", "list"]).contains(&s.path.display().to_string()));
+    assert_eq!(c.spare_state(), SpareState::Missing, "claimed spares are gone");
+    // it remounts from its own image, like any clone
+    c.unmount("from-spare", false).unwrap();
+    assert!(!c.info("from-spare", false).unwrap().mounted);
+    c.mount("from-spare").unwrap();
+    assert!(c.info("from-spare", false).unwrap().mounted);
+    c.abort_clone_by_request(
+        "from-spare-request",
+        clove_core::history::By::OpencodeHook,
+        &Silent,
+    )
+    .unwrap();
+    assert!(!c.clone_dir("from-spare").exists());
+    assert!(!c.clone_mount("from-spare").exists());
+    assert!(c.created().iter().any(|creation| creation.name == "from-spare"));
+
     // isolation between clones
     std::fs::write(a.path.join("deps/only-a"), "x").unwrap();
     assert!(!b.path.join("deps/only-a").exists());
@@ -407,8 +454,18 @@ fn full_lifecycle() {
         .any(|e| matches!(e, Event::Skip { step, .. } if step == "warm deps"));
     assert!(skipped, "warm deps should be skipped when lock.txt is unchanged");
     // --full reruns everything
+    let before = c.fill_spare(false).unwrap();
+    assert!(matches!(before, SpareState::Ready(_)), "{before:?}");
     let g3 = c.refresh_with(&RefreshOptions { full: true }, &Silent).unwrap();
     assert!(g3.timings.iter().any(|t| t.step == "warm deps"));
+    // the spare from gen 1 is stale now: gc names it, a fill replaces it
+    assert!(
+        matches!(c.spare_state(), SpareState::Stale(_)),
+        "{:?}",
+        c.spare_state()
+    );
+    assert!(c.gc(false).unwrap().iter().any(|a| a.contains("spare")));
+    assert_eq!(c.fill_spare(false).unwrap(), SpareState::Ready(g3.generation));
     let n = c
         .new_clone(
             &NewOptions {
@@ -423,6 +480,11 @@ fn full_lifecycle() {
         std::fs::read_to_string(n.path.join("app.txt"))
             .unwrap()
             .contains("more")
+    );
+    assert!(
+        n.timings.iter().any(|t| t.step == "claim spare"),
+        "{:?}",
+        n.timings
     );
 
     // prune without GitHub: only local proofs count. peek is a detached checkout
@@ -691,6 +753,8 @@ fn full_lifecycle() {
     );
     assert!(!git(&root, &["worktree", "list"]).contains("clones"));
 
+    // deinit detaches a mounted spare too
+    assert!(matches!(c.fill_spare(false).unwrap(), SpareState::Ready(_)));
     let clone_root = c.config.clone_root.clone();
     c.deinit(&Silent).unwrap();
     assert!(!t.join("state/repos").join(&c.id).exists());

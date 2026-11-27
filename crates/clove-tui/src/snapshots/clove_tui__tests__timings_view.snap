@@ -1,0 +1,34 @@
+---
+source: crates/clove-tui/src/tests.rs
+expression: s
+---
+╭ clove ───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ app  /work/app                                                                                  5 clones · 4 mounted │
+│ golden  ● gen 3 · a1b2c3d4e5 · 2h old · ↓4 behind origin/main · 1.3G                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ repos ─────────────╮╭ clones 5 ──────────────────────────────────────────────────────────────────────────────────────╮
+│ ▌ app   ╭ timings · clove stats ───────────────────────────────────────────────────────────────────────────╮         │
+│   mono  │                                                                                                  │ogin/app │
+│   web   │  3 clones  median 2.5s  p90 32.1s  ·  2 of 3 under 5.0s                                          │race/app │
+│ + add re│  clove itself  2.3s median when no setup step had to rerun                                       │ache/app │
+│         │  setup reran   1 of 3 (over 1.0s): the branch changed what the golden image set up               │flow/app │
+│         │                                                                                                  │ched/app │
+│         │  WHERE THE TIME GOES  median when the step ran                                                   │         │
+│         │  mount              0.89s  ███████████                                                           │         │
+│         │  checkout           0.84s  ███████████                                                           │         │
+│         │  setup direnv       24.9s  ██████████████████████████████▸  in 1 of 3                            │         │
+│         │  setup pnpm          3.8s  ██████████████████████████████▸  in 1 of 3                            │         │
+│         │  setup mise-trust   0.04s  █  in 2 of 3                                                          │         │
+│         │  untimed            0.56s  ███████                                                               │         │
+│         │                                                                                                  │         │
+│         │  WHEN     RECENT                       TOTAL   MOUNT  CHECKOUT    SETUP                          │         │
+│         │  1m ago   feat-login                    2.3s   0.95s     0.80s    0.04s                          │         │
+│         │  1h ago   fix-race                      2.5s   0.89s     0.84s    0.23s                          │         │
+│         │  1d ago   spike-cache                  32.1s   0.70s      1.3s    28.6s                          │         │
+│ ────────│                                                                                                  │         │
+│ s settin╰──────────────────────────────────────────────────────────────────────────────────────────────────╯         │
+│ g cleanup          ││                                                                                                │
+│ D doctor           ││                                                                                                │
+│ S service          ││                                                                                                │
+╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ scroll  esc close

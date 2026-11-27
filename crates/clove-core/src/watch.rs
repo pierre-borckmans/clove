@@ -511,7 +511,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path().canonicalize().unwrap();
         let git = |dir: &Path, args: &[&str]| {
-            let ok = std::process::Command::new("git")
+            let ok = std::process::Command::new(crate::git::bin())
                 .args([
                     "-c",
                     "user.name=t",
@@ -556,7 +556,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path().canonicalize().unwrap();
         let git = |dir: &Path, args: &[&str]| {
-            let ok = std::process::Command::new("git")
+            let ok = std::process::Command::new(crate::git::bin())
                 .args([
                     "-c",
                     "user.name=t",

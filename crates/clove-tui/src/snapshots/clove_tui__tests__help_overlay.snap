@@ -1,6 +1,5 @@
 ---
 source: crates/clove-tui/src/tests.rs
-assertion_line: 847
 expression: s
 ---
 ╭ clove ──────────────╭ keys ────────────────────────────────────────────────╮─────────────────────╮
@@ -12,26 +11,26 @@ expression: s
 │   mono         2 ● ││         m / u   mount / unmount                      │2       5m     14M   │
 │   web       set up ││         U / X   update to latest base / abort        │        3h    230M   │
 │ + add repo         ││             o   open in $EDITOR                      │ed      3h     14M   │
-│                    ││             c   make a plain git worktree a clone    │        4d     14M   │
-│                    ││             /   filter by name or branch             │        3h     14M   │
+│                    ││             v   see its changes (diff)               │        4d     14M   │
+│                    ││             t   how fast clones come (timings)       │        3h     14M   │
+│                    ││             c   make a plain git worktree a clone    │                     │
+│                    ││             /   filter by name or branch             │                     │
 │                    ││         ↑↓ jk   move · wheel scrolls                 │                     │
 │                    ││                                                      │                     │
 │                    ││  GOLDEN IMAGE                                        │                     │
 │                    ││             r   refresh to latest base               │                     │
 │                    ││             i   build it (first time)                │                     │
-│                    ││             l   watch the last operation             │                     │
-│                    ││                                                      │                     │
-│                    ││  ANYWHERE                                            │─────────────────────╯
-│                    ││   tab [ ] 1-9   switch repository                    │─────────────────────╮
+│                    ││             l   watch the last operation             │─────────────────────╯
+│                    ││                                                      │─────────────────────╮
+│                    ││  ANYWHERE                                            │                     │
+│                    ││   tab [ ] 1-9   switch repository                    │                     │
 │                    ││             A   add a repo clove doesn't manage yet  │                     │
 │                    ││             s   settings, service                    │                     │
 │                    ││             g   cleanup: merged clones/worktrees     │                     │
-│                    ││             L   log: what clove removed, and why     │                     │
-│                    ││             D   doctor                               │                     │
-│ ────────────────── ││        ctrl-r   reload now                           │                     │
-│ s settings         ││         q esc   quit                                 │                     │
-│ g cleanup          ││                                                      │               3.2s  │
-│ D doctor           ││  PANELS                                              │                6ms  │
-│ S service          ││     < > / { }   move the detail / sidebar border     │                     │
+│ ────────────────── ││             L   log: what clove removed, and why     │                     │
+│ s settings         ││             D   doctor                               │                     │
+│ g cleanup          ││             K   check for a new clove / upgrade      │               3.2s  │
+│ D doctor           ││        ctrl-r   reload now                           │                6ms  │
+│ S service          ││         q esc   quit                                 │                     │
 ╰────────────────────╯│                                                      │─────────────────────╯
  esc close            ╰──────────────────────────────────────────────────────╯

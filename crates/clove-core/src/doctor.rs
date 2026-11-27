@@ -145,7 +145,7 @@ fn storage() -> Vec<Check> {
 
 pub fn machine() -> Vec<Check> {
     let mut out = storage();
-    match run(Command::new("git").arg("--version")) {
+    match run(Command::new(crate::git::bin()).arg("--version")) {
         Ok(v) => {
             let ver = v.trim_start_matches("git version ").to_string();
             let ok = ver
@@ -199,6 +199,32 @@ fn agents() -> Option<Check> {
             fix,
         ),
     })
+}
+
+/// The clone `new` claims, mounted ahead of time.
+fn spare(c: &Clove) -> Option<Check> {
+    use crate::spare::SpareState::*;
+    let (level, detail, fix) = match c.spare_state() {
+        Off => return None,
+        Ready(g) => (Level::Ok, format!("mounted, gen {g}"), None),
+        Filling => (Level::Ok, "being made".to_string(), None),
+        Missing => (
+            Level::Ok,
+            "none yet; the next new mounts its own and makes one".to_string(),
+            Some("clove spare".into()),
+        ),
+        Stale(why) => (
+            Level::Warn,
+            format!("unusable: {why}"),
+            Some("clove spare".into()),
+        ),
+        Unsupported(why) => (
+            Level::Warn,
+            format!("off on this machine: {why}"),
+            Some("clove spare (tries again), or clove config set spare false".into()),
+        ),
+    };
+    Some(check("spare clone", level, detail, fix))
 }
 
 pub fn repo(c: &Clove) -> Vec<Check> {
@@ -351,6 +377,7 @@ pub fn repo(c: &Clove) -> Vec<Check> {
                     None,
                 ));
             }
+            out.extend(spare(c));
         }
         Ok(None) => out.push(check(
             "golden",

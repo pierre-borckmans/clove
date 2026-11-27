@@ -174,8 +174,18 @@ pub fn start_op(app: AppHandle, op: OpRequest) -> CmdResult<String> {
 /// Runs one operation to completion on the calling thread.
 pub fn run(op: &OpRequest, r: &dyn clove_core::Reporter) -> anyhow::Result<serde_json::Value> {
     Ok(match op {
-        OpRequest::Init { root } => serde_json::to_value(Clove::discover(root)?.init(r)?)?,
-        OpRequest::Refresh { root } => serde_json::to_value(Clove::open(root)?.refresh(r)?)?,
+        OpRequest::Init { root } => {
+            let c = Clove::discover(root)?;
+            let meta = c.init(r)?;
+            c.spawn_spare_fill();
+            serde_json::to_value(meta)?
+        }
+        OpRequest::Refresh { root } => {
+            let c = Clove::open(root)?;
+            let meta = c.refresh(r)?;
+            c.spawn_spare_fill();
+            serde_json::to_value(meta)?
+        }
         OpRequest::New {
             root,
             branch,
@@ -192,7 +202,10 @@ pub fn run(op: &OpRequest, r: &dyn clove_core::Reporter) -> anyhow::Result<serde
                 no_setup: *no_setup,
                 fetch: None,
             };
-            serde_json::to_value(Clove::open(root)?.new_clone(&opts, r)?)?
+            let c = Clove::open(root)?;
+            let info = c.new_clone(&opts, r)?;
+            c.spawn_spare_fill();
+            serde_json::to_value(info)?
         }
         OpRequest::Remove {
             root,

@@ -1,7 +1,8 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { CircleCheck, FilePen, FilePlus, Laptop, RotateCcw, TriangleAlert } from "lucide-react";
+import { CircleCheck, FilePen, FilePlus, Laptop, Monitor, Moon, RotateCcw, Sun, TriangleAlert } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { PaneHeader } from "@/components/app-shell";
+import { Shortcut } from "@/components/shortcut";
 import { RepoMark } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { tildify } from "@/lib/format";
 import { isMac, THIS_MACHINE } from "@/lib/platform";
+import { type Prefs, setPrefs, usePrefs } from "@/lib/prefs";
 import {
   editConfig,
   useAgents,
@@ -108,12 +110,50 @@ function MachineSection({ stateHome }: { stateHome?: string }) {
           </span>
         </div>
       </Row>
+      <AppearanceRow />
       <AgentsRow />
       <ShellRow />
       <Row label="State folder">
         <Mono>{stateHome ? tildify(stateHome) : "…"}</Mono>
       </Row>
     </Section>
+  );
+}
+
+function AppearanceRow() {
+  const appearance = usePrefs().appearance;
+  const options: [Prefs["appearance"], string, ReactNode][] = [
+    ["system", "System", <Monitor key="s" />],
+    ["light", "Light", <Sun key="l" />],
+    ["dark", "Dark", <Moon key="d" />],
+  ];
+  return (
+    <Row label="Appearance">
+      <div className="flex items-center gap-3">
+        <div className="flex h-7 items-center rounded-md border bg-muted/50 p-0.5 text-[12.5px]">
+          {options.map(([v, label, icon]) => (
+            <button
+              key={v}
+              type="button"
+              aria-pressed={v === appearance}
+              onClick={() => setPrefs({ appearance: v })}
+              className={cn(
+                "flex h-full items-center gap-1.5 rounded-[5px] px-2.5 transition-colors [&_svg]:size-3.5",
+                v === appearance
+                  ? "bg-background text-foreground shadow-xs"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {icon}
+              {label}
+            </button>
+          ))}
+        </div>
+        <span className="flex items-center gap-1.5 text-[12px] text-faint">
+          <Shortcut keys="mod+shift+l" /> cycles it from anywhere
+        </span>
+      </div>
+    </Row>
   );
 }
 

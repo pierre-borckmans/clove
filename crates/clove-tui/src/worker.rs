@@ -100,6 +100,8 @@ fn repo_data(root: &Path, git_status: bool) -> Result<Box<RepoData>, String> {
         fields: clove_core::settings::fields(&c.root, &c.name, &c.config).unwrap_or_default(),
         config: c.config.clone(),
         history: c.history().into_iter().take(200).collect(),
+        created: c.created(),
+        golden_builds: c.golden_builds(),
         prs,
         watch: {
             let mut t = c.watch_targets();
@@ -118,6 +120,33 @@ pub fn check_prs(tx: Sender<Msg>, root: PathBuf) {
             c.merge_checks(false).map_err(|e| format!("{e:#}"))
         });
         let _ = tx.send(Msg::PrsChecked);
+    });
+}
+
+/// The latest release: from the hourly cache unless `force`.
+pub fn check_upgrade(tx: Sender<Msg>, force: bool) {
+    std::thread::spawn(move || {
+        if let Ok(status) = guarded(|| Ok(clove_core::upgrade::check(force))) {
+            let _ = tx.send(Msg::Upgrade {
+                status: Box::new(status),
+                forced: force,
+            });
+        }
+    });
+}
+
+/// Reads a clone's changes, parses them, and starts highlighting.
+pub fn load_diff(tx: Sender<Msg>, root: PathBuf, name: String) {
+    std::thread::spawn(move || {
+        let result = clove_core::Clove::open(&root)
+            .and_then(|c| c.diff(&name))
+            .map(|d| {
+                let data = std::sync::Arc::new(crate::diffview::DiffData::new(d));
+                let hl = crate::diffview::highlight(data.clone(), tx.clone());
+                (data, hl)
+            })
+            .map_err(|e| format!("{e:#}"));
+        let _ = tx.send(Msg::Diff { root, name, result });
     });
 }
 
@@ -204,6 +233,11 @@ fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Res
             .map(|(p, changed)| Outcome::ShellInstalled(p, changed))
             .map_err(e);
     }
+    if let Task::Upgrade = task {
+        return clove_core::upgrade::upgrade(r, &Default::default())
+            .map(Outcome::Upgraded)
+            .map_err(e);
+    }
     if let Task::Doctor = task {
         let mut checks = clove_core::doctor::machine();
         if let Some(root) = root
@@ -216,9 +250,21 @@ fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Res
     let root = root.ok_or("no repository")?;
     let c = Clove::open(root).map_err(e)?;
     match task {
-        Task::Init => c.init(r).map(Outcome::Golden).map_err(e),
-        Task::Refresh => c.refresh(r).map(Outcome::Golden).map_err(e),
-        Task::New(opts) => c.new_clone(&opts, r).map(Outcome::Clone).map_err(e),
+        Task::Init => c
+            .init(r)
+            .inspect(|_| c.spawn_spare_fill())
+            .map(Outcome::Golden)
+            .map_err(e),
+        Task::Refresh => c
+            .refresh(r)
+            .inspect(|_| c.spawn_spare_fill())
+            .map(Outcome::Golden)
+            .map_err(e),
+        Task::New(opts) => c
+            .new_clone(&opts, r)
+            .inspect(|_| c.spawn_spare_fill())
+            .map(Outcome::Clone)
+            .map_err(e),
         Task::Remove { name, opts } => match c.remove_or_defer(&name, &opts, r).map_err(e)? {
             clove_core::Removal::Removed => Ok(Outcome::Removed),
             clove_core::Removal::WhenFree(users) => {
@@ -258,7 +304,7 @@ fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Res
         .map_err(e),
         Task::Unmount { name } => c.unmount(&name, false).map(|_| Outcome::Unmounted).map_err(e),
         Task::Gc { apply } => c.cleanup(apply, r).map(Outcome::Gc).map_err(e),
-        Task::Doctor | Task::Service { .. } | Task::Agents { .. } | Task::ShellInstall => {
+        Task::Doctor | Task::Service { .. } | Task::Agents { .. } | Task::ShellInstall | Task::Upgrade => {
             unreachable!("handled above")
         }
     }

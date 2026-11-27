@@ -1,6 +1,5 @@
 ---
 source: crates/clove-tui/src/tests.rs
-assertion_line: 1340
 expression: s
 ---
 ╭ clove ───────────────────────────────────────────────────────────────────────────────────────────╮
@@ -26,4 +25,4 @@ expression: s
 │ D doctor           ││ ○ task-24  agent/task-24  unmounted      3h     14M  …pp.clove/task-24/app │
 │ S service          ││ ● task-25  agent/task-25  ↑1             3h     14M  …pp.clove/task-25/app │
 ╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯
- ⏎ cd  n new  d remove  u unmount  U update  r refresh  o open  / filter  ? help  q quit
+ ⏎ cd  v changes  n new  d remove  u unmount  U update  r refresh  o open  ? help  q quit

@@ -12,6 +12,7 @@ pub const DETAIL_HEIGHT: u16 = 12;
 pub const JOB_STEPS_WIDTH: u16 = 38;
 /// Rows of the plain-worktrees panel under the clones: borders, header, five rows.
 pub const WORKTREES_HEIGHT: u16 = 8;
+pub const DIFF_FILES_WIDTH: u16 = 34;
 
 /// Pane indices in each split.
 pub const SIDEBAR: usize = 0;
@@ -19,6 +20,7 @@ pub const DETAIL: usize = 2;
 pub const STACK_DETAIL: usize = 1;
 pub const JOB_STEPS: usize = 0;
 pub const WORKTREES: usize = 1;
+pub const DIFF_FILES: usize = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitId {
@@ -30,6 +32,8 @@ pub enum SplitId {
     Job,
     /// clones over plain git worktrees
     Worktrees,
+    /// file list | diff, in the diff view
+    Diff,
 }
 
 #[derive(Clone, Debug)]
@@ -38,6 +42,7 @@ pub struct Panes {
     pub stack: Split,
     pub job: Split,
     pub worktrees: Split,
+    pub diff: Split,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -79,6 +84,13 @@ impl Default for Panes {
                     Pane::sized(WORKTREES_HEIGHT, Extent::Cells(4), Extent::Frac(0.7)),
                 ],
             ),
+            diff: Split::new(
+                Direction::Horizontal,
+                vec![
+                    Pane::sized(DIFF_FILES_WIDTH, Extent::Cells(20), Extent::Frac(0.6)),
+                    Pane::fill(Extent::Cells(40)),
+                ],
+            ),
         }
     }
 }
@@ -90,6 +102,7 @@ impl Panes {
             SplitId::Stack => &self.stack,
             SplitId::Job => &self.job,
             SplitId::Worktrees => &self.worktrees,
+            SplitId::Diff => &self.diff,
         }
     }
 
@@ -99,15 +112,17 @@ impl Panes {
             SplitId::Stack => &mut self.stack,
             SplitId::Job => &mut self.job,
             SplitId::Worktrees => &mut self.worktrees,
+            SplitId::Diff => &mut self.diff,
         }
     }
 
-    fn named(&mut self) -> [(&'static str, &mut Split); 4] {
+    fn named(&mut self) -> [(&'static str, &mut Split); 5] {
         [
             ("body", &mut self.body),
             ("stack", &mut self.stack),
             ("job", &mut self.job),
             ("worktrees", &mut self.worktrees),
+            ("diff", &mut self.diff),
         ]
     }
 

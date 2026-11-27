@@ -619,7 +619,7 @@ mod tests {
     use std::process::Command;
 
     fn git(dir: &Path, args: &[&str]) -> String {
-        let out = Command::new("git")
+        let out = Command::new(crate::git::bin())
             .arg("-C")
             .arg(dir)
             .args(args)
@@ -1033,6 +1033,7 @@ mod tests {
                     issue: None,
                     removing_when_free: false,
                     operation: None,
+                    status_pending: false,
                 })
             })
             .unwrap();
@@ -1072,6 +1073,7 @@ mod tests {
             issue: None,
             removing_when_free: false,
             operation: None,
+            status_pending: false,
         }
     }
 

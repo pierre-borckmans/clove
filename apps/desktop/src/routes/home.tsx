@@ -5,11 +5,12 @@ import { Empty } from "@/components/empty";
 import { Glyph } from "@/components/glyph";
 import { Shortcut } from "@/components/shortcut";
 import { Button } from "@/components/ui/button";
-import { useRepos } from "@/lib/queries";
+import { useRepoList } from "@/lib/queries";
 import { setUi } from "@/lib/ui";
 
 export function HomePage() {
-  const { data: repos, isLoading, error } = useRepos();
+  // The quick list: the first repo opens without waiting on git.
+  const { data: repos, isLoading, error } = useRepoList();
   if (repos?.[0]) return <Navigate to="/repo/$repoId" params={{ repoId: repos[0].id }} replace />;
   return (
     <>

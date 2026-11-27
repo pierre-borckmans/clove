@@ -13,6 +13,7 @@ pub mod brand;
 pub mod candidates;
 pub mod config;
 pub mod detect;
+pub mod diff;
 pub mod doctor;
 pub mod events;
 pub mod git;
@@ -21,20 +22,25 @@ pub mod memo;
 pub mod names;
 pub mod opencode;
 pub mod ops;
+pub mod patch;
 pub mod preview;
 pub mod prune;
 pub mod repo;
 pub mod service;
 pub mod settings;
 pub mod shellrc;
+pub mod spare;
+pub mod stats;
 pub mod steps;
 pub mod update;
+pub mod upgrade;
 pub mod util;
 pub mod watch;
 pub mod worktrees;
 
 pub use candidates::RepoCandidate;
 pub use config::{Config, Exec, Step};
+pub use diff::CloneDiff;
 pub use events::{Event, Reporter, Silent, Timing};
 pub use ops::{
     BranchCandidate, Freshness, GoldenStatus, NewOptions, RefreshOptions, Removal, RemoveOptions, RepoStatus,

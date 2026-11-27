@@ -207,7 +207,7 @@ fn hover_panel(f: &mut Frame, app: &App) {
 
 // ---- building blocks -------------------------------------------------
 
-fn panel<'a>(title_spans: Vec<Span<'a>>, focus: bool) -> Block<'a> {
+pub(crate) fn panel<'a>(title_spans: Vec<Span<'a>>, focus: bool) -> Block<'a> {
     let mut t = vec![Span::raw(" ")];
     t.extend(title_spans);
     t.push(Span::raw(" "));
@@ -243,7 +243,7 @@ fn line_width(l: &Line) -> usize {
 }
 
 /// A thin scrollbar on a border column: `│` track, `┃` thumb.
-fn scrollbar(f: &mut Frame, track: Rect, offset: usize, view: usize, len: usize) {
+pub(crate) fn scrollbar(f: &mut Frame, track: Rect, offset: usize, view: usize, len: usize) {
     if len <= view || track.height == 0 {
         return;
     }
@@ -1858,7 +1858,21 @@ fn hints(app: &App) -> Vec<Hint> {
             v.push(("esc", "close", Esc));
             v
         }
-        Some(Modal::Doctor(_)) | Some(Modal::Removals(_)) => {
+        Some(Modal::Diff(_)) => {
+            let p = app.diff_prefs;
+            vec![
+                ("↑↓", "file", Down),
+                ("space", "page", Char(' ')),
+                ("⏎", "open", Enter),
+                ("s", if p.split { "unified" } else { "split" }, Char('s')),
+                ("w", if p.wrap { "no wrap" } else { "wrap" }, Char('w')),
+                ("o", if p.by_changes { "by path" } else { "by size" }, Char('o')),
+                ("g", if p.grouped { "ungroup" } else { "packages" }, Char('g')),
+                ("e", "edit", Char('e')),
+                ("esc", "back", Esc),
+            ]
+        }
+        Some(Modal::Doctor(_)) | Some(Modal::Removals(_)) | Some(Modal::Stats(_)) => {
             vec![("↑↓", "scroll", Down), ("esc", "close", Esc)]
         }
         Some(Modal::Settings(sv)) => {
@@ -1909,11 +1923,12 @@ fn hints(app: &App) -> Vec<Hint> {
                     ("/", "filter", Char('/')),
                 ]);
             } else if let Some(c) = app.selected_clone() {
-                v.extend([
-                    ("⏎", "cd", Enter),
-                    ("n", "new", Char('n')),
-                    ("d", "remove", Char('d')),
-                ]);
+                v.push(("⏎", "cd", Enter));
+                // Early in the bar, so a narrow terminal still shows it.
+                if c.mounted {
+                    v.push(("v", "changes", Char('v')));
+                }
+                v.extend([("n", "new", Char('n')), ("d", "remove", Char('d'))]);
                 v.push(if c.mounted {
                     ("u", "unmount", Char('u'))
                 } else {
@@ -1946,6 +1961,7 @@ fn hints(app: &App) -> Vec<Hint> {
                 ("s", "settings", Char('s')),
                 ("g", "cleanup", Char('g')),
                 ("L", "log", Char('L')),
+                ("t", "timings", Char('t')),
                 ("D", "doctor", Char('D')),
                 ("A", "add repo", Char('A')),
             ]);
@@ -1961,7 +1977,7 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
         [] if app.loading && app.current().is_none() => {
             Line::from(Span::styled(format!("{} loading ", spinner(app.now_ms)), muted()))
         }
-        [] => Line::from(""),
+        [] => upgrade_badge(app),
         _ if app.quitting => Line::from(vec![
             Span::styled(
                 format!("{} finishing before quit · ", spinner(app.now_ms)),
@@ -1990,7 +2006,17 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
     if sw > 0 {
         let r = Rect::new(area.right() - sw, area.y, sw, 1);
         put(f, r, status.clone());
-        let t = (!running.is_empty()).then(|| {
+        let badge = running.is_empty() && (app.upgraded_to.is_some() || app.upgrade_available().is_some());
+        let t = if badge {
+            app.hits
+                .push((r, Hit::Key(KeyCode::Char('K'), KeyModifiers::NONE)));
+            Some(match &app.upgraded_to {
+                Some(v) => Tip::new(format!("clove {v} is installed; this TUI still runs the old one")),
+                None => Tip::new("upgrade clove with Homebrew, then restart the service").note("K upgrades"),
+            })
+        } else if running.is_empty() {
+            None
+        } else {
             let jobs: Vec<String> = running
                 .iter()
                 .map(|j| match j.current_step() {
@@ -1998,8 +2024,8 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
                     None => j.title(),
                 })
                 .collect();
-            Tip::new(jobs.join("\n")).note("l watches the last one")
-        });
+            Some(Tip::new(jobs.join("\n")).note("l watches the last one"))
+        };
         tip(app, r, t);
     }
 
@@ -2050,6 +2076,25 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
         app.hits.push((r, Hit::Key(code, mods)));
         tip(app, r, hint_tip(k, label).map(Tip::new));
         x += w + 2;
+    }
+}
+
+/// Right of the footer when nothing runs: a newer clove, or one installed
+/// that this process isn't running yet.
+fn upgrade_badge(app: &App) -> Line<'static> {
+    if let Some(v) = &app.upgraded_to {
+        return Line::from(Span::styled(
+            format!("clove {v} installed · restart to use it "),
+            fg(AMBER),
+        ));
+    }
+    match app.upgrade_available() {
+        Some(v) => Line::from(vec![
+            Span::styled(format!("↑ clove {v} "), fg(BOTTLE)),
+            Span::styled("K", key()),
+            Span::styled(" upgrade ", muted()),
+        ]),
+        None => Line::from(""),
     }
 }
 
@@ -2161,7 +2206,15 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect, list: Rect) {
         Modal::Gc(g) => draw_gc(f, app, area, &g),
         Modal::Doctor(d) => draw_doctor(f, app, area, d),
         Modal::Removals(v) => draw_removals(f, app, area, v),
+        Modal::Stats(v) => draw_stats(f, app, area, v),
         Modal::Settings(v) => draw_settings(f, app, area, v),
+        Modal::Diff(mut v) => {
+            crate::diffview::draw(f, app, area, &mut v);
+            // Drawing settles scroll and rows: keep them for the next frame.
+            if matches!(app.modal, Some(Modal::Diff(_))) {
+                app.modal = Some(Modal::Diff(v));
+            }
+        }
         Modal::Job(id) => draw_job(f, app, area, id),
         Modal::AddRepo(v) => crate::add_repo::draw(f, app, area, &v),
     }
@@ -2352,6 +2405,8 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
                 ("m / u", "mount / unmount"),
                 ("U / X", "update to latest base / abort"),
                 ("o", "open in $EDITOR"),
+                ("v", "see its changes (diff)"),
+                ("t", "how fast clones come (timings)"),
                 ("c", "make a plain git worktree a clone"),
                 ("/", "filter by name or branch"),
                 ("↑↓ jk", "move · wheel scrolls"),
@@ -2374,6 +2429,7 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
                 ("g", "cleanup: merged clones/worktrees"),
                 ("L", "log: what clove removed, and why"),
                 ("D", "doctor"),
+                ("K", "check for a new clove / upgrade"),
                 ("ctrl-r", "reload now"),
                 ("q esc", "quit"),
             ],
@@ -3454,6 +3510,178 @@ fn draw_removals(f: &mut Frame, app: &mut App, area: Rect, v: RemovalsView) {
         rv.scroll = scroll;
     }
     tips.place(&lines, inner, off, &mut app.tips);
+    let visible: Vec<Line> = lines.into_iter().skip(off).take(view).collect();
+    f.render_widget(Paragraph::new(visible), inner);
+    app.hits.push((rect, Hit::ScrollRemovals));
+    scrollbar(
+        f,
+        Rect::new(rect.right() - 1, inner.y, 1, inner.height),
+        off,
+        view,
+        len,
+    );
+}
+
+/// `clove stats` in the TUI: how long clones take, where the time goes,
+/// and the recent creations.
+fn draw_stats(f: &mut Frame, app: &mut App, area: Rect, v: RemovalsView) {
+    use clove_core::stats::{FAST_MS, RERAN_MS};
+    let w = 100.min(area.width.saturating_sub(4));
+    let iw = w.saturating_sub(6) as usize;
+    let secs = |ms: f64| {
+        if ms < 1000.0 {
+            format!("{:.2}s", ms / 1000.0)
+        } else if ms < 60_000.0 {
+            format!("{:.1}s", ms / 1000.0)
+        } else {
+            format!(
+                "{}m{:02}s",
+                (ms / 60_000.0) as u64,
+                ((ms % 60_000.0) / 1000.0) as u64
+            )
+        }
+    };
+    let (created, golden) = app
+        .current()
+        .map(|d| (d.created.clone(), d.golden_builds.clone()))
+        .unwrap_or_default();
+    let s = clove_core::stats::stats(&created, &golden);
+    let mut lines: Vec<Line> = vec![];
+    if s.clones == 0 {
+        lines.push(Line::from(Span::styled(
+            "no clones made yet. Each new clone's timings land here.",
+            muted(),
+        )));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{} clone{}", s.clones, if s.clones == 1 { "" } else { "s" }),
+                bold(),
+            ),
+            Span::styled("  median ", muted()),
+            Span::styled(secs(s.median_ms), bold()),
+            Span::styled("  p90 ", muted()),
+            Span::raw(secs(s.p90_ms)),
+            Span::styled(
+                format!("  ·  {} of {} under {}", s.fast, s.clones, secs(FAST_MS)),
+                muted(),
+            ),
+        ]));
+        if let Some(m) = s.clean_median_ms {
+            lines.push(Line::from(vec![
+                Span::styled("clove itself  ", fg(SAGE)),
+                Span::styled(secs(m), bold()),
+                Span::styled(" median when no setup step had to rerun", muted()),
+            ]));
+        }
+        if s.reran > 0 {
+            lines.push(Line::from(vec![
+                Span::styled("setup reran   ", fg(AMBER)),
+                Span::raw(format!("{} of {}", s.reran, s.clones)),
+                Span::styled(
+                    format!(
+                        " (over {}): the branch changed what the golden image set up",
+                        secs(RERAN_MS)
+                    ),
+                    muted(),
+                ),
+            ]));
+        }
+        if let Some(g) = s.golden_median_ms {
+            lines.push(Line::from(vec![
+                Span::styled("golden        ", muted()),
+                Span::raw(format!(
+                    "{} build{} · median {}",
+                    s.golden_builds,
+                    if s.golden_builds == 1 { "" } else { "s" },
+                    secs(g)
+                )),
+            ]));
+        }
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            "WHERE THE TIME GOES  median when the step ran",
+            muted(),
+        )));
+        // On the scale of a clone that reran nothing; reruns overflow with ▸.
+        let scale = s.clean_median_ms.unwrap_or(s.median_ms).max(1.0);
+        let nw = s.steps.iter().map(|x| width(&x.step)).max().unwrap_or(4);
+        let bar_w = iw.saturating_sub(nw + 24).clamp(8, 30);
+        for x in s.steps.iter().filter(|x| x.max_ms >= 5.0) {
+            let cells = ((x.median_ms / scale) * bar_w as f64).round().max(1.0) as usize;
+            let bar = if cells > bar_w {
+                format!("{}▸", "█".repeat(bar_w))
+            } else {
+                "█".repeat(cells)
+            };
+            let mut l = vec![
+                Span::raw(format!("{:<nw$}  ", x.step)),
+                Span::styled(format!("{:>6}  ", secs(x.median_ms)), bold()),
+                Span::styled(
+                    bar,
+                    fg(if x.step.starts_with("setup ") {
+                        AMBER
+                    } else {
+                        BOTTLE
+                    }),
+                ),
+            ];
+            if x.runs < s.clones {
+                l.push(Span::styled(format!("  in {} of {}", x.runs, s.clones), muted()));
+            }
+            lines.push(Line::from(l));
+        }
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{:<9}{:<26}{:>8}{:>8}{:>10}{:>9}",
+                "WHEN", "RECENT", "TOTAL", "MOUNT", "CHECKOUT", "SETUP"
+            ),
+            muted(),
+        )));
+        for e in &created {
+            let step = |n: &str| {
+                e.timings
+                    .iter()
+                    .find(|t| t.step == n)
+                    .map(|t| secs(t.ms))
+                    .unwrap_or_else(|| "–".into())
+            };
+            let when = clove_core::history::ago(app.now_unix.saturating_sub(e.at));
+            let total_c = if e.total_ms < FAST_MS {
+                SAGE
+            } else if e.reran() {
+                AMBER
+            } else {
+                RED
+            };
+            let (name, _) = cut(&e.name, 24);
+            lines.push(Line::from(vec![
+                Span::styled(format!("{:<9}", when), muted()),
+                Span::styled(format!("{:<26}", name), bold()),
+                Span::styled(format!("{:>8}", secs(e.total_ms)), fg(total_c)),
+                Span::raw(format!("{:>8}{:>10}", step("mount"), step("checkout"))),
+                Span::styled(
+                    format!("{:>9}", secs(e.setup_ms())),
+                    if e.reran() { fg(AMBER) } else { Style::new() },
+                ),
+            ]));
+        }
+    }
+    let h = (lines.len() as u16 + 4).min(area.height.saturating_sub(2));
+    let rect = centered(area, w, h);
+    open_modal(f, &mut app.hits, area, rect);
+    let block = modal_block(vec![Span::styled("timings · clove stats", title())]);
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    let view = inner.height as usize;
+    let len = lines.len();
+    let mut scroll = v.scroll;
+    scroll.clamp(view, len);
+    let off = scroll.offset().min(len.saturating_sub(view));
+    if let Some(Modal::Stats(sv)) = &mut app.modal {
+        sv.scroll = scroll;
+    }
     let visible: Vec<Line> = lines.into_iter().skip(off).take(view).collect();
     f.render_widget(Paragraph::new(visible), inner);
     app.hits.push((rect, Hit::ScrollRemovals));

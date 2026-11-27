@@ -34,6 +34,10 @@ pub struct RepoData {
     pub fields: Vec<clove_core::settings::FieldState>,
     /// Recent removals, newest first (`clove log`).
     pub history: Vec<clove_core::history::Removed>,
+    /// Clone creations with their timings, newest first (`clove stats`).
+    pub created: Vec<clove_core::stats::Created>,
+    /// Golden image builds, newest first.
+    pub golden_builds: Vec<clove_core::stats::GoldenBuild>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +105,8 @@ pub enum Task {
     },
     /// Add the shell integration line to the user's rc file.
     ShellInstall,
+    /// `clove upgrade`: Homebrew upgrade of clove (and the app), service restart.
+    Upgrade,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +141,7 @@ pub enum Outcome {
     Updated(Option<clove_core::update::Update>),
     /// The rc file that now loads the integration, and whether it changed.
     ShellInstalled(PathBuf, bool),
+    Upgraded(clove_core::upgrade::Upgraded),
 }
 
 pub use clove_core::Cleanup;
@@ -163,12 +170,31 @@ pub enum Msg {
     Preview(Box<RepoData>),
     Event(u64, clove_core::Event),
     Done(u64, Result<Outcome, String>),
+    /// A clone's diff, read and parsed; highlighting continues in the background.
+    Diff {
+        root: PathBuf,
+        name: String,
+        result: Result<
+            (
+                std::sync::Arc<crate::diffview::DiffData>,
+                std::sync::Arc<crate::diffview::Highlights>,
+            ),
+            String,
+        >,
+    },
+    /// Another file of an open diff got its syntax colours.
+    DiffHighlighted,
     /// Git repos clove could start managing (add-repo dialog).
     ReposFound(Vec<clove_core::RepoCandidate>),
     /// What `init` would do for a path (add-repo dialog).
     InitPreview {
         path: PathBuf,
         result: Result<clove_core::InitPreview, String>,
+    },
+    /// The latest release, asked for when `forced`, else maybe from the cache.
+    Upgrade {
+        status: Box<clove_core::upgrade::Status>,
+        forced: bool,
     },
 }
 
@@ -316,6 +342,7 @@ impl Job {
             Task::Agents { install: true } => "teach coding agents clove".into(),
             Task::Agents { install: false } => "remove clove from agent instructions".into(),
             Task::ShellInstall => "install shell integration".into(),
+            Task::Upgrade => "upgrade clove".into(),
         }
     }
 
@@ -363,7 +390,7 @@ impl Job {
     pub fn has_progress(&self) -> bool {
         matches!(
             self.task,
-            Task::Init | Task::Refresh | Task::New(_) | Task::Adopt { .. }
+            Task::Init | Task::Refresh | Task::New(_) | Task::Adopt { .. } | Task::Upgrade
         )
     }
 
@@ -654,12 +681,16 @@ pub enum Modal {
     Help,
     ResolveOffer(ResolveOffer),
     Removals(RemovalsView),
+    /// How fast clones come (`clove stats`); scrolls like the removals.
+    Stats(RemovalsView),
     New(NewForm),
     Remove(RemoveForm),
     Adopt(AdoptForm),
     Gc(GcView),
     Doctor(DoctorView),
     Settings(SettingsView),
+    /// A clone's changes against its base.
+    Diff(Box<crate::diffview::DiffView>),
     Job(u64),
     AddRepo(Box<crate::add_repo::AddRepo>),
 }
@@ -721,6 +752,10 @@ pub enum Hit {
     ScrollDoctor,
     ScrollRemovals,
     ScrollSettings,
+    ScrollDiff,
+    ScrollDiffList,
+    /// An entry of the diff view's file list.
+    DiffEntry(usize),
     /// A remove-dialog row: focus it and toggle it.
     RemoveRow(RemoveItem),
     /// A settings row: focus it.
@@ -768,6 +803,8 @@ impl Hit {
                 | Hit::ScrollDoctor
                 | Hit::ScrollRemovals
                 | Hit::ScrollSettings
+                | Hit::ScrollDiff
+                | Hit::ScrollDiffList
                 | Hit::Inert
                 | Hit::Dismiss
         )
