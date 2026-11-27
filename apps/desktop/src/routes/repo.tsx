@@ -1,9 +1,10 @@
 import { useParams } from "@tanstack/react-router";
-import { Copy, Plus } from "lucide-react";
-import { type ReactNode, useEffect } from "react";
+import { Copy, List, Network, Plus } from "lucide-react";
+import { type ReactNode, useEffect, useState } from "react";
 import { PaneHeader } from "@/components/app-shell";
 import { CloneList, CloneListSkeleton } from "@/components/clone-list";
 import { GoldenCard, GoldenCardSkeleton } from "@/components/golden-card";
+import { RepoGraph } from "@/components/repo-graph";
 import { Shortcut } from "@/components/shortcut";
 import { RepoMark } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ import { copyPath, useClones, useRepo, useStatus, useWorktrees } from "@/lib/que
 import { setUi } from "@/lib/ui";
 
 export function RepoPage() {
+  const [view, setView] = useState<"map" | "list">("map");
   const { repoId } = useParams({ from: "/shell/repo/$repoId" });
   const { repo, isLoading, data: summaries } = useRepo(repoId);
   // As many placeholder rows as the repo has clones, once `repos` knows.
@@ -73,6 +75,31 @@ export function RepoPage() {
           <Copy className="size-3 opacity-0 group-hover:opacity-70" />
         </button>
         <div data-tauri-drag-region className="h-full flex-1" />
+        <fieldset
+          className="flex shrink-0 items-center gap-0.5 rounded-md border bg-muted/50 p-0.5"
+          aria-label="Repository view"
+        >
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-pressed={view === "map"}
+            className="h-6 gap-1.5 px-2 text-[11.5px] aria-pressed:bg-card aria-pressed:shadow-sm"
+            onClick={() => setView("map")}
+          >
+            <Network className="size-3.5" />
+            Map
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-pressed={view === "list"}
+            className="h-6 gap-1.5 px-2 text-[11.5px] aria-pressed:bg-card aria-pressed:shadow-sm"
+            onClick={() => setView("list")}
+          >
+            <List className="size-3.5" />
+            List
+          </Button>
+        </fieldset>
         <Button
           size="sm"
           className="h-7 gap-1.5 pr-1.5 pl-2.5 text-[12.5px]"
@@ -83,21 +110,25 @@ export function RepoPage() {
           <Shortcut keys="mod+n" className="ml-0.5 [&_kbd]:border-white/20 [&_kbd]:bg-white/15 [&_kbd]:text-white/90" />
         </Button>
       </PaneHeader>
-      <Body
-        golden={status.data ? <GoldenCard status={status.data} /> : <GoldenCardSkeleton />}
-        clones={
-          clones.data ? (
-            <CloneList
-              root={repo.root}
-              clones={clones.data}
-              goldenGeneration={status.data?.golden?.generation ?? null}
-            />
-          ) : (
-            <CloneListSkeleton rows={rows} />
-          )
-        }
-        worktrees={worktrees.data && <WorktreeList root={repo.root} worktrees={worktrees.data} />}
-      />
+      {view === "map" && status.data && clones.data ? (
+        <RepoGraph key={repo.id} status={status.data} clones={clones.data} worktrees={worktrees.data ?? []} />
+      ) : (
+        <Body
+          golden={status.data ? <GoldenCard status={status.data} /> : <GoldenCardSkeleton />}
+          clones={
+            clones.data ? (
+              <CloneList
+                root={repo.root}
+                clones={clones.data}
+                goldenGeneration={status.data?.golden?.generation ?? null}
+              />
+            ) : (
+              <CloneListSkeleton rows={rows} />
+            )
+          }
+          worktrees={worktrees.data && <WorktreeList root={repo.root} worktrees={worktrees.data} />}
+        />
+      )}
     </>
   );
 }

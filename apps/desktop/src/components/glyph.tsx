@@ -20,3 +20,26 @@ export function Glyph({ className, mono = false }: { className?: string; mono?: 
     </svg>
   );
 }
+
+/** The individual clove from the brand mark, used for a clone's petal. */
+export function CloveGlyph({ className, angle = 0 }: { className?: string; angle?: number }) {
+  return (
+    <svg
+      viewBox="24 4 52 88"
+      className={cn("h-7 w-5", className)}
+      style={{ transform: `rotate(${angle}deg)` }}
+      aria-hidden="true"
+    >
+      <path
+        className="clove-petal-body"
+        d={CLOVE}
+        fill="currentColor"
+        fillOpacity="0.18"
+        stroke="currentColor"
+        strokeWidth="2.8"
+        strokeLinejoin="round"
+      />
+      <path d="M50 24 C46 44 46 64 50 80" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.45" />
+    </svg>
+  );
+}

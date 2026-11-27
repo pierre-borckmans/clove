@@ -232,3 +232,240 @@ html[data-shell="native"].dark {
   --diffs-bg-addition-override: var(--sage);
   --diffs-bg-buffer-override: color-mix(in oklab, var(--foreground) 3%, var(--card));
 }
+
+/* The repository map uses the same surfaces and palette as the native shell. */
+.map-viewport {
+  background-image: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--foreground) 12%, transparent) 0.7px,
+    transparent 0.8px
+  );
+  background-size: 18px 18px;
+}
+.map-edge {
+  stroke: color-mix(in oklab, var(--bottle) 28%, var(--border));
+  stroke-width: 1.4;
+  transition:
+    stroke 180ms,
+    stroke-width 180ms,
+    opacity 200ms;
+}
+.map-edge-active {
+  stroke: var(--bottle);
+  stroke-width: 2;
+}
+.map-image-symbol {
+  color: var(--bottle);
+  background: var(--card);
+  border: 1.5px solid var(--bottle);
+  box-shadow:
+    0 0 0 6px var(--background),
+    0 0 0 7px var(--bottle-soft);
+}
+.map-image-old .map-image-symbol {
+  color: var(--muted-foreground);
+  border-color: var(--border);
+  border-style: dashed;
+  box-shadow: 0 0 0 5px var(--background);
+}
+.map-clone {
+  transition: opacity 200ms;
+}
+.map-clone-symbol {
+  color: var(--bottle);
+  background: transparent;
+  transition:
+    background-color 150ms,
+    color 150ms,
+    box-shadow 150ms;
+}
+.map-clone-unmounted .map-clone-symbol {
+  border-style: dashed;
+  border-color: var(--faint-foreground);
+  color: var(--faint-foreground);
+}
+.map-clone-warning .map-clone-symbol {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+.map-clone:hover .map-clone-symbol,
+.map-clone.map-node-selected .map-clone-symbol {
+  background: var(--bottle-soft);
+  color: var(--bottle);
+  box-shadow: 0 0 0 4px var(--bottle-soft);
+}
+.map-clone-name,
+.map-clone-state {
+  background: var(--background);
+}
+.map-clone-state {
+  padding-inline: 3px;
+}
+.map-clone.map-node-selected .map-clone-name {
+  background: var(--bottle-soft);
+  color: var(--bottle);
+}
+.map-image:focus-visible,
+.map-clone:focus-visible {
+  outline: none;
+}
+.map-image:focus-visible .map-image-symbol,
+.map-clone:focus-visible .map-clone-symbol {
+  outline: 3px solid var(--ring);
+  outline-offset: 5px;
+}
+.map-node-selected.map-image .map-image-symbol {
+  background: var(--bottle-soft);
+}
+
+/* Radial image families: the current image is the core; earlier images are
+   numbered seeds on the inner orbit, with their own independent branches. */
+.map-orbit {
+  fill: none;
+  stroke: color-mix(in oklab, var(--bottle) 10%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 2 7;
+}
+.map-orbit {
+  stroke: color-mix(in oklab, var(--bottle) 18%, transparent);
+  stroke-dasharray: none;
+}
+.map-orbit-old {
+  stroke: color-mix(in oklab, var(--foreground) 15%, transparent);
+  stroke-dasharray: 2 5;
+}
+.map-edge-old {
+  stroke: color-mix(in oklab, var(--foreground) 24%, transparent);
+  stroke-dasharray: 3 4;
+}
+.map-orbit.map-orbit-focus {
+  stroke: color-mix(in oklab, var(--bottle) 45%, transparent);
+  stroke-dasharray: none;
+}
+.map-tray {
+  border: 1.5px dashed color-mix(in oklab, var(--foreground) 18%, transparent);
+  background: color-mix(in oklab, var(--muted) 55%, transparent);
+}
+.map-loose-symbol {
+  color: var(--muted-foreground);
+  background: var(--background);
+  border: 1.5px dashed color-mix(in oklab, var(--foreground) 28%, transparent);
+  transition:
+    border-color 150ms,
+    color 150ms,
+    background-color 150ms;
+}
+.map-loose-dirty .map-loose-symbol {
+  border-color: color-mix(in oklab, var(--amber) 60%, transparent);
+  color: var(--amber);
+}
+.map-loose:hover .map-loose-symbol,
+.map-loose.map-node-selected .map-loose-symbol {
+  border-style: solid;
+  border-color: var(--muted-foreground);
+  color: var(--foreground);
+  background: var(--muted);
+}
+.map-clone.map-loose .map-clone-name,
+.map-clone.map-loose .map-clone-state {
+  background: transparent;
+}
+.map-clone.map-loose.map-node-selected .map-clone-name {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.map-loose:focus-visible .map-loose-symbol {
+  outline: 3px solid var(--ring);
+  outline-offset: 5px;
+}
+.map-dim {
+  opacity: 0.28;
+}
+.map-edge-old.map-edge-active {
+  stroke: var(--muted-foreground);
+}
+.map-clone-old:not(.map-clone-warning):not(.map-clone-unmounted) .map-clone-symbol {
+  color: color-mix(in oklab, var(--bottle) 55%, var(--muted-foreground));
+}
+.map-ring-label {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  transition:
+    border-color 150ms,
+    color 150ms;
+}
+.map-ring-label:hover,
+.map-ring-label.map-node-selected {
+  border-color: color-mix(in oklab, var(--bottle) 40%, var(--border));
+  color: var(--foreground);
+}
+.map-image-current {
+  background: var(--card);
+  border: 1px solid color-mix(in oklab, var(--bottle) 38%, var(--border));
+  box-shadow:
+    0 0 0 9px var(--background),
+    0 0 0 10px var(--bottle-soft),
+    0 10px 35px color-mix(in oklab, var(--bottle) 10%, transparent);
+}
+.map-image.map-image-current .map-image-symbol,
+.map-image-current.map-node-selected .map-image-symbol {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.map-image-current.map-node-selected {
+  background: radial-gradient(circle at 50% 25%, var(--bottle-soft), var(--card) 80%);
+}
+.map-clone-label-right .map-leaf-label {
+  left: 44px;
+  top: -3px;
+  align-items: flex-start;
+  text-align: left;
+}
+.map-clone-label-left .map-leaf-label {
+  right: 44px;
+  top: -3px;
+  align-items: flex-end;
+  text-align: right;
+}
+.map-clone-label-top .map-leaf-label {
+  bottom: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  align-items: center;
+}
+.map-clone-label-bottom .map-leaf-label {
+  top: 44px;
+  left: 50%;
+  transform: translateX(-50%);
+  align-items: center;
+}
+
+.map-viewport {
+  cursor: grab;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+.map-viewport button {
+  cursor: pointer;
+}
+.map-viewport[data-hand] button {
+  cursor: grab;
+}
+.map-viewport[data-panning],
+.map-viewport[data-panning] button {
+  cursor: grabbing;
+}
+.map-clone-unmounted .clove-petal-body {
+  fill-opacity: 0.04;
+  stroke-dasharray: 4 3;
+}
+.map-node-selected .clove-petal-body {
+  fill-opacity: 0.45;
+}

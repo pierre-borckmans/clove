@@ -14,8 +14,16 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const shots = {
   repo: async (p) => {
     await p.goto(`${base}/?theme=${p.theme}${MONO}`);
+    await p.getByRole("button", { name: "List", exact: true }).click();
     await p.waitForSelector("text=Golden image");
     await wait(400);
+  },
+  map: async (p) => {
+    await p.goto(`${base}/?theme=${p.theme}${MONO}`);
+    await p.getByRole("button", { name: "Clone feat-onboarding-checklist", exact: true }).waitFor();
+    await p.getByRole("button", { name: "Fit map", exact: true }).click();
+    await p.getByRole("button", { name: "Clone feat-onboarding-checklist", exact: true }).click();
+    await wait(300);
   },
   diff: async (p) => {
     await p.goto(`${base}/?theme=${p.theme}${MONO}/diff/feat-onboarding-checklist`);
@@ -63,6 +71,7 @@ const shots = {
   },
   empty: async (p) => {
     await p.goto(`${base}/?theme=${p.theme}#/repo/site-0b7e55a1`);
+    await p.getByRole("button", { name: "List", exact: true }).click();
     await p.waitForSelector("text=No clones yet");
     await wait(300);
   },
