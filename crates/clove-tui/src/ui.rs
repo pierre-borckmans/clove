@@ -1977,7 +1977,7 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
         [] if app.loading && app.current().is_none() => {
             Line::from(Span::styled(format!("{} loading ", spinner(app.now_ms)), muted()))
         }
-        [] => Line::from(""),
+        [] => upgrade_badge(app),
         _ if app.quitting => Line::from(vec![
             Span::styled(
                 format!("{} finishing before quit · ", spinner(app.now_ms)),
@@ -2006,7 +2006,17 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
     if sw > 0 {
         let r = Rect::new(area.right() - sw, area.y, sw, 1);
         put(f, r, status.clone());
-        let t = (!running.is_empty()).then(|| {
+        let badge = running.is_empty() && (app.upgraded_to.is_some() || app.upgrade_available().is_some());
+        let t = if badge {
+            app.hits
+                .push((r, Hit::Key(KeyCode::Char('K'), KeyModifiers::NONE)));
+            Some(match &app.upgraded_to {
+                Some(v) => Tip::new(format!("clove {v} is installed; this TUI still runs the old one")),
+                None => Tip::new("upgrade clove with Homebrew, then restart the service").note("K upgrades"),
+            })
+        } else if running.is_empty() {
+            None
+        } else {
             let jobs: Vec<String> = running
                 .iter()
                 .map(|j| match j.current_step() {
@@ -2014,8 +2024,8 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
                     None => j.title(),
                 })
                 .collect();
-            Tip::new(jobs.join("\n")).note("l watches the last one")
-        });
+            Some(Tip::new(jobs.join("\n")).note("l watches the last one"))
+        };
         tip(app, r, t);
     }
 
@@ -2066,6 +2076,25 @@ fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
         app.hits.push((r, Hit::Key(code, mods)));
         tip(app, r, hint_tip(k, label).map(Tip::new));
         x += w + 2;
+    }
+}
+
+/// Right of the footer when nothing runs: a newer clove, or one installed
+/// that this process isn't running yet.
+fn upgrade_badge(app: &App) -> Line<'static> {
+    if let Some(v) = &app.upgraded_to {
+        return Line::from(Span::styled(
+            format!("clove {v} installed · restart to use it "),
+            fg(AMBER),
+        ));
+    }
+    match app.upgrade_available() {
+        Some(v) => Line::from(vec![
+            Span::styled(format!("↑ clove {v} "), fg(BOTTLE)),
+            Span::styled("K", key()),
+            Span::styled(" upgrade ", muted()),
+        ]),
+        None => Line::from(""),
     }
 }
 
@@ -2400,6 +2429,7 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
                 ("g", "cleanup: merged clones/worktrees"),
                 ("L", "log: what clove removed, and why"),
                 ("D", "doctor"),
+                ("K", "check for a new clove / upgrade"),
                 ("ctrl-r", "reload now"),
                 ("q esc", "quit"),
             ],

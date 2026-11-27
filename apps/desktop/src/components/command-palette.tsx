@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import {
   Activity,
   ArrowLeft,
+  ArrowUpCircle,
   BrushCleaning,
   Check,
   Code,
@@ -40,6 +41,7 @@ import {
   copyPath,
   keys,
   openIn,
+  useCheckUpgradeNow,
   useInstalledApps,
   useMountToggle,
   useRepos,
@@ -127,6 +129,7 @@ function RootPage({ go, close }: { go: (p: Page) => void; close: () => void }) {
   const prefs = usePrefs();
   const { data: serviceOn } = useService();
   const service = useServiceToggle();
+  const { mutate: checkUpgrade } = useCheckUpgradeNow();
   const clones = useQueries({
     queries: repos.map((r) => ({
       queryKey: keys.clones(r.root),
@@ -155,6 +158,9 @@ function RootPage({ go, close }: { go: (p: Page) => void; close: () => void }) {
         </CommandItem>
         <CommandItem onSelect={run(() => void navigate({ to: "/doctor" }))}>
           <Stethoscope /> Run doctor
+        </CommandItem>
+        <CommandItem value="check for updates upgrade new version release" onSelect={run(() => checkUpgrade())}>
+          <ArrowUpCircle /> Check for updates…
         </CommandItem>
         <CommandItem
           value="settings config preferences"

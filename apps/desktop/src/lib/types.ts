@@ -395,3 +395,27 @@ export type GoldenBuild = {
 };
 
 export type RepoStats = { repo: string; root: string; stats: Stats; created: Created[]; golden_builds: GoldenBuild[] };
+
+export type InstallSource = "brew" | "manual";
+
+/** A GitHub release (`clove_core::upgrade::Release`). */
+export type Release = { version: string; url: string; notes: string; published_at: string | null };
+
+/** Where clove stands against its latest release (`upgrade::UpgradeState`). */
+export type UpgradeState = {
+  /** The running app's version. */
+  current: string;
+  latest: Release | null;
+  available: boolean;
+  checked_at: number;
+  /** Why the last check failed. */
+  error: string | null;
+  /** Why the last upgrade failed (shown once after the app reopens). */
+  upgrade_error: string | null;
+  cli: InstallSource;
+  cli_path: string | null;
+  cli_version: string | null;
+  app_source: InstallSource;
+  /** A newer app is installed on disk than the one running. */
+  restart_to: string | null;
+};

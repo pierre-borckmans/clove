@@ -105,6 +105,8 @@ pub enum Task {
     },
     /// Add the shell integration line to the user's rc file.
     ShellInstall,
+    /// `clove upgrade`: Homebrew upgrade of clove (and the app), service restart.
+    Upgrade,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +141,7 @@ pub enum Outcome {
     Updated(Option<clove_core::update::Update>),
     /// The rc file that now loads the integration, and whether it changed.
     ShellInstalled(PathBuf, bool),
+    Upgraded(clove_core::upgrade::Upgraded),
 }
 
 pub use clove_core::Cleanup;
@@ -187,6 +190,11 @@ pub enum Msg {
     InitPreview {
         path: PathBuf,
         result: Result<clove_core::InitPreview, String>,
+    },
+    /// The latest release, asked for when `forced`, else maybe from the cache.
+    Upgrade {
+        status: Box<clove_core::upgrade::Status>,
+        forced: bool,
     },
 }
 
@@ -334,6 +342,7 @@ impl Job {
             Task::Agents { install: true } => "teach coding agents clove".into(),
             Task::Agents { install: false } => "remove clove from agent instructions".into(),
             Task::ShellInstall => "install shell integration".into(),
+            Task::Upgrade => "upgrade clove".into(),
         }
     }
 
@@ -381,7 +390,7 @@ impl Job {
     pub fn has_progress(&self) -> bool {
         matches!(
             self.task,
-            Task::Init | Task::Refresh | Task::New(_) | Task::Adopt { .. }
+            Task::Init | Task::Refresh | Task::New(_) | Task::Adopt { .. } | Task::Upgrade
         )
     }
 

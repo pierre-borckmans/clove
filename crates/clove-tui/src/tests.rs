@@ -2519,3 +2519,76 @@ fn timings_view() {
     key(&mut app, KeyCode::Esc);
     assert!(app.modal.is_none());
 }
+
+fn upgrade_status(latest: &str, current: &str) -> Box<clove_core::upgrade::Status> {
+    Box::new(clove_core::upgrade::Status {
+        current: current.into(),
+        available: clove_core::upgrade::newer(latest, current),
+        latest: Some(clove_core::upgrade::Release {
+            version: latest.into(),
+            url: String::new(),
+            notes: String::new(),
+            published_at: None,
+        }),
+        checked_at: NOW,
+        error: None,
+        upgrade_error: None,
+        cli: clove_core::upgrade::Source::Brew,
+        cli_path: None,
+    })
+}
+
+#[test]
+fn a_newer_clove_shows_in_the_footer_and_k_upgrades() {
+    let mut a = app();
+    let (s, _) = render(&mut a, 120, 32);
+    assert!(!s.contains("upgrade"), "no badge before a check");
+    // K with nothing known asks GitHub now.
+    assert!(matches!(
+        key(&mut a, KeyCode::Char('K')).as_slice(),
+        [Effect::CheckUpgrade { force: true }]
+    ));
+    a.on_msg(Msg::Upgrade {
+        status: upgrade_status("0.9.0", "0.1.0"),
+        forced: true,
+    });
+    let (s, _) = render(&mut a, 120, 32);
+    let footer = s.lines().last().unwrap();
+    assert!(footer.contains("↑ clove 0.9.0 K upgrade"), "{footer}");
+    // Clicking the badge is K: it starts the upgrade job with its progress view.
+    let (x, y) = find(&s, "↑ clove 0.9.0");
+    let fx = click(&mut a, x, y);
+    assert!(matches!(fx.as_slice(), [Effect::Spawn { root: Some(_), .. }]));
+    assert!(matches!(a.modal, Some(Modal::Job(_))));
+    let id = a.jobs.last().unwrap().id;
+    a.on_msg(Msg::Done(
+        id,
+        Ok(Outcome::Upgraded(clove_core::upgrade::Upgraded {
+            from: "0.1.0".into(),
+            to: Some("0.9.0".into()),
+            app: false,
+        })),
+    ));
+    a.modal = None;
+    let (s, _) = render(&mut a, 120, 32);
+    assert!(
+        s.lines()
+            .last()
+            .unwrap()
+            .contains("clove 0.9.0 installed · restart to use it")
+    );
+    // Once installed, K doesn't upgrade again.
+    assert!(key(&mut a, KeyCode::Char('K')).is_empty());
+}
+
+#[test]
+fn an_up_to_date_check_says_so() {
+    let mut a = app();
+    a.on_msg(Msg::Upgrade {
+        status: upgrade_status("0.1.0", "0.1.0"),
+        forced: true,
+    });
+    assert!(a.toasts.iter().any(|t| t.text == "clove 0.1.0 is up to date"));
+    let (s, _) = render(&mut a, 120, 32);
+    assert!(!s.contains("upgrade"));
+}

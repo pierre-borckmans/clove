@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Outlet, useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { Toaster } from "@/components/ui/sonner";
@@ -5,7 +6,7 @@ import { useHotkey } from "@/hooks/use-hotkey";
 import { cycleAppearance } from "@/hooks/use-theme";
 import { listen } from "@/lib/bridge";
 import { setPrefs, usePrefs } from "@/lib/prefs";
-import { useAutoPruneToasts, useRepoChanges, useRepoList } from "@/lib/queries";
+import { keys, useAutoPruneToasts, useCheckUpgradeNow, useRepoChanges, useRepoList, useUpgrade } from "@/lib/queries";
 import { getUi, setUi } from "@/lib/ui";
 import { AddRepoDialog } from "./add-repo-dialog";
 import { CommandPalette } from "./command-palette";
@@ -14,12 +15,14 @@ import { OpsPanel } from "./ops-panel";
 import { RemoveCloneDialog } from "./remove-clone-dialog";
 import { RAIL, SIDEBAR, Sidebar } from "./sidebar";
 import { TitleBar } from "./title-bar";
+import { UpgradeDialog } from "./upgrade-dialog";
 import { AdoptDialog, RemoveWorktreeDialog } from "./worktree-dialogs";
 
 export function AppShell() {
   const navigate = useNavigate();
   useRepoChanges();
   useAutoPruneToasts();
+  useUpgradeWatch();
   const { data: repos } = useRepoList();
   const params = useParams({ strict: false }) as { repoId?: string };
   const current = repos?.find((r) => r.id === params.repoId);
@@ -89,9 +92,38 @@ export function AppShell() {
       <RemoveCloneDialog />
       <RemoveWorktreeDialog />
       <AdoptDialog />
+      <UpgradeDialog />
       <Toaster position="bottom-right" offset={{ right: 16, bottom: 16 }} />
     </div>
   );
+}
+
+/**
+ * Update checks beyond the query's own poll: "Check for Updates…" from the
+ * app or tray menu, a recheck after the Mac wakes (a timer that fell far
+ * behind), and the dialog after a failed update relaunched the app.
+ */
+function useUpgradeWatch() {
+  const qc = useQueryClient();
+  const { mutate: checkNow } = useCheckUpgradeNow();
+  const { data } = useUpgrade();
+  const failed = !!data?.upgrade_error;
+  useEffect(() => {
+    if (failed) setUi({ upgrade: true });
+  }, [failed]);
+  useEffect(() => {
+    const un = listen("check-updates", () => checkNow());
+    let last = Date.now();
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      if (now - last > 3 * 60_000) void qc.invalidateQueries({ queryKey: keys.upgrade });
+      last = now;
+    }, 60_000);
+    return () => {
+      void un.then((f) => f());
+      window.clearInterval(timer);
+    };
+  }, [qc, checkNow]);
 }
 
 /** A pane header that doubles as the window's drag region. */

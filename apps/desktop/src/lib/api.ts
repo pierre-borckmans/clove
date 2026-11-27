@@ -22,6 +22,7 @@ import type {
   RepoSummary,
   ShellStatus,
   Step,
+  UpgradeState,
 } from "./types";
 
 /**
@@ -81,6 +82,14 @@ export const api = {
   shellStatus: () => invoke<ShellStatus>("shell_status"),
   shellInstall: () => invoke<ShellStatus>("shell_install"),
   startOp: (op: OpRequest) => invoke<string>("start_op", { op }),
+  upgradeStatus: () => invoke<UpgradeState>("upgrade_status"),
+  /** Asks GitHub when forced, else only when the shared cache is an hour old. */
+  checkUpgrade: (force: boolean) => invoke<UpgradeState>("check_upgrade", { force }),
+  clearUpgradeError: () => invoke<null>("clear_upgrade_error"),
+  /** Quits; `clove upgrade` replaces the app and opens it again. */
+  startUpgrade: () => invoke<null>("start_upgrade"),
+  restartApp: () => invoke<null>("restart_app"),
+  openRelease: (url: string) => invoke<null>("open_release", { url }),
   openMain: (route?: string, action?: string) => invoke<void>("open_main", { route, action }),
   hidePopover: () => invoke<void>("hide_popover"),
   quit: () => invoke<void>("quit"),

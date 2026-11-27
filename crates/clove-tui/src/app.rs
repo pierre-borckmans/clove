@@ -51,6 +51,10 @@ pub enum Effect {
         root: PathBuf,
         name: String,
     },
+    /// Ask for the latest release: from the hourly cache unless `force`.
+    CheckUpgrade {
+        force: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -72,6 +76,8 @@ pub const PENDING_RELOAD_MS: u64 = 500;
 /// How often an open TUI asks GitHub about PRs: merges by other tools and
 /// agents show up without the background service.
 pub const PR_CHECK_MS: u64 = 5 * 60 * 1000;
+/// How often an open TUI looks for a new clove (the check itself is cached hourly).
+pub const UPGRADE_CHECK_MS: u64 = 60 * 60 * 1000;
 const DOUBLE_CLICK_MS: u64 = 400;
 
 pub struct App {
@@ -149,6 +155,12 @@ pub struct App {
     pub diff_prefs: crate::diffview::DiffPrefs,
     /// Lines the settings view showed last frame (for page up/down).
     pub settings_height: usize,
+    /// The latest release and how clove was installed; None until asked.
+    pub upgrade: Option<Box<clove_core::upgrade::Status>>,
+    /// When the TUI last asked (see `UPGRADE_CHECK_MS`).
+    pub upgrade_checked_ms: Option<u64>,
+    /// The version an upgrade from here installed: this process is older.
+    pub upgraded_to: Option<String>,
 }
 
 impl App {
@@ -198,6 +210,9 @@ impl App {
             integrated: false,
             service: None,
             agents: None,
+            upgrade: None,
+            upgrade_checked_ms: None,
+            upgraded_to: None,
             diff_prefs: Default::default(),
             seen_removal: HashMap::new(),
             settings_height: 10,
@@ -317,6 +332,39 @@ impl App {
                 .prs_checked
                 .get(&d.root)
                 .is_none_or(|t| self.now_ms.saturating_sub(*t) >= PR_CHECK_MS)
+    }
+
+    pub fn needs_upgrade_check(&self) -> bool {
+        self.upgrade_checked_ms
+            .is_none_or(|t| self.now_ms.saturating_sub(t) >= UPGRADE_CHECK_MS)
+    }
+
+    /// The newer release to offer, unless this session already installed it.
+    pub fn upgrade_available(&self) -> Option<&str> {
+        let u = self.upgrade.as_ref()?;
+        let v = u.latest.as_ref()?.version.as_str();
+        (u.available && self.upgraded_to.is_none()).then_some(v)
+    }
+
+    /// `K`: upgrade when a newer clove is known, else check now.
+    pub fn upgrade_key(&mut self) -> Vec<Effect> {
+        if self.running().any(|j| matches!(j.task, Task::Upgrade)) {
+            self.toast(ToastKind::Info, "already upgrading: l shows it");
+            return vec![];
+        }
+        if let Some(v) = &self.upgraded_to {
+            let v = v.clone();
+            self.toast(
+                ToastKind::Info,
+                format!("clove {v} is installed: quit and reopen to use it"),
+            );
+            return vec![];
+        }
+        if self.upgrade_available().is_some() {
+            return self.spawn(Task::Upgrade, After::Nothing);
+        }
+        self.toast(ToastKind::Info, "checking for a new clove…");
+        vec![Effect::CheckUpgrade { force: true }]
     }
 
     pub fn needs_reload(&self) -> bool {
@@ -507,7 +555,11 @@ impl App {
         let Some(repo) = self.repo().cloned() else {
             if matches!(
                 task,
-                Task::Doctor | Task::Service { .. } | Task::Agents { .. } | Task::ShellInstall
+                Task::Doctor
+                    | Task::Service { .. }
+                    | Task::Agents { .. }
+                    | Task::ShellInstall
+                    | Task::Upgrade
             ) {
                 return self.spawn_at(None, String::new(), task, after);
             }
@@ -856,6 +908,19 @@ impl App {
                 }
                 Ok(String::new())
             }
+            Ok(Outcome::Upgraded(u)) => {
+                let s = match u.to {
+                    Some(to) if clove_core::upgrade::newer(&to, &u.from) => {
+                        let s = format!("clove {} → {to}: quit and reopen the TUI to use it", u.from);
+                        self.upgraded_to = Some(to);
+                        s
+                    }
+                    Some(to) => format!("clove {to} is the latest in the tap"),
+                    None => "upgraded".into(),
+                };
+                toasts.push((ToastKind::Ok, s.clone()));
+                Ok(s)
+            }
         };
         if let Some(job) = self.job_mut(id) {
             job.result = Some(summary);
@@ -870,7 +935,11 @@ impl App {
         if self.repo().is_some_and(|r| r.root == repo)
             && !matches!(
                 task,
-                Task::Doctor | Task::Service { .. } | Task::Agents { .. } | Task::ShellInstall
+                Task::Doctor
+                    | Task::Service { .. }
+                    | Task::Agents { .. }
+                    | Task::ShellInstall
+                    | Task::Upgrade
             )
         {
             effects.push(Effect::Load);
@@ -938,6 +1007,22 @@ impl App {
             }
             Msg::PrsChecked => {
                 self.loaded_ms = None;
+                vec![]
+            }
+            Msg::Upgrade { status, forced } => {
+                if forced {
+                    match (&status.error, &status.latest) {
+                        (Some(e), _) => {
+                            self.toast(ToastKind::Err, format!("couldn't check for a new clove: {e}"))
+                        }
+                        (None, Some(l)) if status.available => self.toast(
+                            ToastKind::Info,
+                            format!("clove {} is available: K upgrades", l.version),
+                        ),
+                        _ => self.toast(ToastKind::Ok, format!("clove {} is up to date", status.current)),
+                    }
+                }
+                self.upgrade = Some(status);
                 vec![]
             }
             Msg::Refs {
@@ -1223,6 +1308,7 @@ impl App {
                 self.modal = Some(Modal::Doctor(DoctorView::default()));
                 return self.spawn(Task::Doctor, After::Nothing);
             }
+            KeyCode::Char('K') => return self.upgrade_key(),
             KeyCode::Char('s') | KeyCode::Char(',') => {
                 if self.current().is_some() {
                     self.modal = Some(Modal::Settings(SettingsView::default()));
@@ -2431,6 +2517,7 @@ fn job_title(t: &Task) -> String {
         Task::Agents { .. } => "agents".into(),
         Task::Update { name, .. } => format!("update {name}"),
         Task::ShellInstall => "shell integration".into(),
+        Task::Upgrade => "upgrade".into(),
     }
 }
 

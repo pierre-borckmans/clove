@@ -123,6 +123,18 @@ pub fn check_prs(tx: Sender<Msg>, root: PathBuf) {
     });
 }
 
+/// The latest release: from the hourly cache unless `force`.
+pub fn check_upgrade(tx: Sender<Msg>, force: bool) {
+    std::thread::spawn(move || {
+        if let Ok(status) = guarded(|| Ok(clove_core::upgrade::check(force))) {
+            let _ = tx.send(Msg::Upgrade {
+                status: Box::new(status),
+                forced: force,
+            });
+        }
+    });
+}
+
 /// Reads a clone's changes, parses them, and starts highlighting.
 pub fn load_diff(tx: Sender<Msg>, root: PathBuf, name: String) {
     std::thread::spawn(move || {
@@ -221,6 +233,11 @@ fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Res
             .map(|(p, changed)| Outcome::ShellInstalled(p, changed))
             .map_err(e);
     }
+    if let Task::Upgrade = task {
+        return clove_core::upgrade::upgrade(r, &Default::default())
+            .map(Outcome::Upgraded)
+            .map_err(e);
+    }
     if let Task::Doctor = task {
         let mut checks = clove_core::doctor::machine();
         if let Some(root) = root
@@ -275,7 +292,7 @@ fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Res
         .map_err(e),
         Task::Unmount { name } => c.unmount(&name, false).map(|_| Outcome::Unmounted).map_err(e),
         Task::Gc { apply } => c.cleanup(apply, r).map(Outcome::Gc).map_err(e),
-        Task::Doctor | Task::Service { .. } | Task::Agents { .. } | Task::ShellInstall => {
+        Task::Doctor | Task::Service { .. } | Task::Agents { .. } | Task::ShellInstall | Task::Upgrade => {
             unreachable!("handled above")
         }
     }

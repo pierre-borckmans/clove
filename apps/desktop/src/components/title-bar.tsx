@@ -1,18 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, Loader, Monitor, Moon, PanelLeft, Search, Sun } from "lucide-react";
+import { ArrowUpCircle, ChevronRight, Loader, Monitor, Moon, PanelLeft, Search, Sun } from "lucide-react";
 import type { ReactNode } from "react";
 import { cycleAppearance } from "@/hooks/use-theme";
 import { isTauri } from "@/lib/bridge";
 import { useOps } from "@/lib/ops";
 import { isMac } from "@/lib/platform";
 import { setPrefs, usePrefs } from "@/lib/prefs";
-import { useRepo, useService } from "@/lib/queries";
+import { useRepo, useService, useUpgrade } from "@/lib/queries";
 import { getUi, setUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 import { Glyph } from "./glyph";
 import { Shortcut } from "./shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { skew } from "./upgrade-dialog";
 
 /**
  * The macOS traffic lights sit centred 20px from the window top, x 18 to 70,
@@ -68,6 +69,7 @@ export function TitleBar() {
         <Shortcut keys="mod+k" className="[&_kbd]:h-4 [&_kbd]:min-w-4 [&_kbd]:text-[10px]" />
       </button>
       <div data-tauri-drag-region className="flex items-center justify-end gap-3">
+        <Upgrade />
         <Running />
         <Service />
         <AppearanceButton />
@@ -135,6 +137,39 @@ function Running() {
       <Loader className="size-3 animate-spin [animation-duration:1.4s]" />
       {running.length} running
     </button>
+  );
+}
+
+/** A newer clove, one installed but not running, or a CLI on another version. */
+function Upgrade() {
+  const { data: s } = useUpgrade();
+  if (!s) return null;
+  const cli = skew(s);
+  const [label, tip, warn] = s.restart_to
+    ? [`restart for ${s.restart_to}`, `clove ${s.restart_to} is installed; this window still runs ${s.current}.`, true]
+    : s.available && s.latest
+      ? [`v${s.latest.version} available`, "See what's new and update.", false]
+      : cli
+        ? [`CLI ${cli}`, `The clove CLI is ${cli}, this app ${s.current}.`, true]
+        : [null, null, false];
+  if (!label) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={() => setUi({ upgrade: true })}
+          className={cn(
+            "flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] transition-colors",
+            warn ? "text-amber hover:bg-amber/10" : "text-bottle hover:bg-bottle-soft",
+          )}
+        >
+          <ArrowUpCircle className="size-3.5" />
+          {label}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{tip}</TooltipContent>
+    </Tooltip>
   );
 }
 
