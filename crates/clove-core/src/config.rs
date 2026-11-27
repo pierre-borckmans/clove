@@ -24,6 +24,8 @@ pub struct FileConfig {
     pub fetch: Option<bool>,
     /// Skip that fetch when the repo was fetched less than this many seconds ago.
     pub fetch_interval: Option<u64>,
+    /// Keep one clone mounted ahead of time so `new` skips the mount (macOS).
+    pub spare: Option<bool>,
     /// Detect steps from repo files when none are configured.
     pub detect: Option<bool>,
     /// Wrap step commands in an environment: auto, direnv, mise or none.
@@ -190,6 +192,14 @@ pub const FIELDS: &[Field] = &[
         Kind::Seconds,
         Is("5m"),
         "skip that fetch when the last one is this recent, e.g. 5m",
+    ),
+    field(
+        "spare",
+        "spare clone",
+        "clones",
+        Kind::Bool,
+        Is("true"),
+        "keep one clone mounted ahead of time so new skips the mount (macOS)",
     ),
     field(
         "exec",
@@ -387,6 +397,7 @@ pub struct Config {
     pub image_size: String,
     pub fetch: bool,
     pub fetch_interval: u64,
+    pub spare: bool,
     pub exec: Exec,
     pub env: BTreeMap<String, String>,
     pub steps: Vec<Step>,
@@ -525,6 +536,7 @@ impl Config {
             image_size: pick(&layers, |l| l.image_size.clone()).unwrap_or_else(|| "300G".into()),
             fetch: pick(&layers, |l| l.fetch).unwrap_or(true),
             fetch_interval: pick(&layers, |l| l.fetch_interval).unwrap_or(300),
+            spare: pick(&layers, |l| l.spare).unwrap_or(true),
             exec: detect::resolve_exec(exec, repo_root),
             env,
             steps,
@@ -689,6 +701,7 @@ mod schema_tests {
             image_size: Some("1G".into()),
             fetch: Some(true),
             fetch_interval: Some(1),
+            spare: Some(true),
             detect: Some(true),
             exec: Some(Exec::Auto),
             env: [("A".to_string(), "1".to_string())].into(),

@@ -46,6 +46,8 @@ auto = true        # refresh in the background when `clove new` finds the image 
 max_age = "24h"     # safety net; steps' watch paths are the main signal
 max_behind = 100   # commits
 
+spare = true       # macOS: keep one clone mounted ahead of time, so `clove new` skips the mount
+
 [prune]
 auto = false       # the service removes merged, clean, idle clones; `clove log` lists them
 

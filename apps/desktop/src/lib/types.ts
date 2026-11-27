@@ -222,6 +222,7 @@ export type Config = {
   image_size: string;
   fetch: boolean;
   fetch_interval: number;
+  spare: boolean;
   exec: "auto" | "direnv" | "mise" | "none";
   env: Record<string, string>;
   steps: Step[];

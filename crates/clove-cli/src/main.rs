@@ -263,6 +263,14 @@ enum Cmd {
     /// background by `clove rm`).
     #[command(hide = true)]
     RemovePending,
+    /// Make the spare clone `new` claims, mounted ahead of time (run in the
+    /// background after new, init, refresh and at login). macOS.
+    #[command(hide = true)]
+    Spare {
+        /// Detach and delete it instead.
+        #[arg(long)]
+        discard: bool,
+    },
     /// Delete the golden image and clove's state for this repo.
     Deinit,
     /// Background agents: remount clones at login, keep golden images fresh.
@@ -464,6 +472,7 @@ fn wants_upgrade_hint(cli: &Cli) -> bool {
                 | Cmd::ShellInit { .. }
                 | Cmd::CheckPrs
                 | Cmd::RemovePending
+                | Cmd::Spare { .. }
                 | Cmd::Cd { .. }
                 | Cmd::Path { .. }
                 | Cmd::Run { .. }
@@ -533,6 +542,7 @@ fn run(cli: Cli) -> Result<()> {
             }
             fstab_prompt(&c, cli.json)?;
             let meta = c.init(r)?;
+            c.spawn_spare_fill();
             if cli.json {
                 return emit(&meta);
             }
@@ -602,6 +612,7 @@ fn run(cli: Cli) -> Result<()> {
                 }
                 match c.refresh_with(&clove_core::RefreshOptions { full: *full }, r) {
                     Ok(meta) => {
+                        c.spawn_spare_fill();
                         if !cli.json {
                             timing_bars(&meta.timings);
                             eprintln!(
@@ -876,6 +887,8 @@ fn run(cli: Cli) -> Result<()> {
                         Err(e) => eprintln!("{} {n}: {e:#}", paint(YELLOW, "!")),
                     }
                 }
+                // At login (--all-repos) spares are gone with the reboot.
+                c.spawn_spare_fill();
             }
             if cli.json {
                 return emit(&serde_json::json!({ "mounted": mounted }));
@@ -944,6 +957,19 @@ fn run(cli: Cli) -> Result<()> {
         }
         Cmd::RemovePending => {
             repo(&cli)?.wait_and_remove_pending(std::time::Duration::from_secs(12 * 3600), &Silent)?;
+        }
+        Cmd::Spare { discard } => {
+            let c = repo(&cli)?;
+            if *discard {
+                c.discard_spare(false)?;
+            } else {
+                c.fill_spare(true)?;
+            }
+            let state = format!("{:?}", c.spare_state());
+            if cli.json {
+                return emit(&serde_json::json!({ "spare": state }));
+            }
+            eprintln!("{} spare: {state}", paint(DIM, "·"));
         }
         Cmd::Config {
             action: Some(action), ..
@@ -1370,6 +1396,7 @@ fn cmd_new(cli: &Cli, a: &NewArgs, r: &dyn clove_core::Reporter) -> Result<()> {
         eprintln!("{} {}", paint(GREEN, "+"), paint(BOLD, label));
     }
     let info = c.new_clone(&opts, r)?;
+    c.spawn_spare_fill();
     if cli.json {
         emit(&info)?;
     } else {
@@ -1780,6 +1807,7 @@ fn cmd_adopt(
     }
     let was_inside = std::env::current_dir().is_ok_and(|d| d.starts_with(&w.path));
     let info = c.adopt(&w.path, &clove_core::AdoptOptions { name, no_setup }, r)?;
+    c.spawn_spare_fill();
     if cli.json {
         return emit(&info);
     }
@@ -2780,6 +2808,7 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
                 },
                 &TermReporter::new(false),
             )?;
+            c.spawn_spare_fill();
             println!("{}", info.path.display());
         }
         HookAction::WorktreeRemove => {

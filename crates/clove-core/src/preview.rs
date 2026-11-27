@@ -154,6 +154,7 @@ mod tests {
                 image_size: "300G".into(),
                 fetch: true,
                 fetch_interval: 300,
+                spare: true,
                 exec: Exec::None,
                 env: Default::default(),
                 steps: crate::detect::steps(&r, 10),

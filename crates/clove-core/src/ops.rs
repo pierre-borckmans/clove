@@ -306,7 +306,7 @@ impl Clove {
         out
     }
 
-    fn lock(&self) -> Result<FileLock> {
+    pub(crate) fn lock(&self) -> Result<FileLock> {
         std::fs::create_dir_all(&self.state)?;
         FileLock::acquire(&self.lock_path())
     }
@@ -721,7 +721,7 @@ impl Clove {
 
         // Copy the image and the matching index snapshot under the short lock so a
         // concurrent refresh cannot swap generations in between.
-        let golden = {
+        let (golden, claimed) = {
             let _lock = self.lock()?;
             let generation = self
                 .current_generation()?
@@ -729,13 +729,30 @@ impl Clove {
             let gen_dir = self.golden_gen_dir(generation);
             let meta: GoldenMeta = read_json(&gen_dir.join("meta.json"))?.context("golden meta missing")?;
             std::fs::create_dir_all(&dir)?;
-            timed(r, &mut timings, "clone image", || {
-                store.clone_create(self, generation, &name, &mount)
-            })?;
+            // A spare of this generation is already mounted: rename it into place.
+            let start = std::time::Instant::now();
+            let claimed = self.claim_spare(&meta, &name, &mount);
+            if claimed {
+                let step = "claim spare".to_string();
+                let took = start.elapsed();
+                r.event(Event::Start { step: step.clone() });
+                r.event(Event::Done {
+                    step: step.clone(),
+                    took,
+                });
+                timings.push(Timing {
+                    step,
+                    ms: took.as_secs_f64() * 1000.0,
+                });
+            } else {
+                timed(r, &mut timings, "clone image", || {
+                    store.clone_create(self, generation, &name, &mount)
+                })?;
+            }
             for f in ["HEAD", "index"] {
                 std::fs::copy(gen_dir.join(f), dir.join(f))?;
             }
-            meta
+            (meta, claimed)
         };
 
         let cleanup = |e: anyhow::Error| -> anyhow::Error {
@@ -756,7 +773,11 @@ impl Clove {
                 t
             });
             let mut t = vec![];
-            let a = timed(r, &mut t, "mount", || store.clone_attach(self, &name, &mount));
+            let a = if claimed {
+                Ok(())
+            } else {
+                timed(r, &mut t, "mount", || store.clone_attach(self, &name, &mount))
+            };
             (fetch.join().unwrap_or_default(), a.map(|_| t))
         });
         timings.extend(attach.map_err(cleanup)?);
@@ -1599,7 +1620,8 @@ impl Clove {
                 let empty = std::fs::read_dir(e.path())
                     .map(|mut d| d.next().is_none())
                     .unwrap_or(false);
-                if !names.contains(&n) && empty {
+                // The spare's mount point is handled below, with the spare.
+                if !names.contains(&n) && empty && e.path() != self.spare_mount() {
                     actions.push(format!("remove empty mount point {}", e.path().display()));
                     if apply {
                         let _ = std::fs::remove_dir(e.path());
@@ -1629,6 +1651,21 @@ impl Clove {
             if apply {
                 backend::stop_processes(&[pid], std::time::Duration::from_secs(5));
             }
+        }
+        match self.spare_state() {
+            crate::spare::SpareState::Stale(why) => {
+                actions.push(format!("detach and delete the spare clone: {why}"));
+                if apply {
+                    self.discard_spare(true)?;
+                }
+            }
+            crate::spare::SpareState::Off if self.spare_exists() => {
+                actions.push("detach and delete the spare clone (spare = false)".into());
+                if apply {
+                    self.discard_spare(false)?;
+                }
+            }
+            _ => {}
         }
         if store.golden_stuck(self)
             && let Ok(lock) = FileLock::try_acquire(&self.state.join("refresh.lock"))
@@ -1667,6 +1704,11 @@ impl Clove {
         let mut t = vec![];
         let store = self.store()?;
         timed(r, &mut t, "delete golden", || {
+            // A mounted spare lives in the state folder, which goes next.
+            self.discard_spare(false)?;
+            if backend::is_mounted(&self.spare_mount()) {
+                bail!("a spare clone is being made; try again in a few seconds");
+            }
             store.golden_reset(self)?;
             if let Some(rec) = self.record()? {
                 let _ = std::fs::remove_dir_all(self.admin_dir(&rec.golden_admin));
