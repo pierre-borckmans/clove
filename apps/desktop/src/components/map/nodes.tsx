@@ -52,8 +52,15 @@ export type MapCtx = {
   menu: (target: MenuTarget, at: MenuAnchor, keyboard: boolean) => void;
 };
 
-export const isDimmed = (ctx: MapCtx, generation: number) =>
-  ctx.focusAge !== null && ageOf(ctx.newest, generation) !== ctx.focusAge;
+/** A clone's menu open on the map: every other clone dims while it's open. */
+const cloneMenu = (ctx: MapCtx) => (ctx.menuFor && ctx.menuFor !== "image" ? ctx.menuFor : undefined);
+
+/** With a clone's menu open, every other clone dims; with an image picked, clones of other ages do. */
+export const isDimmed = (ctx: MapCtx, generation: number, name: string) => {
+  const open = cloneMenu(ctx);
+  if (open) return open !== name;
+  return ctx.focusAge !== null && ageOf(ctx.newest, generation) !== ctx.focusAge;
+};
 
 /** A name and state line at a computed world box, positioned relative to its node. */
 function Label({
@@ -162,7 +169,7 @@ export function CloneNode({
         ctx.picked === c.name && "map-node-selected",
         ctx.menuFor === c.name && "map-menu-open",
         leaving && "map-leaving",
-        isDimmed(ctx, c.golden_generation) && "map-dim",
+        isDimmed(ctx, c.golden_generation, c.name) && "map-dim",
         !c.mounted && "map-clone-unmounted",
         warning && "map-clone-warning",
         className,
@@ -301,7 +308,7 @@ export function WorktreeShelf({ worktrees, ctx }: { worktrees: OtherWorktree[]; 
           className={cn(
             "map-shelf-item flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1",
             ctx.pickedWorktree === w.path && "map-node-selected",
-            ctx.focusAge !== null && "map-dim",
+            (ctx.focusAge !== null || !!cloneMenu(ctx)) && "map-dim",
           )}
         >
           {w.locked ? <Lock className="size-3 shrink-0" /> : <GitBranch className="size-3 shrink-0" />}

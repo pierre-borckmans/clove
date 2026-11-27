@@ -212,7 +212,7 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
                 "map-edge",
                 node.ring > 0 && "map-edge-old",
                 lit && "map-edge-active",
-                isDimmed(ctx, node.clone.golden_generation) && "map-dim",
+                isDimmed(ctx, node.clone.golden_generation, node.clone.name) && "map-dim",
               )}
             />
           );
@@ -228,7 +228,7 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
                 x2={values[6]}
                 y2={values[7]}
                 style={{ "--appear": presence } as CSSProperties}
-                className={cn("map-leader", isDimmed(ctx, node.clone.golden_generation) && "map-dim")}
+                className={cn("map-leader", isDimmed(ctx, node.clone.golden_generation, node.clone.name) && "map-dim")}
               />
             ),
         )}

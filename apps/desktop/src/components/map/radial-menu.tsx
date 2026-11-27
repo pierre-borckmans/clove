@@ -183,6 +183,18 @@ export function RadialMenu({
     if (keyboard) items.current.find((el) => el && !el.disabled)?.focus({ preventScroll: true });
   }, [keyboard]);
 
+  // Opened with the mouse, focus isn't in the ring: Escape still closes it.
+  useEffect(() => {
+    if (closing) return;
+    const onEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      onClose(true);
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [closing, onClose]);
+
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.key === "Escape") {
       event.preventDefault();
