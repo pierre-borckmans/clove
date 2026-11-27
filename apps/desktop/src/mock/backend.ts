@@ -22,6 +22,7 @@ import type {
   RepoRef,
   RepoStatus,
   RepoSummary,
+  UpgradeState,
 } from "@/lib/types";
 import { MOCK_ATTRS, MOCK_PACKAGES, MOCK_PATCH } from "./diff";
 import { CARGO_OUTPUT, type MockRepo, machineChecks, PNPM_OUTPUT, seed, worktreeCheck } from "./fixtures";
@@ -31,6 +32,39 @@ const repos = seed();
 let serviceOn = true;
 let agentsState: "installed" | "outdated" | "missing" = "missing";
 let shellOn = false;
+
+// A Homebrew install one release behind. `start_upgrade` "relaunches" (a
+// reload) on the new version, remembered for the browser tab's session.
+const MOCK_LATEST = "0.2.0";
+const mockUpgraded = (() => {
+  try {
+    return sessionStorage.getItem("clove-mock-upgraded") === "1";
+  } catch {
+    return false;
+  }
+})();
+function mockUpgrade(): UpgradeState {
+  const current = mockUpgraded ? MOCK_LATEST : "0.1.22";
+  return {
+    current,
+    latest: {
+      version: MOCK_LATEST,
+      url: `https://github.com/pierre-borckmans/clove/releases/tag/v${MOCK_LATEST}`,
+      notes:
+        "## What's Changed\n* feat: updates in the CLI, TUI and app by @ada in #15\n* perf: clove new in ~1 s on a fresh golden image by @ada in #13\n\n**Full Changelog**: v0.1.22...v0.2.0",
+      published_at: "2026-11-27T13:57:33Z",
+    },
+    available: current !== MOCK_LATEST,
+    checked_at: now(),
+    error: null,
+    upgrade_error: null,
+    cli: "brew",
+    cli_path: "/opt/homebrew/bin/clove",
+    cli_version: current,
+    app_source: "brew",
+    restart_to: null,
+  };
+}
 const LAYERS = [
   { label: "all repos", path: () => "/Users/ada/.config/clove/config.toml" },
   { label: "team", path: (r: MockRepo) => `${r.status.root}/.clove.toml` },
@@ -679,6 +713,24 @@ const commands: Record<string, (a: Args) => unknown> = {
   open_in: () => null,
   copy_text: (a) => navigator.clipboard?.writeText(a.text as string).catch(() => undefined) ?? null,
   start_op: (a) => startOp(a.op as OpRequest),
+  upgrade_status: () => mockUpgrade(),
+  check_upgrade: () => mockUpgrade(),
+  clear_upgrade_error: () => null,
+  start_upgrade: () => {
+    try {
+      sessionStorage.setItem("clove-mock-upgraded", "1");
+    } catch {}
+    setTimeout(() => location.reload(), 1500);
+    return null;
+  },
+  restart_app: () => {
+    location.reload();
+    return null;
+  },
+  open_release: (a) => {
+    window.open(a.url as string, "_blank");
+    return null;
+  },
   open_main: () => null,
   hide_popover: () => null,
   quit: () => null,

@@ -1,6 +1,7 @@
 pub mod apps;
 pub mod commands;
 pub mod ops;
+pub mod upgrade;
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -70,6 +71,28 @@ fn open_main(app: AppHandle, route: Option<String>, action: Option<String>) {
             let _ = main.emit("action", action);
         }
     }
+}
+
+/// "Check for Updates…" from a menu: the main window comes forward and runs
+/// a forced check, then shows the update or says clove is up to date.
+fn check_updates(app: &AppHandle) {
+    show_main(app);
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.emit("check-updates", ());
+    }
+}
+
+/// macOS's standard menu bar, with "Check for Updates…" under About.
+#[cfg(target_os = "macos")]
+fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let menu = Menu::default(app)?;
+    if let Some(first) = menu.items()?.first()
+        && let Some(sub) = first.as_submenu()
+    {
+        let item = MenuItem::with_id(app, "app-check-updates", "Check for Updates…", true, None::<&str>)?;
+        sub.insert(&item, 1)?;
+    }
+    Ok(menu)
 }
 
 #[tauri::command]
@@ -169,6 +192,12 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show_main(app)))
         .plugin(tauri_plugin_clipboard_manager::init());
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(app_menu).on_menu_event(|app, e| {
+        if e.id().as_ref() == "app-check-updates" {
+            check_updates(app);
+        }
+    });
     let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_positioner::init())
@@ -211,6 +240,12 @@ pub fn run() {
             commands::shell_status,
             commands::shell_install,
             ops::start_op,
+            upgrade::upgrade_status,
+            upgrade::check_upgrade,
+            upgrade::clear_upgrade_error,
+            upgrade::start_upgrade,
+            upgrade::restart_app,
+            upgrade::open_release,
             open_main,
             hide_popover,
             quit,
@@ -219,14 +254,15 @@ pub fn run() {
             watch_repos(app.handle().clone());
             let open = MenuItem::with_id(app, "open", "Open clove", true, None::<&str>)?;
             let quick = MenuItem::with_id(app, "quick", "Quick open…", true, None::<&str>)?;
+            let updates = MenuItem::with_id(app, "check-updates", "Check for Updates…", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit clove", true, Some("CmdOrCtrl+Q"))?;
             let sep = PredefinedMenuItem::separator(app)?;
             // A click on a Linux tray icon always opens its menu, so the
             // popover gets a menu item there.
             let menu = if cfg!(target_os = "linux") {
-                Menu::with_items(app, &[&open, &quick, &sep, &quit])?
+                Menu::with_items(app, &[&open, &quick, &updates, &sep, &quit])?
             } else {
-                Menu::with_items(app, &[&open, &sep, &quit])?
+                Menu::with_items(app, &[&open, &updates, &sep, &quit])?
             };
             // The macOS icon is a template the menu bar tints; Linux panels
             // draw icons as is, so they get the colored one.
@@ -244,6 +280,7 @@ pub fn run() {
                 .on_menu_event(|app, e| match e.id().as_ref() {
                     "open" => show_main(app),
                     "quick" => toggle_popover(app),
+                    "check-updates" => check_updates(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })

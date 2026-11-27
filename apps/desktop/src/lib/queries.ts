@@ -5,6 +5,7 @@ import { api } from "./api";
 import { listen } from "./bridge";
 import { APP_LABELS } from "./prefs";
 import type { AppId, Layer, Removed, RepoRef } from "./types";
+import { setUi } from "./ui";
 
 export const keys = {
   repos: ["repos"] as const,
@@ -29,6 +30,7 @@ export const keys = {
   apps: ["apps"] as const,
   repoCandidates: ["repo-candidates"] as const,
   initPreview: (dir: string) => ["init-preview", dir] as const,
+  upgrade: ["upgrade"] as const,
 };
 
 /**
@@ -50,7 +52,7 @@ export function useRepoChanges() {
         predicate: (q) => {
           const k = String(q.queryKey[0]);
           if (only) return only.includes(k);
-          return !["prs-check", "doctor", "apps", "shell", "repo-candidates", "init-preview"].includes(k);
+          return !["prs-check", "doctor", "apps", "shell", "repo-candidates", "init-preview", "upgrade"].includes(k);
         },
       });
     });
@@ -181,6 +183,36 @@ export function usePrCheck(root: string | undefined) {
     refetchInterval: 5 * 60_000,
     refetchOnWindowFocus: false,
     retry: false,
+  });
+}
+
+/**
+ * The latest release and the versions in play. Polls every 10 minutes and on
+ * focus, which also notices a CLI or app upgraded by hand; GitHub itself is
+ * asked at most hourly (clove-core's cache, shared with the CLI and TUI).
+ */
+export function useUpgrade() {
+  return useQuery({
+    queryKey: keys.upgrade,
+    queryFn: () => api.checkUpgrade(false),
+    refetchInterval: 10 * 60_000,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+/** A forced check; says "up to date" or opens the update dialog. */
+export function useCheckUpgradeNow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.checkUpgrade(true),
+    onSuccess: (s) => {
+      qc.setQueryData(keys.upgrade, s);
+      if (s.error) toast.error("Could not check for updates", { description: s.error });
+      else if (s.available || s.restart_to) setUi({ upgrade: true });
+      else toast.success(`clove ${s.current} is up to date`);
+    },
+    onError: (e) => toast.error("Could not check for updates", { description: String(e) }),
   });
 }
 

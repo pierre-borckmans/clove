@@ -295,6 +295,19 @@ enum Cmd {
     /// Terminal UI: repos, clones, live progress. Bare `clove` opens it too.
     #[command(alias = "ui")]
     Tui,
+    /// Upgrade clove (and the app) with Homebrew, then restart the service.
+    /// Other installs get the download link.
+    Upgrade {
+        /// Only ask GitHub for the latest release and say.
+        #[arg(long)]
+        check: bool,
+        /// A quiet `--check` for the hint other commands print.
+        #[arg(long, hide = true, requires = "check")]
+        background: bool,
+        /// From the app: wait for this pid to quit, upgrade, open the app again.
+        #[arg(long, hide = true, value_name = "PID")]
+        relaunch_app: Option<u32>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -423,6 +436,7 @@ fn main() {
     clap_complete::CompleteEnv::with_factory(Cli::command).complete();
     let cli = Cli::parse();
     let json = cli.json;
+    let hint = wants_upgrade_hint(&cli);
     if let Err(e) = run(cli) {
         if json {
             println!("{}", serde_json::json!({ "error": format!("{e:#}") }));
@@ -431,6 +445,37 @@ fn main() {
         }
         std::process::exit(1);
     }
+    if hint && let Some(v) = clove_core::upgrade::hint() {
+        eprintln!(
+            "{}",
+            paint(DIM, format!("clove v{v} is available: clove upgrade"))
+        );
+    }
+}
+
+/// Commands a person typed in a terminal get the "new version" hint; ones
+/// that scripts, shells and hooks run, or that print paths, don't.
+fn wants_upgrade_hint(cli: &Cli) -> bool {
+    let quiet_cmd = matches!(
+        cli.cmd,
+        None | Some(
+            Cmd::Upgrade { .. }
+                | Cmd::Hook { .. }
+                | Cmd::ShellInit { .. }
+                | Cmd::CheckPrs
+                | Cmd::RemovePending
+                | Cmd::Cd { .. }
+                | Cmd::Path { .. }
+                | Cmd::Run { .. }
+                | Cmd::Guide
+                | Cmd::Tui
+        )
+    );
+    !quiet_cmd
+        && !cli.json
+        && std::env::var_os("CLOVE_NO_UPDATE_CHECK").is_none()
+        && std::io::stdin().is_terminal()
+        && std::io::stderr().is_terminal()
 }
 
 fn repo(cli: &Cli) -> Result<Clove> {
@@ -1042,6 +1087,72 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
         Cmd::Tui => run_tui(&cli)?,
+        Cmd::Upgrade {
+            check,
+            background,
+            relaunch_app,
+        } => cmd_upgrade(&cli, *check, *background, *relaunch_app, r)?,
+    }
+    Ok(())
+}
+
+fn cmd_upgrade(
+    cli: &Cli,
+    check: bool,
+    background: bool,
+    relaunch_app: Option<u32>,
+    r: &dyn clove_core::Reporter,
+) -> Result<()> {
+    use clove_core::upgrade;
+    if background {
+        upgrade::background_check();
+        return Ok(());
+    }
+    if check {
+        let st = upgrade::check(true);
+        if cli.json {
+            return emit(&st);
+        }
+        if let Some(e) = &st.error {
+            bail!("couldn't ask GitHub for the latest release: {e}");
+        }
+        match &st.latest {
+            Some(l) if st.available => {
+                eprintln!(
+                    "{} clove v{} is available (you have {})",
+                    paint(YELLOW, "↑"),
+                    l.version,
+                    st.current
+                );
+                eprintln!("  {}", paint(DIM, &l.url));
+                if st.cli == upgrade::Source::Brew {
+                    eprintln!("  upgrade: {}", paint(BOLD, "clove upgrade"));
+                }
+            }
+            _ => eprintln!("{} clove {} is up to date", paint(GREEN, "✓"), st.current),
+        }
+        return Ok(());
+    }
+    let opts = upgrade::UpgradeOptions { relaunch_app };
+    let up = upgrade::upgrade(r, &opts)?;
+    if cli.json {
+        return emit(&up);
+    }
+    match up.to.as_deref() {
+        Some(to) if upgrade::newer(to, &up.from) => {
+            eprintln!("{} clove {} → {to}", paint(GREEN, "✓"), up.from);
+        }
+        Some(to) => eprintln!("{} clove {to} is the latest in the tap", paint(GREEN, "✓")),
+        None => eprintln!("{} upgraded", paint(GREEN, "✓")),
+    }
+    if up.app && relaunch_app.is_none() {
+        eprintln!(
+            "  {}",
+            paint(
+                DIM,
+                "the app was upgraded too; it opens on the new version next time"
+            )
+        );
     }
     Ok(())
 }
@@ -3049,6 +3160,7 @@ mod tests {
                     "guide",
                     "agents",
                     "service",
+                    "upgrade",
                 ]
                 .contains(&n.as_str())
             })

@@ -82,6 +82,9 @@ pub fn run(start_dir: &Path) -> Result<()> {
         if app.needs_pr_check() {
             effects.push(Effect::CheckPrs);
         }
+        if app.needs_upgrade_check() && std::env::var_os("CLOVE_NO_UPDATE_CHECK").is_none() {
+            effects.push(Effect::CheckUpgrade { force: false });
+        }
         for e in effects.drain(..) {
             perform(e, &mut app, &tx, &mut term);
         }
@@ -207,6 +210,10 @@ fn perform(e: Effect, app: &mut App, tx: &mpsc::Sender<Msg>, term: &mut Term) {
             app.loaded_ms = None;
         }
         Effect::LoadDiff { root, name } => worker::load_diff(tx.clone(), root, name),
+        Effect::CheckUpgrade { force } => {
+            app.upgrade_checked_ms = Some(app.now_ms);
+            worker::check_upgrade(tx.clone(), force);
+        }
         Effect::FindRepos => add_repo::find(tx.clone()),
         Effect::PreviewInit(path) => add_repo::preview(tx.clone(), path),
         Effect::SetConfig(w) => match worker::write_config(&w) {

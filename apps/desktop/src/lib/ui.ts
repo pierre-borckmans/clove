@@ -14,6 +14,8 @@ export type UiState = {
   /** Turn a plain git worktree into a clone. */
   adopt: { root: string; worktree: OtherWorktree } | null;
   activity: boolean;
+  /** The update dialog. */
+  upgrade: boolean;
 };
 
 let state: UiState = {
@@ -24,6 +26,7 @@ let state: UiState = {
   removeWorktree: null,
   adopt: null,
   activity: false,
+  upgrade: false,
 };
 const subs = new Set<() => void>();
 

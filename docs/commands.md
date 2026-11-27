@@ -31,6 +31,7 @@ clove refresh                    # bring the golden image to the latest base (in
 clove doctor                     # check the setup, with a fix for each problem
 clove repos                      # every repo clove manages, golden state, merged clones
 clove repos --candidates         # git repos in your code folders clove could manage
+clove upgrade                    # Homebrew upgrade of clove and the app, then restart the service (--check: just look)
 
 # configure
 clove config get                 # each setting, its value, and the file it comes from

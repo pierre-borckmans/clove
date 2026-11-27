@@ -31,6 +31,7 @@ pub mod shellrc;
 pub mod stats;
 pub mod steps;
 pub mod update;
+pub mod upgrade;
 pub mod util;
 pub mod watch;
 pub mod worktrees;

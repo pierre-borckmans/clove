@@ -29,8 +29,8 @@ expression: s
 │                    ││             g   cleanup: merged clones/worktrees     │                     │
 │ ────────────────── ││             L   log: what clove removed, and why     │                     │
 │ s settings         ││             D   doctor                               │                     │
-│ g cleanup          ││        ctrl-r   reload now                           │               3.2s  │
-│ D doctor           ││         q esc   quit                                 │                6ms  │
-│ S service          ││                                                      │                     │
+│ g cleanup          ││             K   check for a new clove / upgrade      │               3.2s  │
+│ D doctor           ││        ctrl-r   reload now                           │                6ms  │
+│ S service          ││         q esc   quit                                 │                     │
 ╰────────────────────╯│                                                      │─────────────────────╯
  esc close            ╰──────────────────────────────────────────────────────╯
