@@ -4,6 +4,7 @@ import type {
   AppId,
   Check,
   Cleanup,
+  CloneDiff,
   CloneInfo,
   Discovered,
   InitPreview,
@@ -69,6 +70,10 @@ export const api = {
   checkPrs: (root: string) => invoke<MergeCheck[]>("check_prs", { root }),
   branchCandidates: (root: string) => invoke<{ name: string; remote: boolean }[]>("branch_candidates", { root }),
   cleanup: (root: string, apply: boolean) => invoke<Cleanup>("cleanup", { root, apply }),
+  cloneDiff: (root: string, name: string) => invoke<CloneDiff>("clone_diff", { root, name }),
+  /** A file at `rev`, or as it is in the worktree when `rev` is null. */
+  cloneFile: (root: string, name: string, rev: string | null, path: string) =>
+    invoke<string>("clone_file", { root, name, rev, path }),
   shellStatus: () => invoke<ShellStatus>("shell_status"),
   shellInstall: () => invoke<ShellStatus>("shell_install"),
   startOp: (op: OpRequest) => invoke<string>("start_op", { op }),

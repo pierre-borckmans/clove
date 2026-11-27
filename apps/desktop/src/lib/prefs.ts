@@ -2,10 +2,29 @@ import { useSyncExternalStore } from "react";
 import { FILE_MANAGER } from "./platform";
 import type { AppId } from "./types";
 
-export type Prefs = { editor: AppId; terminal: AppId };
+export type Prefs = {
+  editor: AppId;
+  terminal: AppId;
+  diffStyle: "split" | "unified";
+  diffWrap: boolean;
+  diffSort: "path" | "changes";
+  diffGroup: boolean;
+  /** Diff view file tree width, px. */
+  diffTree: number;
+  sidebarCollapsed: boolean;
+};
 
 const KEY = "clove.prefs";
-const DEFAULTS: Prefs = { editor: "vscode", terminal: "terminal" };
+const DEFAULTS: Prefs = {
+  editor: "vscode",
+  terminal: "terminal",
+  diffStyle: "split",
+  diffWrap: false,
+  diffSort: "path",
+  diffGroup: false,
+  diffTree: 256,
+  sidebarCollapsed: false,
+};
 const subs = new Set<() => void>();
 
 function read(): Prefs {

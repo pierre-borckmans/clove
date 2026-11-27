@@ -31,6 +31,8 @@
   --sage-soft: color-mix(in oklab, #2f6b4c 13%, transparent);
   --peel: #d9b945;
   --amber: oklch(0.7 0.13 70);
+  /* Removed lines: softer than --destructive, which stays for danger. */
+  --rose: oklch(0.58 0.14 18);
   --sidebar: oklch(0.958 0.004 160 / 0.94);
   --sidebar-line: oklch(0.2 0 0 / 0.07);
   --pane-shadow: 0 0 0 1px oklch(0.2 0 0 / 0.06), 0 1px 3px oklch(0.2 0 0 / 0.04);
@@ -60,6 +62,7 @@
   --bottle: #7cc49b;
   --bottle-soft: color-mix(in oklab, #7cc49b 16%, transparent);
   --sage: #7cc49b;
+  --rose: oklch(0.72 0.11 18);
   --sage-soft: color-mix(in oklab, #7cc49b 15%, transparent);
   --peel: #e3c95e;
   --amber: oklch(0.78 0.12 75);
@@ -107,6 +110,7 @@ html[data-shell="native"] {
   --color-sage-soft: var(--sage-soft);
   --color-peel: var(--peel);
   --color-amber: var(--amber);
+  --color-rose: var(--rose);
   --color-sidebar: var(--sidebar);
   --color-sidebar-line: var(--sidebar-line);
   --animate-pulse-soft: pulse-soft 1.6s ease-in-out infinite;
@@ -193,4 +197,22 @@ html[data-shell="native"] {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* @pierre/diffs, in the app's colours: card surfaces, bottle green for
+   additions, a soft rose for deletions, faint gutters. Vitesse supplies the
+   syntax colours; DIFF_CSS (diff.tsx) swaps its background for the card's.
+   Row tints are mixed by the library from these accents. */
+.diff-pane {
+  --diffs-font-family: var(--font-mono);
+  --diffs-header-font-family: var(--font-sans);
+  --diffs-font-size: 12px;
+  --diffs-addition-color-override: var(--sage);
+  --diffs-deletion-color-override: var(--rose);
+  --diffs-modified-color-override: var(--amber);
+  --diffs-bg-addition-override: var(--sage);
+  --diffs-bg-deletion-override: var(--rose);
+  --diffs-fg-number-override: var(--faint-foreground);
+  --diffs-fg-number-addition-override: var(--sage);
+  --diffs-fg-number-deletion-override: var(--rose);
 }

@@ -1,4 +1,11 @@
-import { createHashHistory, createRootRoute, createRoute, createRouter, Outlet } from "@tanstack/react-router";
+import {
+  createHashHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  lazyRouteComponent,
+  Outlet,
+} from "@tanstack/react-router";
 import { AppShell } from "@/components/app-shell";
 import { Crash } from "@/components/crash";
 import { CleanupPage } from "@/routes/cleanup";
@@ -17,6 +24,11 @@ const routeTree = rootRoute.addChildren([
   shellRoute.addChildren([
     createRoute({ getParentRoute: () => shellRoute, path: "/", component: HomePage }),
     createRoute({ getParentRoute: () => shellRoute, path: "/repo/$repoId", component: RepoPage }),
+    createRoute({
+      getParentRoute: () => shellRoute,
+      path: "/repo/$repoId/diff/$clone",
+      component: lazyRouteComponent(() => import("@/routes/diff"), "DiffPage"),
+    }),
     createRoute({ getParentRoute: () => shellRoute, path: "/doctor", component: DoctorPage }),
     createRoute({ getParentRoute: () => shellRoute, path: "/cleanup", component: CleanupPage }),
     createRoute({ getParentRoute: () => shellRoute, path: "/history", component: HistoryPage }),

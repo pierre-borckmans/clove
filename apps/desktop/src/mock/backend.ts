@@ -22,6 +22,7 @@ import type {
   RepoStatus,
   RepoSummary,
 } from "@/lib/types";
+import { MOCK_ATTRS, MOCK_PACKAGES, MOCK_PATCH } from "./diff";
 import { CARGO_OUTPUT, type MockRepo, machineChecks, PNPM_OUTPUT, seed, worktreeCheck } from "./fixtures";
 
 const repos = seed();
@@ -672,6 +673,23 @@ const commands: Record<string, (a: Args) => unknown> = {
   hide_popover: () => null,
   quit: () => null,
   forget_cache: () => null,
+  clone_diff: (a) => {
+    // `?diff=<url>`: a real clove_core::CloneDiff as JSON, to try the view on a real branch.
+    const src = new URLSearchParams(location.search).get("diff");
+    if (src) return fetch(src).then((r) => r.json());
+    const c = get(a.root as string).clones.find((x) => x.name === a.name);
+    const dirty = !!(c?.dirty || c?.ahead);
+    return {
+      base: "origin/main",
+      merge_base: "a41c0e9d3b7f",
+      patch: dirty ? MOCK_PATCH : "",
+      truncated: false,
+      skipped: [],
+      attrs: dirty ? MOCK_ATTRS : [],
+      packages: dirty ? MOCK_PACKAGES : [],
+    };
+  },
+  clone_file: () => "",
 };
 
 // Repos "on disk" the add-repo dialog offers: root, branch, seconds since last use.

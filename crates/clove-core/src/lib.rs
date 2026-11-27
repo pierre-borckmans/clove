@@ -13,6 +13,7 @@ pub mod brand;
 pub mod candidates;
 pub mod config;
 pub mod detect;
+pub mod diff;
 pub mod doctor;
 pub mod events;
 pub mod git;
@@ -34,6 +35,7 @@ pub mod worktrees;
 
 pub use candidates::RepoCandidate;
 pub use config::{Config, Exec, Step};
+pub use diff::CloneDiff;
 pub use events::{Event, Reporter, Silent, Timing};
 pub use ops::{
     BranchCandidate, Freshness, GoldenStatus, NewOptions, RefreshOptions, Removal, RemoveOptions, RepoStatus,

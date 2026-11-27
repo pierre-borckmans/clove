@@ -16,6 +16,7 @@ export const keys = {
   doctorRepo: (root: string) => ["doctor", "repo", root] as const,
   gc: (root: string) => ["gc", root] as const,
   cleanup: (root: string) => ["cleanup", root] as const,
+  diff: (root: string, name: string) => ["diff", root, name] as const,
   config: (root: string) => ["config", root] as const,
   prs: (root: string) => ["prs", root] as const,
   service: ["service"] as const,
@@ -40,7 +41,7 @@ export function useRepoChanges() {
   useEffect(() => {
     const un = listen<{ treesOnly?: boolean } | null>("repos-changed", (change) => {
       // Edits inside working trees change clone and worktree status only.
-      const only = change?.treesOnly ? ["clones", "worktrees"] : null;
+      const only = change?.treesOnly ? ["clones", "worktrees", "diff"] : null;
       void qc.invalidateQueries({
         predicate: (q) => {
           const k = String(q.queryKey[0]);
@@ -308,3 +309,14 @@ export async function copyText(text: string, label: string) {
 }
 
 export const copyPath = (path: string) => copyText(path, "Path copied");
+
+/** A clone's patch; refetched when its tree changes, like the clone list. */
+export function useCloneDiff(root: string | undefined, name: string) {
+  return useQuery({
+    queryKey: keys.diff(root ?? "", name),
+    queryFn: () => api.cloneDiff(root as string, name),
+    enabled: !!root,
+    refetchInterval: POLL_MS,
+    retry: false,
+  });
+}

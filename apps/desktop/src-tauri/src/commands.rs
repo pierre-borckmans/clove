@@ -540,3 +540,16 @@ pub async fn shell_install() -> CmdResult<ShellStatus> {
     })
     .await
 }
+
+/// A clone's changes against the merge-base with its base, as one git patch.
+#[tauri::command]
+pub async fn clone_diff(root: PathBuf, name: String) -> CmdResult<clove_core::CloneDiff> {
+    block(move || Clove::open(&root)?.diff(&name)).await
+}
+
+/// One file at `rev`, or in the worktree when `rev` is null: the diff view
+/// loads both sides to expand the unchanged lines around a hunk.
+#[tauri::command]
+pub async fn clone_file(root: PathBuf, name: String, rev: Option<String>, path: String) -> CmdResult<String> {
+    block(move || Clove::open(&root)?.file_at(&name, rev.as_deref(), &path)).await
+}
