@@ -35,6 +35,7 @@ pub mod steps;
 pub mod update;
 pub mod upgrade;
 pub mod util;
+pub mod venv;
 pub mod watch;
 pub mod worktrees;
 
