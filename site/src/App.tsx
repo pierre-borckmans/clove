@@ -213,7 +213,7 @@ function Features() {
       <Feature
         kicker="clove agents install"
         title={<>Your {em("agents")} reach for clove on their own.</>}
-        copy="One command teaches Claude Code, Codex, OpenCode and Pi to use clones. In repos clove manages, Claude Code and OpenCode V2 use clones for their own worktrees."
+        copy="One command teaches Claude Code, Codex, OpenCode V2 and Pi to use clones. In repos clove manages, Claude Code and OpenCode V2 use clones for their own worktrees."
       >
         <Term title="~/src/mono">
           <L>
@@ -226,7 +226,7 @@ function Features() {
             ✓ Codex instructions
           </L>
           <L at={550} c="var(--bottle)">
-            ✓ OpenCode plugin
+            ✓ OpenCode V2 plugin
           </L>
           <L at={700} c="var(--bottle)">
             ✓ Pi extension

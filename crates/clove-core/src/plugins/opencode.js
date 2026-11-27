@@ -1,4 +1,5 @@
 // Managed by clove (`clove agents install`; `clove agents remove` removes this file).
+import { Plugin, Worktree } from "@opencode/plugin";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
@@ -71,87 +72,60 @@ async function isManaged(cwd) {
   }
 }
 
-export default {
+export default Plugin.define({
   id: "clove",
   async setup(ctx) {
-    const projectDir = ctx.location?.project?.canonical || ctx.location?.directory || process.cwd();
-    const managed = await isManaged(projectDir);
-    // Registering a strategy makes it the recorded owner of created worktrees.
-    // Unmanaged repositories should keep OpenCode's default Git strategy.
-    if (managed && ctx.worktree?.transform) {
-      await ctx.worktree.transform((editor) => {
-        editor.add({
-          id: "clove",
-          async create(input, context) {
-            const { sourceDirectory, directory, branch } = input;
-            const signal = context?.signal;
-            const requestId = randomUUID();
-            try {
-              const stdout = await runClove(["hook", "opencode-worktree-create"], {
-                cwd: sourceDirectory,
-                stdin: JSON.stringify({ sourceDirectory, directory, branch, requestId }),
-                signal,
-              });
-              if (signal?.aborted) throw abortReason(signal);
-              return { directory: JSON.parse(stdout).directory };
-            } catch (error) {
-              if (!signal?.aborted) throw error;
-              await runClove(["hook", "opencode-worktree-abort"], {
-                stdin: JSON.stringify({ projectDirectory: projectDir, requestId }),
-              }).catch((rollbackError) => {
-                console.error(`clove: rollback failed for worktree request ${requestId}`, rollbackError);
-              });
-              throw abortReason(signal);
-            }
-          },
-          async remove(input, context) {
-            const directory = input.directory;
-            const force = Boolean(input.force);
-            if (context?.signal?.aborted) throw abortReason(context.signal);
-            try {
-              await runClove(["hook", "opencode-worktree-remove"], {
-                stdin: JSON.stringify({ directory, force, projectDirectory: projectDir }),
-              });
-            } catch (error) {
-              if (force || !(error?.code === 2 || /has uncommitted changes|contains modified or untracked files/i.test(error?.stderr ?? ""))) {
-                throw error;
-              }
-              const message = error.message;
-              let operationError;
-              try {
-                const { Worktree } = await import("@opencode/plugin");
-                operationError = new Worktree.OperationError({ message, forceRequired: true });
-              } catch {
-                operationError = Object.assign(new Error(message), { _tag: "Worktree.OperationError", forceRequired: true });
-              }
-              throw operationError;
-            }
-          },
-          async list(sourceDirectory, context) {
-            const stdout = await runClove(["hook", "opencode-worktree-list"], {
+    const projectDir = ctx.location.project.canonical ?? ctx.location.directory;
+    // Unmanaged repositories keep OpenCode's default Git strategy.
+    if (!await isManaged(projectDir)) return;
+    await ctx.worktree.transform((editor) => {
+      editor.add({
+        id: "clove",
+        async create({ sourceDirectory, directory, branch }, { signal }) {
+          const requestId = randomUUID();
+          try {
+            const stdout = await runClove(["hook", "opencode-worktree-create"], {
               cwd: sourceDirectory,
-              stdin: JSON.stringify({ sourceDirectory }),
-              signal: context?.signal,
+              stdin: JSON.stringify({ sourceDirectory, directory, branch, requestId }),
+              signal,
             });
-            return JSON.parse(stdout);
-          },
-        });
+            if (signal.aborted) throw abortReason(signal);
+            return { directory: JSON.parse(stdout).directory };
+          } catch (error) {
+            if (!signal.aborted) throw error;
+            await runClove(["hook", "opencode-worktree-abort"], {
+              stdin: JSON.stringify({ projectDirectory: projectDir, requestId }),
+            }).catch((rollbackError) => {
+              console.error(`clove: rollback failed for worktree request ${requestId}`, rollbackError);
+            });
+            throw abortReason(signal);
+          }
+        },
+        async remove({ directory, force }, { signal }) {
+          if (signal.aborted) throw abortReason(signal);
+          try {
+            await runClove(["hook", "opencode-worktree-remove"], {
+              stdin: JSON.stringify({ directory, force, projectDirectory: projectDir }),
+            });
+          } catch (error) {
+            if (force || !(error?.code === 2 || /has uncommitted changes|contains modified or untracked files/i.test(error?.stderr ?? ""))) {
+              throw error;
+            }
+            throw new Worktree.OperationError({ message: error.message, forceRequired: true });
+          }
+        },
+        async list(sourceDirectory, { signal }) {
+          const stdout = await runClove(["hook", "opencode-worktree-list"], {
+            cwd: sourceDirectory,
+            stdin: JSON.stringify({ sourceDirectory }),
+            signal,
+          });
+          return JSON.parse(stdout);
+        },
       });
-    }
-    if (managed && ctx.session?.hook) {
-      await ctx.session.hook("context", (event) => {
-        if (Array.isArray(event.system)) event.system.push({ type: "text", text: MANAGED_HINT });
-      });
-    }
+    });
+    await ctx.session.hook("context", (event) => {
+      event.system.push({ type: "text", text: MANAGED_HINT });
+    });
   },
-  // V1 supports context hooks, but not worktree strategies.
-  async server(input) {
-    const dir = input?.directory || input?.worktree || process.cwd();
-    const managed = await isManaged(dir);
-    return {
-      "experimental.chat.system.transform": async (_sysInput, output) => {
-        if (managed && Array.isArray(output?.system)) output.system.push(MANAGED_HINT);
-      },
-    };
-  },
-};
+});

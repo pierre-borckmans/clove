@@ -2,7 +2,7 @@
 
 [← README](../README.md)
 
-`clove agents install` teaches Claude Code, Codex, OpenCode and Pi to use clove. The instructions go in a short block between markers, leaving the rest of each file alone. Agents read `clove guide`, which matches the installed version.
+`clove agents install` teaches Claude Code, Codex, OpenCode V2 and Pi to use clove. The instructions go in a short block between markers, leaving the rest of each file alone. Agents read `clove guide`, which matches the installed version.
 
 ## Claude Code
 
@@ -12,18 +12,19 @@ Installs a skill at `~/.claude/skills/clove/SKILL.md`, adds the instructions to 
 
 Adds the instructions to `~/.codex/AGENTS.md`.
 
-## OpenCode
+## OpenCode V2
+
+Requires an `opencode` CLI on `PATH` that reports a stable 2.x version. Otherwise, clove skips OpenCode during install and omits it from agent status, without changing its files or skipping other agents.
 
 Installs `skills/clove/SKILL.md` and `plugins/clove.js` in OpenCode's config directory: `~/.config/opencode` by default, `$XDG_CONFIG_HOME/opencode` with an XDG config home, or `$OPENCODE_CONFIG_DIR` when set.
 
 Adds the instructions to `AGENTS.md` there. If that file is absent and `~/.claude` is a directory (or `~/.claude/CLAUDE.md` exists), clove leaves `AGENTS.md` absent so OpenCode reads `~/.claude/CLAUDE.md`, which clove creates or updates.
 
-- **V2:** Registers a native `clove` worktree strategy to create, remove and list worktrees in repos clove manages. Other repos keep OpenCode's default Git strategy. Both strategies keep the branch when removing a worktree. The plugin also adds a hint to session context in managed repos.
-- **V1 (1.18.29+):** Has no native worktree strategy hook. The same plugin adds a hint to system context in managed repos.
+Registers a native `clove` worktree strategy to create, remove and list worktrees in repos clove manages. Other repos keep OpenCode's default Git strategy. Both strategies keep the branch when removing a worktree. The plugin also adds a hint to session context in managed repos.
 
 The plugin checks whether a repo is managed when loaded. Reload or restart OpenCode after `clove init` or `clove deinit`.
 
-Before uninstalling the plugin, remove any OpenCode worktrees that use the `clove` strategy, either through OpenCode or with `clove rm`. OpenCode tracks which strategy owns each worktree.
+Before uninstalling the plugin or downgrading OpenCode, remove any OpenCode worktrees that use the `clove` strategy, either through OpenCode or with `clove rm`. OpenCode tracks which strategy owns each worktree. `clove agents remove` can remove the clove plugin even if the V2 CLI is no longer on `PATH`.
 
 ## Pi
 
@@ -34,7 +35,7 @@ Pi's `ExtensionAPI` has no native `WorktreeCreate` or `WorktreeRemove` hooks. Th
 ## Commands
 
 - `clove hook claude` prints the settings block.
-- `clove hook opencode` prints the self-contained plugin.
+- `clove hook opencode` prints the OpenCode V2 plugin.
 - `clove hook pi` prints the self-contained extension.
 - `clove agents status` shows what's installed.
 - `clove agents remove` takes the integration out.

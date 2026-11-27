@@ -154,8 +154,8 @@ function AgentsRow() {
           )}
         </div>
         <span className="text-[12px] text-faint">
-          Configures installed coding agents (Claude Code, Codex, OpenCode, Pi) with skills, global instructions, and
-          hooks where supported. Same as <Mono className="text-faint">clove agents install</Mono>.
+          Configures installed coding agents (Claude Code, Codex, OpenCode V2, Pi) with skills, global instructions,
+          and hooks where supported. Same as <Mono className="text-faint">clove agents install</Mono>.
         </span>
       </div>
     </Row>

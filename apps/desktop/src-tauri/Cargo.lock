@@ -528,7 +528,7 @@ dependencies = [
 
 [[package]]
 name = "clove-core"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "anyhow",
  "libc",
@@ -536,6 +536,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "toml 0.9.12+spec-1.1.0",
  "toml_edit 0.25.20+spec-1.1.0",
 ]

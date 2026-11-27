@@ -249,7 +249,7 @@ enum Cmd {
         #[command(subcommand)]
         action: ServiceAction,
     },
-    /// Teach Claude Code, Codex, OpenCode and Pi to use clove: skills, global
+    /// Teach Claude Code, Codex, OpenCode V2 and Pi to use clove: skills, global
     /// instructions, and hooks or extensions where supported.
     Agents {
         #[command(subcommand)]
@@ -257,7 +257,7 @@ enum Cmd {
     },
     /// How to use clove, written for coding agents (what `clove agents install` points them to).
     Guide,
-    /// Hooks for Claude Code, OpenCode and Pi. Codex uses instructions only.
+    /// Hooks for Claude Code, OpenCode V2 and Pi. Codex uses instructions only.
     Hook {
         #[command(subcommand)]
         action: HookAction,
@@ -280,7 +280,7 @@ enum Cmd {
 enum HookAction {
     /// Print the settings.json block that makes Claude Code use clove for worktrees.
     Claude,
-    /// Print the OpenCode plugin (worktree strategy and context hint).
+    /// Print the OpenCode V2 plugin (worktree strategy and context hint).
     Opencode,
     /// Print the Pi extension (managed-repo prompt hint).
     Pi,
@@ -2631,11 +2631,16 @@ fn cmd_agents(cli: &Cli, action: &AgentsAction) -> Result<()> {
     if cli.json {
         return emit(&ts);
     }
-    let all = agents::status()?;
-    if all.is_empty() {
+    if ts.is_empty()
+        && match action {
+            AgentsAction::Status => true,
+            AgentsAction::Install => agents::status()?.is_empty(),
+            AgentsAction::Remove => false,
+        }
+    {
         eprintln!(
-            "no supported coding agent found (looked for ~/.claude, ~/.codex, ~/.config/opencode, \
-             ~/.pi/agent, and opencode or pi on PATH)"
+            "no supported coding agent found (looked for ~/.claude, ~/.codex, ~/.pi/agent, \
+             Pi on PATH, and OpenCode V2 on PATH)"
         );
         return Ok(());
     }
@@ -2662,7 +2667,7 @@ fn cmd_agents(cli: &Cli, action: &AgentsAction) -> Result<()> {
             paint(DIM, tilde(&t.path))
         );
     }
-    match (action, agents::summary(&all)) {
+    match (action, agents::summary(&ts)) {
         (AgentsAction::Status, State::Installed) => {}
         (AgentsAction::Status, _) => eprintln!(
             "

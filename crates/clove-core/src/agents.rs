@@ -170,12 +170,12 @@ struct Env {
     pub opencode_config_dir: Option<PathBuf>,
     pub opencode_disable_claude_prompt: bool,
     pub pi_agent_dir: Option<PathBuf>,
-    pub has_opencode_bin: bool,
+    pub has_opencode_v2: bool,
     pub has_pi_bin: bool,
 }
 
 impl Env {
-    pub fn from_env() -> Result<Self> {
+    pub fn from_env(probe_opencode: bool) -> Result<Self> {
         let var = |name| {
             std::env::var_os(name)
                 .filter(|v| !v.is_empty())
@@ -193,7 +193,7 @@ impl Env {
             .iter()
             .any(|name| std::env::var(name).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))),
             pi_agent_dir: var("PI_CODING_AGENT_DIR"),
-            has_opencode_bin: on_path(&path, "opencode"),
+            has_opencode_v2: probe_opencode && opencode_v2(&path),
             has_pi_bin: on_path(&path, "pi"),
         })
     }
@@ -205,7 +205,7 @@ impl Env {
             opencode_config_dir: None,
             opencode_disable_claude_prompt: false,
             pi_agent_dir: None,
-            has_opencode_bin: false,
+            has_opencode_v2: false,
             has_pi_bin: false,
         }
     }
@@ -222,7 +222,68 @@ fn on_path(path: &std::ffi::OsStr, name: &str) -> bool {
         })
 }
 
-fn targets(env: &Env) -> Vec<(&'static str, PathBuf, Kind)> {
+fn opencode_v2(path: &std::ffi::OsStr) -> bool {
+    opencode_version(path).is_some_and(|output| {
+        // Current releases print "opencode v2.x.y"; also accept a bare version.
+        let version = output.trim();
+        let version = version.strip_prefix("opencode ").unwrap_or(version);
+        let version = version.strip_prefix('v').unwrap_or(version);
+        version.strip_prefix("2.").is_some_and(|rest| {
+            rest.split_once('.').is_some_and(|(minor, patch)| {
+                [minor, patch]
+                    .iter()
+                    .all(|num| !num.is_empty() && num.bytes().all(|byte| byte.is_ascii_digit()))
+            })
+        })
+    })
+}
+
+fn opencode_version(path: &std::ffi::OsStr) -> Option<String> {
+    use std::fs::File;
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    if !on_path(path, "opencode") {
+        return None;
+    }
+    // Even --version can initialize OpenCode's user directories. Keep the
+    // probe's files private and bound its wait so other agents can still install.
+    let probe = tempfile::tempdir().ok()?;
+    let stdout = probe.path().join("version");
+    let mut child = Command::new("opencode")
+        .env("PATH", path)
+        .env("XDG_CONFIG_HOME", probe.path())
+        .env("XDG_CACHE_HOME", probe.path())
+        .env("XDG_DATA_HOME", probe.path())
+        .env("XDG_STATE_HOME", probe.path())
+        .env("TMPDIR", probe.path())
+        .env_remove("OPENCODE_CONFIG_DIR")
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(File::create(&stdout).ok()?)
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => {
+                let version = std::io::read_to_string(File::open(stdout).ok()?.take(128)).ok()?;
+                return (version.len() < 128).then_some(version);
+            }
+            Ok(Some(_)) => return None,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
+fn targets(env: &Env, removing: bool) -> Vec<(&'static str, PathBuf, Kind)> {
     let mut v = vec![];
     let claude = env.home.join(".claude");
     if claude.is_dir() {
@@ -248,7 +309,8 @@ fn targets(env: &Env) -> Vec<(&'static str, PathBuf, Kind)> {
             .unwrap_or_else(|| env.home.join(".config"))
             .join("opencode")
     });
-    if opencode.is_dir() || env.has_opencode_bin {
+    // Only install for V2. Removal still works if OpenCode was removed or downgraded.
+    if env.has_opencode_v2 || (removing && opencode.is_dir()) {
         v.push((
             "OpenCode skill",
             opencode.join("skills/clove/SKILL.md"),
@@ -316,7 +378,7 @@ pub fn status_in(home: &Path) -> Vec<Target> {
 }
 
 fn status_with(env: &Env) -> Vec<Target> {
-    targets(env)
+    targets(env, false)
         .into_iter()
         .map(|(what, path, kind)| {
             let state = state(&path, kind);
@@ -326,7 +388,7 @@ fn status_with(env: &Env) -> Vec<Target> {
 }
 
 pub fn status() -> Result<Vec<Target>> {
-    Ok(status_with(&Env::from_env()?))
+    Ok(status_with(&Env::from_env(true)?))
 }
 
 /// Overall: installed only when every target is.
@@ -575,7 +637,7 @@ pub fn apply_in(home: &Path, on: bool) -> Result<Vec<Target>> {
 fn apply_with(env: &Env, on: bool) -> Result<Vec<Target>> {
     let unchanged = |on, before| (on && before == State::Installed) || (!on && before == State::Missing);
     let mut changed = vec![];
-    let targets = targets(env);
+    let targets = targets(env, !on);
     if on {
         for (_, path, kind) in &targets {
             if matches!(kind, Kind::Skill | Kind::File(_)) && whole_file(path, *kind)? == WholeFile::Foreign {
@@ -661,11 +723,11 @@ fn apply_with(env: &Env, on: bool) -> Result<Vec<Target>> {
 }
 
 pub fn install() -> Result<Vec<Target>> {
-    apply_with(&Env::from_env()?, true)
+    apply_with(&Env::from_env(true)?, true)
 }
 
 pub fn remove() -> Result<Vec<Target>> {
-    apply_with(&Env::from_env()?, false)
+    apply_with(&Env::from_env(false)?, false)
 }
 
 #[cfg(test)]
@@ -706,25 +768,43 @@ mod tests {
 
     #[test]
     fn opencode_detection_respects_config_overrides_and_path() {
-        let h = home_with(&[".config/opencode", "xdg/opencode", "override"]);
+        let h = home_with(&[".config/opencode", "old-bin", "new-bin"]);
         let h = h.path();
         let mut env = Env::for_home(h);
+        for (dir, version) in [("old-bin", "1.18.29"), ("new-bin", "opencode v2.4.1")] {
+            let bin = h.join(dir).join("opencode");
+            std::fs::write(&bin, format!("#!/bin/sh\nprintf '%s\\n' '{version}'\n")).unwrap();
+            std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         let plugin = |e: &Env| {
             status_with(e)
                 .into_iter()
                 .find(|t| t.what == "OpenCode plugin")
                 .map(|t| t.path)
         };
+        assert_eq!(plugin(&env), None);
+        env.has_opencode_v2 = opencode_v2(h.join("new-bin").as_os_str());
         assert_eq!(plugin(&env), Some(h.join(".config/opencode/plugins/clove.js")));
         env.xdg_config_home = Some(h.join("xdg"));
         assert_eq!(plugin(&env), Some(h.join("xdg/opencode/plugins/clove.js")));
         env.opencode_config_dir = Some(h.join("override"));
         assert_eq!(plugin(&env), Some(h.join("override/plugins/clove.js")));
-        env.opencode_config_dir = Some(h.join("new"));
-        assert_eq!(plugin(&env), None);
-        env.has_opencode_bin = true;
-        assert_eq!(plugin(&env), Some(h.join("new/plugins/clove.js")));
         assert_eq!(apply_with(&env, true).unwrap().len(), 3);
+
+        let path = std::env::join_paths([h.join("old-bin"), h.join("new-bin")]).unwrap();
+        env.has_opencode_v2 = opencode_v2(&path);
+        assert_eq!(plugin(&env), None);
+        assert_eq!(apply_with(&env, false).unwrap().len(), 3);
+
+        // An existing config and even a conflicting plugin don't make V1 eligible.
+        let plugin_path = h.join("override/plugins/clove.js");
+        std::fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
+        std::fs::write(&plugin_path, "// user plugin\n").unwrap();
+        std::fs::create_dir_all(h.join(".pi/agent")).unwrap();
+        assert_eq!(apply_with(&env, true).unwrap().len(), 3);
+        assert_eq!(read(&plugin_path), "// user plugin\n");
+        assert!(!h.join("override/AGENTS.md").exists());
+        assert!(!h.join("override/skills").exists());
     }
 
     #[test]
@@ -755,26 +835,32 @@ mod tests {
     fn opencode_does_not_shadow_claude_instructions() {
         let h = home_with(&[".claude", ".config/opencode"]);
         let h = h.path();
+        let mut env = Env::for_home(h);
+        env.has_opencode_v2 = true;
         let instructions = h.join(".config/opencode/AGENTS.md");
         let claude = h.join(".claude/CLAUDE.md");
 
         assert!(!claude.exists());
-        apply_in(h, true).unwrap();
+        apply_with(&env, true).unwrap();
         assert_eq!(block_of(&read(&claude)), Some(BLOCK));
         assert!(!instructions.exists());
 
         apply_in(h, false).unwrap();
         std::fs::write(&claude, "# Claude\n").unwrap();
-        apply_in(h, true).unwrap();
+        apply_with(&env, true).unwrap();
         assert!(!instructions.exists());
-        assert!(!status_in(h).iter().any(|t| t.what == "OpenCode instructions"));
-        let mut env = Env::for_home(h);
+        assert!(
+            !status_with(&env)
+                .iter()
+                .any(|t| t.what == "OpenCode instructions")
+        );
         env.opencode_disable_claude_prompt = true;
         apply_with(&env, true).unwrap();
         assert_eq!(block_of(&read(&instructions)), Some(BLOCK));
 
         std::fs::write(&instructions, "# OpenCode\n").unwrap();
-        apply_in(h, true).unwrap();
+        env.opencode_disable_claude_prompt = false;
+        apply_with(&env, true).unwrap();
         assert_eq!(block_of(&read(&instructions)), Some(BLOCK));
         apply_in(h, false).unwrap();
         assert_eq!(read(&instructions), "# OpenCode\n");
@@ -783,7 +869,8 @@ mod tests {
         let h = h.path();
         let instructions = h.join(".config/opencode/AGENTS.md");
         assert!(!h.join(".claude").exists());
-        apply_in(h, true).unwrap();
+        env.home = h.to_path_buf();
+        apply_with(&env, true).unwrap();
         assert_eq!(block_of(&read(&instructions)), Some(BLOCK));
     }
 
@@ -861,10 +948,12 @@ mod tests {
     fn plugin_and_extension_install_update_and_remove() {
         let h = home_with(&[".config/opencode", ".pi/agent"]);
         let h = h.path();
-        assert_eq!(summary(&status_in(h)), State::Missing);
-        assert_eq!(apply_in(h, true).unwrap().len(), 6);
-        assert_eq!(summary(&status_in(h)), State::Installed);
-        assert!(apply_in(h, true).unwrap().is_empty());
+        let mut env = Env::for_home(h);
+        env.has_opencode_v2 = true;
+        assert_eq!(summary(&status_with(&env)), State::Missing);
+        assert_eq!(apply_with(&env, true).unwrap().len(), 6);
+        assert_eq!(summary(&status_with(&env)), State::Installed);
+        assert!(apply_with(&env, true).unwrap().is_empty());
 
         let plugins = [
             (h.join(".config/opencode/plugins/clove.js"), OPENCODE_PLUGIN),
@@ -875,18 +964,18 @@ mod tests {
             assert_eq!(read(p), *body);
             std::fs::write(p, [MANAGED_FILE_PREFIX, b"old version\n"].concat()).unwrap();
         }
-        let outdated = status_in(h)
+        let outdated = status_with(&env)
             .into_iter()
             .filter(|t| t.state == State::Outdated)
             .count();
         assert_eq!(outdated, 2);
-        assert_eq!(apply_in(h, true).unwrap().len(), 2);
+        assert_eq!(apply_with(&env, true).unwrap().len(), 2);
         for (p, body) in &plugins {
             assert_eq!(read(p), *body);
         }
         assert_eq!(apply_in(h, false).unwrap().len(), 6);
         assert!(apply_in(h, false).unwrap().is_empty());
-        assert_eq!(summary(&status_in(h)), State::Missing);
+        assert_eq!(summary(&status_with(&env)), State::Missing);
         for (p, _) in &plugins {
             assert!(!p.parent().unwrap().exists());
         }
@@ -909,17 +998,19 @@ mod tests {
             (".claude/skills/clove/SKILL.md", b""),
         ] {
             let h = home_with(&[]);
+            let mut env = Env::for_home(h.path());
+            env.has_opencode_v2 = name.starts_with(".config/opencode/");
             std::fs::create_dir_all(h.path().join(".claude")).unwrap();
             let p = h.path().join(name);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(&p, bytes).unwrap();
-            let entry = status_in(h.path()).into_iter().find(|t| t.path == p).unwrap();
+            let entry = status_with(&env).into_iter().find(|t| t.path == p).unwrap();
             assert_eq!(entry.state, State::Outdated, "{name}");
-            let err = apply_in(h.path(), true).unwrap_err().to_string();
+            let err = apply_with(&env, true).unwrap_err().to_string();
             assert!(err.contains(&p.display().to_string()), "{err}");
             assert!(err.contains("was not written by clove"), "{err}");
             assert_eq!(std::fs::read(&p).unwrap(), bytes, "{name}");
-            for target in status_in(h.path()) {
+            for target in status_with(&env) {
                 if target.path != p {
                     assert_eq!(target.state, State::Missing, "{name}: {}", target.path.display());
                     assert!(!target.path.exists(), "{name}: {}", target.path.display());
