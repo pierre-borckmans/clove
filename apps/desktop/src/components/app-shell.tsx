@@ -2,6 +2,7 @@ import { Outlet, useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { useHotkey } from "@/hooks/use-hotkey";
+import { cycleAppearance } from "@/hooks/use-theme";
 import { listen } from "@/lib/bridge";
 import { setPrefs, usePrefs } from "@/lib/prefs";
 import { useAutoPruneToasts, useRepoChanges, useRepos } from "@/lib/queries";
@@ -34,6 +35,7 @@ export function AppShell() {
   });
   const collapsed = usePrefs().sidebarCollapsed;
   useHotkey({ key: "b", meta: true }, () => setPrefs({ sidebarCollapsed: !collapsed }));
+  useHotkey({ key: "l", meta: true, shift: true }, cycleAppearance);
   // The webview would reload on ⌘R; refetch instead.
   useHotkey({ key: "r", meta: true }, () => window.dispatchEvent(new Event("clove:refetch")));
   useEffect(() => {

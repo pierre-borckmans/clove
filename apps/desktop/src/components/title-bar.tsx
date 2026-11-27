@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams, useRouterState } from "@tanstack/react-router";
-import { ChevronRight, Loader, PanelLeft, Search } from "lucide-react";
+import { ChevronRight, Loader, Monitor, Moon, PanelLeft, Search, Sun } from "lucide-react";
 import type { ReactNode } from "react";
+import { cycleAppearance } from "@/hooks/use-theme";
 import { isTauri } from "@/lib/bridge";
 import { useOps } from "@/lib/ops";
 import { isMac } from "@/lib/platform";
@@ -69,6 +70,7 @@ export function TitleBar() {
       <div data-tauri-drag-region className="flex items-center justify-end gap-3">
         <Running />
         <Service />
+        <AppearanceButton />
         <Version />
       </div>
     </div>
@@ -159,6 +161,22 @@ function Service() {
           : "The background service is off: golden images go stale until you refresh them."}
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+const APPEARANCE = {
+  system: { icon: <Monitor />, label: "Appearance: system" },
+  light: { icon: <Sun />, label: "Appearance: light" },
+  dark: { icon: <Moon />, label: "Appearance: dark" },
+} as const;
+
+/** Cycles system, light, dark; the icon shows the current choice. */
+function AppearanceButton() {
+  const a = APPEARANCE[usePrefs().appearance];
+  return (
+    <BarButton label={a.label} keys="mod+shift+l" onClick={cycleAppearance}>
+      {a.icon}
+    </BarButton>
   );
 }
 

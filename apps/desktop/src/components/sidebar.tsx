@@ -42,7 +42,7 @@ export function Sidebar({ compact = false }: { compact?: boolean }) {
   const prefs = usePrefs();
 
   return (
-    <aside className="flex h-full shrink-0 flex-col bg-sidebar" style={{ width: SIDEBAR }}>
+    <aside className="flex h-full shrink-0 flex-col" style={{ width: SIDEBAR }}>
       <nav className="mt-2 flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
         <div
           className="group/section flex items-center justify-between overflow-hidden pr-4 pl-4 transition-[height] duration-200 ease-out"
