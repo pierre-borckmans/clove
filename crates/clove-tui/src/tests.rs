@@ -454,10 +454,7 @@ fn stacked_detail() {
 fn remove_dialog() {
     let mut app = app();
     key(&mut app, KeyCode::Char('d'));
-    // From the remove button, up twice reaches "also delete branch".
-    key(&mut app, KeyCode::Up);
-    key(&mut app, KeyCode::Up);
-    key(&mut app, KeyCode::Char(' '));
+    // "also delete branch" is ticked from the start.
     let (s, _) = render(&mut app, 120, 28);
     insta::assert_snapshot!(s);
 }
@@ -603,7 +600,7 @@ fn removing_the_clone_you_are_in_leaves_it_first() {
     match &inside.exit {
         Some(Exit::CdThen(root, args)) => {
             assert_eq!(root, &PathBuf::from("/work/app"));
-            assert_eq!(args.join(" "), "rm -D --force feat-login");
+            assert_eq!(args.join(" "), "rm --keep-branch --force feat-login");
         }
         e => panic!("{e:?}"),
     }
@@ -975,7 +972,9 @@ fn creates_a_clone_and_selects_it() {
     list.push(info);
     app.apply_data(data("/work/app", status(true, list.len()), list));
     assert_eq!(app.selected_clone().unwrap().name, "feat-search");
-    // Enter on the finished job view cds into the new clone.
+    // Enter closes the finished job view; a second Enter on the list cds.
+    key(&mut app, KeyCode::Enter);
+    assert!(app.modal.is_none() && app.exit.is_none());
     key(&mut app, KeyCode::Enter);
     assert_eq!(app.exit, Some(Exit::Cd("/work/app.clove/feat-search/app".into())));
 }
@@ -999,9 +998,7 @@ fn remove_dirty_defaults_to_force() {
         panic!()
     };
     assert!(f.force, "dirty clone needs force to be removable");
-    key(&mut app, KeyCode::Up);
-    key(&mut app, KeyCode::Up);
-    key(&mut app, KeyCode::Char(' '));
+    assert!(f.delete_branch, "the branch goes by default");
     let fx = key(&mut app, KeyCode::Enter);
     let Some(Effect::Spawn { id, .. }) = fx.first().cloned() else {
         panic!("{fx:?}")
@@ -1303,7 +1300,7 @@ fn remove_dialog_is_clickable() {
     let Some(Modal::Remove(f)) = &app.modal else {
         panic!()
     };
-    assert!(f.delete_branch);
+    assert!(!f.delete_branch);
     // A click inside the dialog but off any control does nothing.
     let (x, y) = find(&s, "uncommitted changes");
     click(&mut app, x, y);
@@ -1626,10 +1623,7 @@ fn removing_a_worktree_never_forces() {
     assert!(!f.items().contains(&RemoveItem::Force));
     let (s, _) = render(&mut app, 120, 28);
     assert!(s.contains("git worktree remove"), "{s}");
-    // Up from the remove button reaches "also delete branch".
-    key(&mut app, KeyCode::Up);
-    key(&mut app, KeyCode::Char(' '));
-    key(&mut app, KeyCode::Down);
+    // "also delete branch" is on by default.
     let fx = key(&mut app, KeyCode::Enter);
     assert!(matches!(&fx[..], [Effect::Spawn { .. }]));
     match &app.jobs.last().unwrap().task {
@@ -2593,4 +2587,142 @@ fn an_up_to_date_check_says_so() {
     assert!(a.toasts.iter().any(|t| t.text == "clove 0.1.0 is up to date"));
     let (s, _) = render(&mut a, 120, 32);
     assert!(!s.contains("upgrade"));
+}
+
+#[test]
+fn mark_several_and_remove_them_together() {
+    let mut app = app_with_worktrees();
+    // Space marks the selected row; again unmarks it.
+    key(&mut app, KeyCode::Char(' '));
+    key(&mut app, KeyCode::Char(' '));
+    assert!(app.marks.is_empty());
+    key(&mut app, KeyCode::Char(' '));
+    key(&mut app, KeyCode::Down);
+    key(&mut app, KeyCode::Down);
+    key(&mut app, KeyCode::Char(' '));
+    key(&mut app, KeyCode::End);
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Char(' '));
+    assert_eq!(app.marks.len(), 3);
+    let (s, _) = render(&mut app, 120, 30);
+    assert!(s.contains("3 marked") && s.contains("d remove marked"), "{s}");
+    let row = s.lines().find(|l| l.contains("feat-login")).unwrap();
+    assert!(row.contains("✓● feat-login"), "{s}");
+
+    key(&mut app, KeyCode::Char('d'));
+    let Some(Modal::Remove(f)) = &app.modal else {
+        panic!("no remove dialog");
+    };
+    let names: Vec<&str> = f.batch.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["feat-login", "spike-cache", "app-docs"]);
+    assert!(
+        f.delete_branch && !f.force,
+        "branches go; dirty ones stay unless forced"
+    );
+    let (s, _) = render(&mut app, 120, 30);
+    insta::assert_snapshot!(s);
+
+    // One job each, so one failing doesn't stop the rest; the dirty one
+    // stays without force; marks clear.
+    let fx = key(&mut app, KeyCode::Enter);
+    assert_eq!(fx.len(), 2, "{fx:?}");
+    assert!(app.marks.is_empty());
+    let tasks: Vec<&Task> = app.jobs.iter().map(|j| &j.task).collect();
+    match &tasks[..] {
+        [
+            Task::Remove { name, opts },
+            Task::RemoveWorktree {
+                path,
+                delete_branch,
+                force,
+                ..
+            },
+        ] => {
+            assert_eq!(name, "spike-cache");
+            assert!(opts.delete_branch && !opts.force);
+            assert_eq!(path, &PathBuf::from("/work/app-docs"));
+            assert!(*delete_branch && !*force);
+        }
+        t => panic!("{t:?}"),
+    }
+    // A failure is reported for that one only.
+    let id = app.jobs[0].id;
+    app.on_msg(Msg::Done(id, Err("`spike-cache` is busy".into())));
+    assert!(app.toasts.iter().any(|t| t.text.contains("busy")));
+    assert!(app.busy_worktree(&PathBuf::from("/work/app-docs")).is_some());
+
+    // With force, the dirty one goes too.
+    key(&mut app, KeyCode::Home);
+    key(&mut app, KeyCode::Char(' '));
+    key(&mut app, KeyCode::Down);
+    key(&mut app, KeyCode::Char(' '));
+    key(&mut app, KeyCode::Char('d'));
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Char(' '));
+    let fx = key(&mut app, KeyCode::Char('y'));
+    assert_eq!(fx.len(), 2, "{fx:?}");
+    let n = app.jobs.len();
+    assert!(
+        app.jobs[n - 2..]
+            .iter()
+            .all(|j| matches!(&j.task, Task::Remove { opts, .. } if opts.force))
+    );
+}
+
+#[test]
+fn esc_unmarks_and_remove_without_marks_is_unchanged() {
+    let mut app = app();
+    key(&mut app, KeyCode::Char(' '));
+    key(&mut app, KeyCode::Esc);
+    assert!(app.marks.is_empty());
+    assert!(app.exit.is_none() && !app.quitting, "esc only unmarked");
+    key(&mut app, KeyCode::Char('d'));
+    let Some(Modal::Remove(f)) = &app.modal else {
+        panic!("no remove dialog");
+    };
+    assert!(f.batch.is_empty());
+    assert_eq!(f.name, "feat-login");
+    // Cancelling keeps marks; switching repo drops them.
+    key(&mut app, KeyCode::Esc);
+    key(&mut app, KeyCode::Char(' '));
+    key(&mut app, KeyCode::Char('d'));
+    key(&mut app, KeyCode::Esc);
+    assert_eq!(app.marks.len(), 1);
+    key(&mut app, KeyCode::Tab);
+    assert!(app.marks.is_empty());
+}
+
+#[test]
+fn removing_marked_ones_you_are_in_leaves_first() {
+    let mut app = app_with_worktrees();
+    app.start_dir = "/work/app.clove/fix-race/app".into();
+    app.integrated = true;
+    key(&mut app, KeyCode::Down);
+    key(&mut app, KeyCode::Char(' '));
+    key(&mut app, KeyCode::Down);
+    key(&mut app, KeyCode::Char(' '));
+    key(&mut app, KeyCode::End);
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Char(' '));
+    key(&mut app, KeyCode::Char('d'));
+    let (s, _) = render(&mut app, 120, 30);
+    assert!(s.contains("you're in one of them"), "{s}");
+    // Untick "also delete their branches".
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Up);
+    key(&mut app, KeyCode::Char(' '));
+    let fx = key(&mut app, KeyCode::Char('y'));
+    assert!(fx.is_empty(), "nothing runs in the TUI: {fx:?}");
+    match &app.exit {
+        Some(Exit::CdThen(root, args)) => {
+            assert_eq!(root, &PathBuf::from("/work/app"));
+            assert_eq!(
+                args.join(" "),
+                "rm --keep-branch fix-race spike-cache /work/app-docs"
+            );
+        }
+        e => panic!("{e:?}"),
+    }
 }

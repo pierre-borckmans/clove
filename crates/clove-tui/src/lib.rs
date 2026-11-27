@@ -109,6 +109,9 @@ pub fn run(start_dir: &Path) -> Result<()> {
                 }
             }
         }
+        // Fresh clock: a job that ends while polling would otherwise end at the
+        // time it was drawn, e.g. a spare-clone `new` reading 0ms.
+        app.now_ms = start.elapsed().as_millis() as u64;
         while let Ok(msg) = rx.try_recv() {
             effects.extend(app.on_msg(msg));
         }

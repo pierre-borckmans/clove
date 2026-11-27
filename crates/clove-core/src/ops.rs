@@ -98,7 +98,8 @@ pub enum Removal {
 pub struct RemoveOptions {
     /// Remove even with uncommitted changes, and force-unmount busy volumes.
     pub force: bool,
-    /// Also delete the branch (`git branch -d`, or `-D` with force).
+    /// Also delete the branch: `-D` when its tip is in the base or
+    /// `branch_merged`, else `-d`, which keeps a branch with unmerged commits.
     pub delete_branch: bool,
     /// The caller proved nothing on the branch is missing from the base (a
     /// squash-merged PR), so `-D` is safe where `-d` would refuse.
@@ -1094,16 +1095,13 @@ impl Clove {
         {
             // A branch whose tip is already in its base loses nothing; `-d` would
             // still refuse when the main checkout's branch is behind that base.
+            // `force` is about uncommitted changes, never about unmerged commits.
             let merged = git::ok(&self.root, &["merge-base", "--is-ancestor", b, &meta.base]);
-            let flag = if opts.force || merged || opts.branch_merged {
-                "-D"
-            } else {
-                "-d"
-            };
+            let flag = if merged || opts.branch_merged { "-D" } else { "-d" };
             match git::run_ok(&self.root, &["branch", flag, b]) {
                 Ok(_) => branch_deleted = true,
                 Err(e) => r.event(Event::Warn {
-                    message: format!("kept branch {b}: {e:#}"),
+                    message: kept_branch(b, &meta.base, &e),
                 }),
             }
         }
@@ -1727,6 +1725,17 @@ pub const PENDING_FILE: &str = "remove-when-free.json";
 
 /// The lock reason git prints when something tries `git worktree remove` on a
 /// clone: it names the command that works.
+/// Why `git branch -d` kept a branch. Its "not fully merged" refusal means
+/// commits neither in the base nor pushed; anything else keeps git's words.
+pub(crate) fn kept_branch(branch: &str, base: &str, e: &anyhow::Error) -> String {
+    let e = format!("{e:#}");
+    if e.contains("not fully merged") {
+        format!("kept branch {branch}: it has unpushed commits not in {base}")
+    } else {
+        format!("kept branch {branch}: {e}")
+    }
+}
+
 fn lock_reason(name: &str) -> String {
     format!("clove clone: remove it with `clove rm {name}` (git can't unmount or delete its disk image)")
 }

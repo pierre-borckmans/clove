@@ -66,8 +66,8 @@ terminal; as an agent, resolve them yourself.
 
 ## Remove it
 
-    clove rm <clone>               # unmount and delete; keeps the branch
-    clove rm -D <clone>            # also delete the branch
+    clove rm <clone>               # unmount and delete; branch too, unless unpushed
+    clove rm --keep-branch <clone> # keep the branch either way
 
 Only remove clones you made in this session. Others may belong to the user
 or to another agent. `clove rm` refuses uncommitted changes; if a process

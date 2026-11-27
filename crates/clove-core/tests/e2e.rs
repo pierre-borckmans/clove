@@ -652,6 +652,13 @@ fn full_lifecycle() {
     // remove refuses dirty clones without --force
     std::fs::write(a.path.join("app.txt"), "dirty\n").unwrap();
     assert!(c.remove("feat-a", &RemoveOptions::default(), &Silent).is_err());
+    // --force discards the changes but never unmerged commits: the branch stays.
+    let warns = Mutex::new(vec![]);
+    let collect = |e: Event| {
+        if let Event::Warn { message } = e {
+            warns.lock().unwrap().push(message);
+        }
+    };
     c.remove(
         "feat-a",
         &RemoveOptions {
@@ -661,10 +668,16 @@ fn full_lifecycle() {
             unlock: false,
             ..Default::default()
         },
-        &Silent,
+        &collect,
     )
     .unwrap();
-    assert!(!git(&root, &["branch", "--list", "feat/a"]).contains("feat/a"));
+    assert!(git(&root, &["branch", "--list", "feat/a"]).contains("feat/a"));
+    let w = warns.lock().unwrap().join("\n");
+    assert!(
+        w.contains("kept branch feat/a: it has unpushed commits not in"),
+        "{w}"
+    );
+    git(&root, &["branch", "-D", "feat/a"]);
     c.remove("feat-b", &RemoveOptions::default(), &Silent).unwrap();
     c.remove("peek", &RemoveOptions::default(), &Silent).unwrap();
     assert!(c.list(false).unwrap().is_empty());

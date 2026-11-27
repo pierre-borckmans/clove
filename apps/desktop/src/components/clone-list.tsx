@@ -2,6 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowDown,
   ArrowUp,
+  Check,
   Code,
   Copy,
   Ellipsis,
@@ -19,7 +20,7 @@ import {
   Undo2,
   Unplug,
 } from "lucide-react";
-import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -53,7 +54,7 @@ import { Empty } from "./empty";
 import { Shortcut } from "./shortcut";
 import { StatusDot } from "./status-dot";
 
-const COLS = "grid-cols-[14px_minmax(0,1fr)_176px_84px_72px_148px]";
+const COLS = "grid-cols-[16px_14px_minmax(0,1fr)_176px_84px_72px_148px]";
 
 export function CloneList({
   root,
@@ -66,6 +67,9 @@ export function CloneList({
 }) {
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState(0);
+  // Clones picked for a bulk remove (checkbox, mod-click, shift-click, space).
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  const anchor = useRef<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
   const prefs = usePrefs();
@@ -86,11 +90,39 @@ export function CloneList({
 
   useHotkey({ key: "/" }, () => filterRef.current?.focus());
 
+  // Picks of clones that went away go too.
+  useEffect(() => {
+    setPicked((p) => {
+      const live = new Set(clones.map((c) => c.name));
+      return [...p].every((n) => live.has(n)) ? p : new Set([...p].filter((n) => live.has(n)));
+    });
+  }, [clones]);
+
   const removing = new Set(
     ops
       .filter((o) => o.status === "running" && o.req.kind === "remove" && o.req.root === root)
       .map((o) => (o.req.kind === "remove" ? o.req.name : "")),
   );
+
+  const pickedClones = clones.filter((c) => picked.has(c.name) && !removing.has(c.name));
+  const togglePick = (i: number) => {
+    const c = shown[i];
+    if (!c) return;
+    anchor.current = i;
+    setPicked((p) => {
+      const n = new Set(p);
+      if (!n.delete(c.name)) n.add(c.name);
+      return n;
+    });
+  };
+  // Shift-click: picks every row between the last one picked and this one.
+  const pickRange = (i: number) => {
+    const from = anchor.current ?? selected;
+    const [a, b] = from < i ? [from, i] : [i, from];
+    setPicked((p) => new Set([...p, ...shown.slice(a, b + 1).map((c) => c.name)]));
+    anchor.current = i;
+  };
+  const removePicked = () => setUi({ remove: { root, clones: pickedClones } });
 
   const act = (c: CloneInfo, key: string) => {
     switch (key) {
@@ -108,7 +140,7 @@ export function CloneList({
       case "m":
         return mount.mutate({ name: c.name, mounted: c.mounted });
       case "backspace":
-        return setUi({ remove: { root, clone: c } });
+        return pickedClones.length ? removePicked() : setUi({ remove: { root, clones: [c] } });
     }
   };
 
@@ -120,6 +152,8 @@ export function CloneList({
     else if (k === "arrowup" || k === "k") setSelected((s) => Math.max(0, s - 1));
     else if (c && !(e.metaKey || e.ctrlKey) && ["enter", "e", "t", "f", "c", "d", "m"].includes(k)) act(c, k);
     else if (c && k === "backspace" && (e.metaKey || e.ctrlKey)) act(c, "backspace");
+    else if (c && k === " ") togglePick(selected);
+    else if (k === "escape" && picked.size > 0) setPicked(new Set());
     else return;
     e.preventDefault();
   };
@@ -151,6 +185,16 @@ export function CloneList({
           {clones.length} · {clones.filter((c) => c.mounted).length} mounted
         </span>
         <div className="flex-1" />
+        {pickedClones.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <Button variant="ghost" size="sm" className="h-7 text-[12.5px]" onClick={() => setPicked(new Set())}>
+              Clear
+            </Button>
+            <Button variant="destructive" size="sm" className="h-7 gap-1.5 text-[12.5px]" onClick={removePicked}>
+              <Trash2 className="size-3.5" /> Remove {pickedClones.length}
+            </Button>
+          </div>
+        )}
         <div className="relative">
           <input
             ref={filterRef}
@@ -186,6 +230,7 @@ export function CloneList({
           )}
         >
           <span />
+          <span />
           <span>Name</span>
           <span>Changes</span>
           <span>Created</span>
@@ -206,10 +251,16 @@ export function CloneList({
               clone={c}
               root={root}
               selected={i === selected}
+              picked={picked.has(c.name)}
+              picking={picked.size > 0}
               busy={removing.has(c.name)}
               stale={goldenGeneration !== null && c.golden_generation < goldenGeneration}
               check={prs?.get(c.name)}
-              onSelect={() => {
+              onPick={(range) => (range ? pickRange(i) : togglePick(i))}
+              onSelect={(e) => {
+                if (e.metaKey || e.ctrlKey) togglePick(i);
+                else if (e.shiftKey) pickRange(i);
+                else anchor.current = i;
                 setSelected(i);
                 listRef.current?.focus();
               }}
@@ -230,7 +281,8 @@ export function CloneList({
         <Hint keys="d" label="changes" />
         <Hint keys="c" label="copy path" />
         <Hint keys="m" label="mount" />
-        <Hint keys="mod+backspace" label="remove" />
+        <Hint keys="space" label="select" />
+        <Hint keys="mod+backspace" label={pickedClones.length ? `remove ${pickedClones.length}` : "remove"} />
       </div>
     </section>
   );
@@ -252,6 +304,7 @@ export function CloneListSkeleton({ rows = 3 }: { rows?: number }) {
           )}
         >
           <span />
+          <span />
           <span>Name</span>
           <span>Changes</span>
           <span>Created</span>
@@ -260,6 +313,7 @@ export function CloneListSkeleton({ rows = 3 }: { rows?: number }) {
         </div>
         {Array.from({ length: rows }, (_, i) => (
           <div key={i} className={cn("grid h-[52px] items-center gap-x-4 border-b px-4 last:border-b-0", COLS)}>
+            <span />
             <Skeleton className="size-2 rounded-full" />
             <div className="flex flex-col gap-1.5">
               <Skeleton className="h-3.5 w-40" />
@@ -285,22 +339,61 @@ function Hint({ keys, label }: { keys: string; label: string }) {
   );
 }
 
+/** A row's pick box: shown on hover, on the selected row, or once any is picked. */
+export function PickBox({
+  checked,
+  visible,
+  label,
+  onToggle,
+}: {
+  checked: boolean;
+  visible: boolean;
+  label: string;
+  onToggle: (range: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={checked}
+      aria-label={label}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle(e.shiftKey);
+      }}
+      className={cn(
+        "flex size-4 items-center justify-center rounded-[4px] border transition-opacity focus-visible:opacity-100",
+        checked ? "border-primary bg-primary text-primary-foreground" : "border-foreground/25 bg-background",
+        checked || visible ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+      )}
+    >
+      {checked && <Check className="size-3" strokeWidth={3} />}
+    </button>
+  );
+}
+
 function CloneRow({
   clone: c,
   root,
   selected,
+  picked,
+  picking,
   busy,
   stale,
   check,
+  onPick,
   onSelect,
 }: {
   clone: CloneInfo;
   root: string;
   selected: boolean;
+  picked: boolean;
+  picking: boolean;
   busy: boolean;
   stale: boolean;
   check?: MergeCheck;
-  onSelect: () => void;
+  onPick: (range: boolean) => void;
+  onSelect: (e: MouseEvent) => void;
 }) {
   const prefs = usePrefs();
   const openDiff = useOpenDiff(root);
@@ -317,10 +410,11 @@ function CloneRow({
       className={cn(
         "group grid h-[52px] items-center gap-x-4 border-b px-4 transition-colors last:border-b-0",
         COLS,
-        selected ? "bg-foreground/[0.04]" : "hover:bg-foreground/[0.025]",
+        picked ? "bg-primary/[0.06]" : selected ? "bg-foreground/[0.04]" : "hover:bg-foreground/[0.025]",
         busy && "opacity-55",
       )}
     >
+      <PickBox checked={picked} visible={selected || picking} label={`Select ${c.name}`} onToggle={onPick} />
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="flex items-center">
@@ -614,7 +708,7 @@ export function CloneMenu({ clone: c, root, children }: { clone: CloneInfo; root
           {c.mounted ? "Unmount" : "Mount"}
           <DropdownMenuShortcut>M</DropdownMenuShortcut>
         </DropdownMenuItem>
-        <DropdownMenuItem variant="destructive" onSelect={() => setUi({ remove: { root, clone: c } })}>
+        <DropdownMenuItem variant="destructive" onSelect={() => setUi({ remove: { root, clones: [c] } })}>
           <Trash2 /> Remove clone…
           <DropdownMenuShortcut>{isMac ? "⌘⌫" : "Ctrl+⌫"}</DropdownMenuShortcut>
         </DropdownMenuItem>

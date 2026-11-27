@@ -180,6 +180,25 @@ let opSeq = 1;
 
 type Script = { step: string; ms: number; output?: string[]; skip?: string }[];
 
+/** Like clove: a branch with commits not in the base stays, with a warning. */
+function dropBranch(
+  id: string,
+  r: { refs: { kind: string; name: string }[] },
+  b: string,
+  merged: boolean,
+  base: string,
+) {
+  if (!merged) {
+    emit("op-event", {
+      id,
+      at: Date.now(),
+      event: { event: "warn", message: `kept branch ${b}: it has unpushed commits not in ${base}` },
+    });
+    return;
+  }
+  r.refs = r.refs.filter((x) => !(x.kind === "local" && x.name === b));
+}
+
 async function play(id: string, script: Script) {
   for (const s of script) {
     const ev = (event: CloveEvent) => emit("op-event", { id, at: Date.now(), event });
@@ -267,7 +286,7 @@ async function runOp(id: string, op: OpRequest): Promise<unknown> {
         { step: "delete image", ms: 160 },
       ]);
       r.clones = r.clones.filter((x) => x.name !== op.name);
-      if (op.delete_branch && c.branch) r.refs = r.refs.filter((x) => !(x.kind === "local" && x.name === c.branch));
+      if (op.delete_branch && c.branch) dropBranch(id, r, c.branch, !c.ahead, r.status.base);
       return null;
     }
     case "remove_worktree": {
@@ -281,7 +300,7 @@ async function runOp(id: string, op: OpRequest): Promise<unknown> {
       }
       await play(id, [{ step: op.force ? "git worktree remove --force" : "git worktree remove", ms: 260 }]);
       r.worktrees = r.worktrees.filter((x) => x.path !== op.path);
-      if (op.delete_branch && w.branch) r.refs = r.refs.filter((x) => !(x.kind === "local" && x.name === w.branch));
+      if (op.delete_branch && w.branch) dropBranch(id, r, w.branch, w.pr?.state === "merged", r.status.base);
       return null;
     }
     case "update": {

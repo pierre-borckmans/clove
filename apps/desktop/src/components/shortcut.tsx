@@ -11,6 +11,7 @@ const SYMBOLS: Record<string, string> = {
   up: "↑",
   down: "↓",
   esc: "esc",
+  space: "space",
 };
 
 /** `keys="mod+n"` renders ⌘ N (Ctrl N on Linux) as small key caps. */

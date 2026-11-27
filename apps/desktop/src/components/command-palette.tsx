@@ -264,7 +264,10 @@ function ClonePage({ repo, clone: c, close }: { repo: RepoSummary; clone: CloneI
       <CommandItem onSelect={run(() => mount.mutate({ name: c.name, mounted: c.mounted }))}>
         {c.mounted ? <Unplug /> : <HardDrive />} {c.mounted ? "Unmount" : "Mount"}
       </CommandItem>
-      <CommandItem onSelect={run(() => setUi({ remove: { root: repo.root, clone: c } }))} className="text-destructive">
+      <CommandItem
+        onSelect={run(() => setUi({ remove: { root: repo.root, clones: [c] } }))}
+        className="text-destructive"
+      >
         <Trash2 className="!text-destructive" /> Remove clone…
       </CommandItem>
     </CommandGroup>

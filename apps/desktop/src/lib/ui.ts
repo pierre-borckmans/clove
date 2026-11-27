@@ -8,9 +8,10 @@ export type UiState = {
   palette: boolean;
   newClone: { root: string | null; branch?: string } | null;
   addRepo: boolean;
-  remove: { root: string; clone: CloneInfo } | null;
-  /** Remove a plain git worktree. */
-  removeWorktree: { root: string; worktree: OtherWorktree } | null;
+  /** Remove one clone, or several picked in the list. */
+  remove: { root: string; clones: CloneInfo[] } | null;
+  /** Remove plain git worktrees (one, or several picked). */
+  removeWorktree: { root: string; worktrees: OtherWorktree[] } | null;
   /** Turn a plain git worktree into a clone. */
   adopt: { root: string; worktree: OtherWorktree } | null;
   activity: boolean;

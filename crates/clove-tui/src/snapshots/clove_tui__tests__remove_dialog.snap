@@ -15,9 +15,9 @@ expression: s
 │                    ││ ● det│  /work/app.clove/feat-login/app                            │ 3h     14M  …/detached/app │
 │                    ││      │                                                            │                            │
 │                    ││      │  ! uncommitted changes will be discarded                   │                            │
-│                    ││      │  ! 2 commits not on origin/main                            │                            │
+│                    ││      │  · 2 commits not on origin/main: branch kept if unpushed   │                            │
 │                    ││      │                                                            │                            │
-│                    ││      │  › [x] also delete branch feat/login                       │                            │
+│                    ││      │    [x] also delete branch feat/login                       │                            │
 │                    ││      │    [x] force: discard changes, eject if busy               │                            │
 │                    ││      │                                                            │                            │
 │                    ││      │                               discard & remove    cancel   │                            │
@@ -29,4 +29,4 @@ expression: s
 │ D doctor           ││                                                                                                │
 │ S service          ││                                                                                                │
 ╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↑↓ move  space toggle  ⏎ remove  esc cancel
+ ↑↓ move  ⏎ remove  esc cancel

@@ -11,7 +11,8 @@ import {
   Trash2,
   TriangleAlert,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { PickBox } from "@/components/clone-list";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -36,6 +37,14 @@ import { cn } from "@/lib/utils";
  */
 export function WorktreeList({ root, worktrees }: { root: string; worktrees: OtherWorktree[] }) {
   const ops = useOps();
+  // Worktrees picked for a bulk remove, by path.
+  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    setPicked((p) => {
+      const live = new Set(worktrees.map((w) => w.path));
+      return [...p].every((x) => live.has(x)) ? p : new Set([...p].filter((x) => live.has(x)));
+    });
+  }, [worktrees]);
   if (worktrees.length === 0) return null;
   const busy = new Set(
     ops
@@ -45,6 +54,13 @@ export function WorktreeList({ root, worktrees }: { root: string; worktrees: Oth
       )
       .map((o) => (o.req.kind === "remove_worktree" || o.req.kind === "adopt" ? o.req.path : "")),
   );
+  const pickedWts = worktrees.filter((w) => picked.has(w.path) && !busy.has(w.path));
+  const toggle = (path: string) =>
+    setPicked((p) => {
+      const n = new Set(p);
+      if (!n.delete(path)) n.add(path);
+      return n;
+    });
   return (
     <section>
       <div className="mb-2 flex items-baseline gap-3">
@@ -52,26 +68,67 @@ export function WorktreeList({ root, worktrees }: { root: string; worktrees: Oth
         <span className="text-[12px] text-faint">
           {worktrees.length} not made by clove · make one a clone to get warm deps
         </span>
+        <div className="flex-1" />
+        {pickedWts.length > 0 && (
+          <div className="flex items-center gap-1.5 self-center">
+            <Button variant="ghost" size="sm" className="h-7 text-[12.5px]" onClick={() => setPicked(new Set())}>
+              Clear
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="h-7 gap-1.5 text-[12.5px]"
+              onClick={() => setUi({ removeWorktree: { root, worktrees: pickedWts } })}
+            >
+              <Trash2 className="size-3.5" /> Remove {pickedWts.length}
+            </Button>
+          </div>
+        )}
       </div>
       <div className="overflow-hidden rounded-xl border border-dashed">
         {worktrees.map((w) => (
-          <WorktreeRow key={w.path} worktree={w} root={root} busy={busy.has(w.path)} />
+          <WorktreeRow
+            key={w.path}
+            worktree={w}
+            root={root}
+            busy={busy.has(w.path)}
+            picked={picked.has(w.path)}
+            picking={picked.size > 0}
+            onPick={() => toggle(w.path)}
+          />
         ))}
       </div>
     </section>
   );
 }
 
-function WorktreeRow({ worktree: w, root, busy }: { worktree: OtherWorktree; root: string; busy: boolean }) {
+function WorktreeRow({
+  worktree: w,
+  root,
+  busy,
+  picked,
+  picking,
+  onPick,
+}: {
+  worktree: OtherWorktree;
+  root: string;
+  busy: boolean;
+  picked: boolean;
+  picking: boolean;
+  onPick: () => void;
+}) {
   const prefs = usePrefs();
   return (
     <div
       onDoubleClick={() => !w.missing && void openIn(w.path, prefs.editor)}
+      onMouseDown={(e) => (e.metaKey || e.ctrlKey) && onPick()}
       className={cn(
-        "group grid h-[44px] grid-cols-[14px_minmax(0,1fr)_minmax(0,220px)_auto] items-center gap-x-4 border-b px-4 transition-colors last:border-b-0 hover:bg-foreground/[0.025]",
+        "group grid h-[44px] grid-cols-[16px_14px_minmax(0,1fr)_minmax(0,220px)_auto] items-center gap-x-4 border-b px-4 transition-colors last:border-b-0",
+        picked ? "bg-primary/[0.06]" : "hover:bg-foreground/[0.025]",
         busy && "opacity-55",
       )}
     >
+      <PickBox checked={picked} visible={picking} label={`Select ${w.name}`} onToggle={onPick} />
       <span className="size-2 rotate-45 border-[1.5px] border-faint" aria-hidden="true" />
       <div className="min-w-0">
         <div className="flex items-center gap-2">
@@ -196,7 +253,7 @@ export function WorktreeMenu({
         <DropdownMenuItem onSelect={() => setUi({ adopt: { root, worktree: w } })}>
           <CopyPlus /> Make it a clone…
         </DropdownMenuItem>
-        <DropdownMenuItem variant="destructive" onSelect={() => setUi({ removeWorktree: { root, worktree: w } })}>
+        <DropdownMenuItem variant="destructive" onSelect={() => setUi({ removeWorktree: { root, worktrees: [w] } })}>
           <Trash2 /> Remove worktree…
         </DropdownMenuItem>
       </DropdownMenuContent>
