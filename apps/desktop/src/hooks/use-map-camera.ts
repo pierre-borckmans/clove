@@ -7,7 +7,8 @@ type GestureEvent = Event & { scale: number; clientX: number; clientY: number };
 const MAX_SCALE = 4;
 
 /** A local canvas camera: gestures change the map, never the webview's zoom. */
-export function useMapCamera(worldWidth: number, worldHeight: number) {
+/** `bottomInset` is viewport height kept clear (an overlay at the bottom); fitting centres above it. */
+export function useMapCamera(worldWidth: number, worldHeight: number, bottomInset = 0) {
   const viewport = useRef<HTMLElement>(null);
   const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, scale: 1 });
   const liveCamera = useRef(camera);
@@ -21,13 +22,15 @@ export function useMapCamera(worldWidth: number, worldHeight: number) {
   const suppressClick = useRef(false);
   const world = useRef({ width: worldWidth, height: worldHeight });
   world.current = { width: worldWidth, height: worldHeight };
+  const inset = useRef(bottomInset);
+  inset.current = bottomInset;
 
   /** The scale that fits the whole map; zooming out stops there. */
   const fitScale = useCallback(() => {
     const el = viewport.current;
     if (!el) return 1;
     const { width, height } = world.current;
-    return Math.min(1, (el.clientWidth - 48) / width, (el.clientHeight - 40) / height);
+    return Math.min(1, (el.clientWidth - 48) / width, (el.clientHeight - 40 - inset.current) / height);
   }, []);
   const clampScale = useCallback(
     (scale: number) => Math.max(Math.max(0.05, fitScale()), Math.min(MAX_SCALE, scale)),
@@ -49,7 +52,7 @@ export function useMapCamera(worldWidth: number, worldHeight: number) {
       bounded = {
         scale: next.scale,
         x: axis(next.x, el.clientWidth, world.current.width * next.scale),
-        y: axis(next.y, el.clientHeight, world.current.height * next.scale),
+        y: axis(next.y, el.clientHeight - inset.current, world.current.height * next.scale),
       };
     }
     liveCamera.current = bounded;
@@ -81,8 +84,8 @@ export function useMapCamera(worldWidth: number, worldHeight: number) {
     if (!viewport.current) return;
     const { clientWidth: width, clientHeight: height } = viewport.current;
     const scale = Math.max(0.05, fitScale());
-    update({ x: (width - worldWidth * scale) / 2, y: (height - worldHeight * scale) / 2, scale });
-  }, [update, fitScale, worldHeight, worldWidth]);
+    update({ x: (width - worldWidth * scale) / 2, y: (height - bottomInset - worldHeight * scale) / 2, scale });
+  }, [update, fitScale, worldHeight, worldWidth, bottomInset]);
 
   useEffect(() => {
     const element = viewport.current;

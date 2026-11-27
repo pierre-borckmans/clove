@@ -181,6 +181,7 @@ export function seed(): Map<string, MockRepo> {
     clones: [
       clone("mono", {
         name: "feat-onboarding-checklist",
+        own_bytes: 36 * MB,
         branch: "feat/onboarding-checklist",
         dirty: true,
         ahead: 0,
@@ -190,6 +191,7 @@ export function seed(): Map<string, MockRepo> {
       }),
       clone("mono", {
         name: "review-pr-1432",
+        own_bytes: 9 * MB,
         branch: null,
         head: "c41d07be22a9",
         image_bytes: 12 * MB,
@@ -197,6 +199,7 @@ export function seed(): Map<string, MockRepo> {
       }),
       clone("mono", {
         name: "fix-cache-stampede",
+        own_bytes: 96 * MB,
         branch: "fix/cache-stampede",
         ahead: 1,
         image_bytes: 96 * MB,
@@ -205,6 +208,7 @@ export function seed(): Map<string, MockRepo> {
       }),
       clone("mono", {
         name: "feat-billing-v2",
+        own_bytes: 412 * MB,
         branch: "feat/billing-v2",
         dirty: true,
         ahead: 4,
@@ -222,6 +226,7 @@ export function seed(): Map<string, MockRepo> {
       }),
       clone("mono", {
         name: "chore-bump-vite",
+        own_bytes: 22 * MB,
         branch: "chore/bump-vite",
         ahead: 2,
         behind: 11,
@@ -232,6 +237,7 @@ export function seed(): Map<string, MockRepo> {
       }),
       clone("mono", {
         name: "release-2.14",
+        own_bytes: 160 * MB,
         branch: "release/2.14",
         ahead: 0,
         behind: 31,
@@ -243,6 +249,7 @@ export function seed(): Map<string, MockRepo> {
       }),
       clone("mono", {
         name: "exp-streaming-ssr",
+        own_bytes: 1.4 * GB,
         branch: "exp/streaming-ssr",
         mounted: false,
         dirty: null,
@@ -354,6 +361,7 @@ export function seed(): Map<string, MockRepo> {
     clones: [
       clone("clove", {
         name: "desktop",
+        own_bytes: 310 * MB,
         branch: "desktop",
         dirty: true,
         ahead: 3,
@@ -363,6 +371,7 @@ export function seed(): Map<string, MockRepo> {
       }),
       clone("clove", {
         name: "tui-polish",
+        own_bytes: 45 * MB,
         branch: "tui-polish",
         ahead: 1,
         image_bytes: 140 * MB,

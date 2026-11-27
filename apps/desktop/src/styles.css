@@ -30,6 +30,12 @@
   --sage: #2f6b4c;
   --sage-soft: color-mix(in oklab, #2f6b4c 13%, transparent);
   --peel: #d9b945;
+  /* Garlic: cream is a peeled clove's flesh, skin its papery wrapper. */
+  --cream: #f3efd6;
+  --skin: oklch(0.74 0.035 85);
+  --skin-fill: oklch(0.975 0.008 90);
+  /* Large peeled areas (a head, a bulb slice): cream, toned down on dark. */
+  --flesh: color-mix(in oklab, var(--cream) 70%, var(--card));
   --amber: oklch(0.7 0.13 70);
   /* Removed lines: softer than --destructive, which stays for danger. */
   --rose: oklch(0.58 0.14 18);
@@ -65,6 +71,10 @@
   --rose: oklch(0.72 0.11 18);
   --sage-soft: color-mix(in oklab, #7cc49b 15%, transparent);
   --peel: #e3c95e;
+  --cream: #ddd3a6;
+  --skin: oklch(0.56 0.03 85);
+  --skin-fill: oklch(0.255 0.008 85);
+  --flesh: color-mix(in oklab, #e3c95e 20%, var(--card));
   --amber: oklch(0.78 0.12 75);
   --sidebar: oklch(0.165 0.004 160 / 0.94);
   --sidebar-line: oklch(1 0 0 / 0.06);
@@ -118,6 +128,8 @@ html[data-shell="native"].dark {
   --color-sage: var(--sage);
   --color-sage-soft: var(--sage-soft);
   --color-peel: var(--peel);
+  --color-cream: var(--cream);
+  --color-skin: var(--skin);
   --color-amber: var(--amber);
   --color-rose: var(--rose);
   --color-sidebar: var(--sidebar);
@@ -242,6 +254,10 @@ html[data-shell="native"].dark {
   );
   background-size: 18px 18px;
 }
+.map-edge,
+.map-leader {
+  opacity: var(--appear, 1);
+}
 .map-edge {
   stroke: color-mix(in oklab, var(--bottle) 28%, var(--border));
   stroke-width: 1.4;
@@ -268,7 +284,9 @@ html[data-shell="native"].dark {
   border-style: dashed;
   box-shadow: 0 0 0 5px var(--background);
 }
+/* --appear (0 to 1) is set while a clone animates in or out of the map. */
 .map-clone {
+  opacity: var(--appear, 1);
   transition: opacity 200ms;
 }
 .map-clone-symbol {
@@ -342,44 +360,8 @@ html[data-shell="native"].dark {
   stroke: color-mix(in oklab, var(--bottle) 45%, transparent);
   stroke-dasharray: none;
 }
-.map-tray {
-  border: 1.5px dashed color-mix(in oklab, var(--foreground) 18%, transparent);
-  background: color-mix(in oklab, var(--muted) 55%, transparent);
-}
-.map-loose-symbol {
-  color: var(--muted-foreground);
-  background: var(--background);
-  border: 1.5px dashed color-mix(in oklab, var(--foreground) 28%, transparent);
-  transition:
-    border-color 150ms,
-    color 150ms,
-    background-color 150ms;
-}
-.map-loose-dirty .map-loose-symbol {
-  border-color: color-mix(in oklab, var(--amber) 60%, transparent);
-  color: var(--amber);
-}
-.map-loose:hover .map-loose-symbol,
-.map-loose.map-node-selected .map-loose-symbol {
-  border-style: solid;
-  border-color: var(--muted-foreground);
-  color: var(--foreground);
-  background: var(--muted);
-}
-.map-clone.map-loose .map-clone-name,
-.map-clone.map-loose .map-clone-state {
-  background: transparent;
-}
-.map-clone.map-loose.map-node-selected .map-clone-name {
-  background: var(--muted);
-  color: var(--foreground);
-}
-.map-loose:focus-visible .map-loose-symbol {
-  outline: 3px solid var(--ring);
-  outline-offset: 5px;
-}
 .map-dim {
-  opacity: 0.28;
+  opacity: calc(0.28 * var(--appear, 1));
 }
 .map-edge-old.map-edge-active {
   stroke: var(--muted-foreground);
@@ -422,30 +404,6 @@ html[data-shell="native"].dark {
 .map-image-current.map-node-selected {
   background: radial-gradient(circle at 50% 25%, var(--bottle-soft), var(--card) 80%);
 }
-.map-clone-label-right .map-leaf-label {
-  left: 44px;
-  top: -3px;
-  align-items: flex-start;
-  text-align: left;
-}
-.map-clone-label-left .map-leaf-label {
-  right: 44px;
-  top: -3px;
-  align-items: flex-end;
-  text-align: right;
-}
-.map-clone-label-top .map-leaf-label {
-  bottom: 44px;
-  left: 50%;
-  transform: translateX(-50%);
-  align-items: center;
-}
-.map-clone-label-bottom .map-leaf-label {
-  top: 44px;
-  left: 50%;
-  transform: translateX(-50%);
-  align-items: center;
-}
 
 .map-viewport {
   cursor: grab;
@@ -468,4 +426,209 @@ html[data-shell="native"].dark {
 }
 .map-node-selected .clove-petal-body {
   fill-opacity: 0.45;
+}
+
+/* Braid and Bulb: clones as cloves. Skin states: papery when unmounted, peeled
+   (cream) when mounted, an amber cut when modified, bruised when something
+   failed, faded with a check once merged. */
+.map-piece .clove-skin {
+  fill: var(--skin-fill);
+  stroke: var(--skin);
+  stroke-width: 4;
+  transition:
+    stroke 150ms,
+    fill 150ms;
+}
+.map-piece .clove-vein {
+  stroke: var(--skin);
+  stroke-width: 2;
+  opacity: 0.6;
+}
+.map-skin-peeled .clove-skin {
+  fill: var(--cream);
+  stroke: var(--peel);
+}
+.map-skin-peeled .clove-vein {
+  stroke: var(--peel);
+}
+.map-skin-unmounted .clove-skin {
+  fill: color-mix(in oklab, var(--skin-fill) 70%, transparent);
+  stroke-dasharray: 7 5;
+}
+.map-skin-bruised .clove-skin {
+  fill: color-mix(in oklab, var(--rose) 28%, var(--cream));
+  stroke: var(--rose);
+}
+.map-skin-bruised .clove-vein {
+  stroke: var(--rose);
+}
+.map-piece .clove-cut {
+  stroke: var(--amber);
+  stroke-width: 7;
+}
+.map-skin-merged .map-piece-svg,
+.map-skin-merged.map-wedge > svg {
+  opacity: 0.45;
+}
+.map-merged-badge {
+  background: var(--bottle);
+  color: var(--background);
+  box-shadow: 0 0 0 1.5px var(--background);
+}
+.map-piece:hover .clove-skin {
+  stroke: color-mix(in oklab, var(--bottle) 60%, var(--peel));
+}
+.map-piece.map-node-selected .clove-skin {
+  stroke: var(--bottle);
+  stroke-width: 6;
+}
+.map-piece.map-node-selected .map-piece-svg {
+  filter: drop-shadow(0 0 5px color-mix(in oklab, var(--bottle) 45%, transparent));
+}
+.map-piece:focus-visible {
+  outline: none;
+}
+.map-piece:focus-visible .clove-skin {
+  stroke: var(--ring);
+  stroke-width: 7;
+}
+
+/* Bulb slices: only the painted slice and its label take the pointer. */
+.map-wedge {
+  pointer-events: none;
+}
+.map-piece.map-wedge .clove-skin,
+.map-piece.map-wedge .map-leaf-label {
+  pointer-events: auto;
+}
+.map-piece.map-wedge .clove-skin {
+  stroke-width: 1.5;
+}
+.map-wedge.map-skin-peeled .clove-skin {
+  fill: var(--flesh);
+}
+.map-wedge .clove-vein {
+  stroke-width: 1.5;
+}
+.map-wedge .clove-cut {
+  stroke-width: 3;
+}
+.map-wedge.map-node-selected .clove-skin {
+  stroke-width: 2.5;
+}
+.map-wedge.map-node-selected > svg {
+  filter: drop-shadow(0 0 6px color-mix(in oklab, var(--bottle) 35%, transparent));
+}
+.map-wedge:focus-visible .clove-skin {
+  stroke-width: 3;
+}
+.map-bulb-skin {
+  fill: color-mix(in oklab, var(--skin-fill) 80%, transparent);
+  stroke: var(--skin);
+  stroke-width: 1.2;
+  stroke-dasharray: 3 4;
+}
+.map-bulb-core {
+  background: var(--card);
+  border: 1.5px solid color-mix(in oklab, var(--bottle) 45%, var(--border));
+  box-shadow: 0 0 0 4px var(--background);
+  transition: background-color 150ms;
+}
+.map-bulb-core.map-node-selected {
+  background: radial-gradient(circle at 50% 30%, var(--bottle-soft), var(--card) 85%);
+  border-color: var(--bottle);
+}
+.map-bulb-core:focus-visible {
+  outline: 3px solid var(--ring);
+  outline-offset: 3px;
+}
+.map-leader {
+  stroke: color-mix(in oklab, var(--foreground) 22%, transparent);
+  stroke-width: 1;
+  transition: stroke 150ms;
+}
+.map-leader-active {
+  stroke: var(--bottle);
+}
+.map-gen-tag {
+  padding-inline: 4px;
+  border-radius: 4px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+/* Braid: garlic heads on a plaited stem. Older heads are smaller and drier. */
+.map-braid {
+  stroke: var(--skin);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  opacity: 0.8;
+}
+.map-braid-back {
+  opacity: 0.4;
+}
+.map-head-shape {
+  fill: var(--flesh);
+  stroke: var(--peel);
+  stroke-width: 1.5;
+  transition:
+    stroke 150ms,
+    fill 150ms;
+}
+.map-head-seam {
+  stroke: var(--peel);
+  stroke-width: 1;
+  opacity: 0.55;
+}
+.map-head-old .map-head-shape {
+  fill: var(--skin-fill);
+  stroke: var(--skin);
+  stroke-dasharray: 4 3;
+}
+.map-head-old .map-head-seam {
+  stroke: var(--skin);
+}
+.map-head {
+  transition: opacity 200ms;
+}
+.map-head:hover .map-head-shape {
+  stroke: color-mix(in oklab, var(--bottle) 60%, var(--peel));
+}
+.map-head.map-node-selected .map-head-shape {
+  stroke: var(--bottle);
+  stroke-width: 2.5;
+  stroke-dasharray: none;
+}
+.map-head:focus-visible {
+  outline: none;
+}
+.map-head:focus-visible .map-head-shape {
+  stroke: var(--ring);
+  stroke-width: 3;
+}
+
+/* The shelf of plain worktrees, pinned under the map. */
+.map-shelf {
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--card) 92%, transparent);
+  box-shadow: var(--pane-shadow);
+  backdrop-filter: blur(8px);
+  cursor: default;
+}
+.map-shelf-item {
+  transition:
+    background-color 150ms,
+    color 150ms,
+    opacity 200ms;
+}
+.map-shelf-item:hover {
+  background: var(--muted);
+}
+.map-shelf-item.map-node-selected {
+  background: var(--bottle-soft);
+  color: var(--bottle);
+}
+.map-shelf-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
 }
