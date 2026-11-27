@@ -46,16 +46,16 @@ export function RepoPage() {
   return (
     <>
       <PaneHeader>
-        <RepoMark name={repo.name} active className="size-5 text-[11px]" />
-        <h1 className="text-[14px] font-semibold tracking-tight">{repo.name}</h1>
+        <RepoMark name={repo.name} active className="size-5 text-[11px] shadow-2xs" />
+        <h1 className="text-[14.5px] font-semibold tracking-tight">{repo.name}</h1>
         <button
           type="button"
           onClick={() => void copyPath(repo.root)}
-          className="group flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 font-mono text-[12px] text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="group flex min-w-0 items-center gap-1.5 rounded-md border border-transparent px-1.5 py-0.5 font-mono text-[12px] text-muted-foreground transition-colors hover:border-border/80 hover:bg-card hover:text-foreground"
           title="Copy path"
         >
           <span className="truncate">{tildify(repo.root)}</span>
-          <Copy className="size-3 opacity-0 group-hover:opacity-70" />
+          <Copy className="size-3 opacity-0 transition-opacity group-hover:opacity-70" />
         </button>
         <div data-tauri-drag-region className="h-full flex-1" />
         <Button
@@ -65,7 +65,10 @@ export function RepoPage() {
         >
           <Plus className="size-3.5" />
           New clone
-          <Shortcut keys="mod+n" className="ml-0.5 [&_kbd]:border-white/20 [&_kbd]:bg-white/15 [&_kbd]:text-white/90" />
+          <Shortcut
+            keys="mod+n"
+            className="ml-0.5 [&_kbd]:border-white/25 [&_kbd]:bg-white/15 [&_kbd]:text-white/95 [&_kbd]:shadow-none"
+          />
         </Button>
       </PaneHeader>
       <div className="min-h-0 flex-1 overflow-y-auto">

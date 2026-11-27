@@ -3,73 +3,86 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Light. Near-white surfaces with a faint bottle-green cast; bottle green is the one accent. */
+/* Light. Warm organic paper canvas with elevated crisp cards; bottle green + peeled clove gold accents. */
 :root {
   --radius: 0.5rem;
-  --background: oklch(0.993 0.001 160);
-  --foreground: oklch(0.21 0.006 160);
-  --card: oklch(1 0 0);
+  --background: oklch(0.982 0.004 148);
+  --foreground: oklch(0.2 0.01 158);
+  --card: oklch(0.998 0.001 140);
   --card-foreground: var(--foreground);
-  --popover: oklch(1 0 0);
+  --popover: oklch(0.998 0.001 140);
   --popover-foreground: var(--foreground);
   --primary: #2f6b4c;
   --primary-foreground: oklch(0.99 0.004 160);
-  --secondary: oklch(0.972 0.007 158);
+  --secondary: oklch(0.96 0.008 152);
   --secondary-foreground: var(--foreground);
-  --muted: oklch(0.972 0.007 158);
-  --muted-foreground: oklch(0.53 0.008 160);
-  --faint-foreground: oklch(0.68 0.006 160);
-  --accent: oklch(0.962 0.011 158);
+  --muted: oklch(0.958 0.007 150);
+  --muted-foreground: oklch(0.49 0.01 158);
+  --faint-foreground: oklch(0.64 0.008 156);
+  --accent: oklch(0.952 0.012 154);
   --accent-foreground: var(--foreground);
   --destructive: oklch(0.56 0.19 27);
-  --border: oklch(0.925 0.008 158);
-  --input: oklch(0.89 0.004 160);
+  --border: oklch(0.912 0.009 152);
+  --input: oklch(0.875 0.008 154);
   --ring: color-mix(in oklab, #2f6b4c 55%, transparent);
   --bottle: #2f6b4c;
-  --bottle-soft: color-mix(in oklab, #2f6b4c 11%, transparent);
+  --bottle-soft: color-mix(in oklab, #2f6b4c 10%, transparent);
   --sage: #2f6b4c;
-  --sage-soft: color-mix(in oklab, #2f6b4c 13%, transparent);
-  --peel: #d9b945;
-  --amber: oklch(0.7 0.13 70);
+  --sage-soft: color-mix(in oklab, #2f6b4c 12%, transparent);
+  --peel: #cfa930;
+  --peel-soft: color-mix(in oklab, #d9b945 14%, transparent);
+  --amber: oklch(0.65 0.14 68);
   /* Removed lines: softer than --destructive, which stays for danger. */
   --rose: oklch(0.58 0.14 18);
-  --sidebar: oklch(0.972 0.009 158 / 0.94);
-  --sidebar-line: oklch(0.2 0 0 / 0.07);
-  --pane-shadow: 0 0 0 1px oklch(0.2 0 0 / 0.06), 0 1px 3px oklch(0.2 0 0 / 0.04);
+  --sidebar: oklch(0.968 0.009 154 / 0.94);
+  --sidebar-line: oklch(0.2 0.01 158 / 0.08);
+  --pane-shadow: 0 0 0 1px oklch(0.2 0.01 158 / 0.07), 0 2px 8px -2px oklch(0.2 0.01 158 / 0.06);
+  --card-shadow:
+    0 1px 2px oklch(0.2 0.01 158 / 0.045), 0 4px 12px -4px oklch(0.2 0.01 158 / 0.035), inset 0 1px 0 oklch(1 0 0 / 0.9);
+  --btn-primary-shadow:
+    0 1px 2px oklch(0.18 0.04 155 / 0.28), 0 1px 0 inset oklch(1 0 0 / 0.2), 0 -1px 0 inset oklch(0.15 0.04 155 / 0.22);
+  --btn-outline-shadow: 0 1px 2px oklch(0.2 0.01 158 / 0.05), inset 0 1px 0 oklch(1 0 0 / 0.85);
+  --kbd-shadow: 0 1px 0 oklch(0.2 0.01 158 / 0.12), inset 0 1px 0 oklch(1 0 0 / 0.8);
   --popover-surface: oklch(0.975 0.003 160 / 0.97);
 }
 
 .dark {
-  --background: oklch(0.195 0.004 160);
-  --foreground: oklch(0.93 0.004 160);
-  --card: oklch(0.225 0.004 160);
+  --background: oklch(0.175 0.006 156);
+  --foreground: oklch(0.935 0.006 150);
+  --card: oklch(0.212 0.007 156);
   --card-foreground: var(--foreground);
-  --popover: oklch(0.235 0.004 160);
+  --popover: oklch(0.228 0.008 156);
   --popover-foreground: var(--foreground);
-  --primary: #3a7d58;
+  --primary: #3d845d;
   --primary-foreground: oklch(0.99 0.004 160);
-  --secondary: oklch(0.26 0.004 160);
+  --secondary: oklch(0.255 0.007 156);
   --secondary-foreground: var(--foreground);
-  --muted: oklch(0.255 0.004 160);
-  --muted-foreground: oklch(0.67 0.006 160);
-  --faint-foreground: oklch(0.5 0.006 160);
-  --accent: oklch(0.265 0.005 160);
+  --muted: oklch(0.242 0.007 156);
+  --muted-foreground: oklch(0.68 0.008 154);
+  --faint-foreground: oklch(0.51 0.008 154);
+  --accent: oklch(0.262 0.01 156);
   --accent-foreground: var(--foreground);
   --destructive: oklch(0.64 0.19 25);
-  --border: oklch(1 0 0 / 0.08);
-  --input: oklch(1 0 0 / 0.12);
+  --border: oklch(1 0.004 155 / 0.09);
+  --input: oklch(1 0.004 155 / 0.13);
   --ring: color-mix(in oklab, #7cc49b 60%, transparent);
   --bottle: #7cc49b;
-  --bottle-soft: color-mix(in oklab, #7cc49b 16%, transparent);
+  --bottle-soft: color-mix(in oklab, #7cc49b 15%, transparent);
   --sage: #7cc49b;
   --rose: oklch(0.72 0.11 18);
-  --sage-soft: color-mix(in oklab, #7cc49b 15%, transparent);
+  --sage-soft: color-mix(in oklab, #7cc49b 14%, transparent);
   --peel: #e3c95e;
+  --peel-soft: color-mix(in oklab, #e3c95e 14%, transparent);
   --amber: oklch(0.78 0.12 75);
-  --sidebar: oklch(0.165 0.004 160 / 0.94);
-  --sidebar-line: oklch(1 0 0 / 0.06);
-  --pane-shadow: 0 0 0 1px oklch(1 0 0 / 0.06), 0 1px 3px oklch(0 0 0 / 0.3);
-  --popover-surface: oklch(0.21 0.004 160 / 0.97);
+  --sidebar: oklch(0.15 0.006 156 / 0.94);
+  --sidebar-line: oklch(1 0.004 155 / 0.07);
+  --pane-shadow: 0 0 0 1px oklch(1 0.004 155 / 0.075), 0 4px 16px -4px oklch(0 0 0 / 0.45);
+  --card-shadow: 0 1px 3px oklch(0 0 0 / 0.28), 0 6px 16px -6px oklch(0 0 0 / 0.24), inset 0 1px 0 oklch(1 0 0 / 0.045);
+  --btn-primary-shadow:
+    0 1px 3px oklch(0 0 0 / 0.35), 0 1px 0 inset oklch(1 0 0 / 0.2), 0 -1px 0 inset oklch(0 0 0 / 0.28);
+  --btn-outline-shadow: 0 1px 2px oklch(0 0 0 / 0.24), inset 0 1px 0 oklch(1 0 0 / 0.05);
+  --kbd-shadow: 0 1px 0 oklch(0 0 0 / 0.45), inset 0 1px 0 oklch(1 0 0 / 0.06);
+  --popover-surface: oklch(0.21 0.006 156 / 0.97);
 }
 
 /* Inside Tauri the window has native vibrancy behind transparent surfaces. */
@@ -80,11 +93,11 @@ html[data-shell="native"] {
 /* macOS's sidebar material is a flat grey; tint it with the palette's green
    cast (lifted in light), keeping some of the translucency. */
 html[data-shell="native"]:not(.dark) {
-  --sidebar: oklch(0.978 0.01 158 / 0.6);
+  --sidebar: oklch(0.974 0.01 154 / 0.62);
 }
 /* Dark gets the same family, fainter: green reads much stronger on dark. */
 html[data-shell="native"].dark {
-  --sidebar: oklch(0.2 0.008 158 / 0.5);
+  --sidebar: oklch(0.19 0.009 156 / 0.52);
 }
 
 @theme inline {
@@ -118,6 +131,7 @@ html[data-shell="native"].dark {
   --color-sage: var(--sage);
   --color-sage-soft: var(--sage-soft);
   --color-peel: var(--peel);
+  --color-peel-soft: var(--peel-soft);
   --color-amber: var(--amber);
   --color-rose: var(--rose);
   --color-sidebar: var(--sidebar);
@@ -196,6 +210,49 @@ html[data-shell="native"].dark {
   }
   ::-webkit-scrollbar-track {
     background: transparent;
+  }
+}
+
+@layer components {
+  /* Tactile elevated card surface used across all content panes. */
+  .clove-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--card-shadow);
+  }
+
+  /* Subtle warm botanical dot texture for empty states and featured headers. */
+  .clove-dots {
+    background-image: radial-gradient(color-mix(in oklab, var(--foreground) 8%, transparent) 1px, transparent 1px);
+    background-size: 18px 18px;
+  }
+
+  /* Uppercase micro-label for stat headers and table columns. */
+  .clove-label {
+    font-size: 10.5px;
+    font-weight: 550;
+    letter-spacing: 0.055em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+
+  /* Warm golden-image header wash: faint bottle-to-peel ambient tint. */
+  .clove-golden-header {
+    background: linear-gradient(
+      105deg,
+      color-mix(in oklab, var(--bottle) 7%, var(--card)) 0%,
+      color-mix(in oklab, var(--peel) 6.5%, var(--card)) 48%,
+      var(--card) 100%
+    );
+  }
+  .dark .clove-golden-header {
+    background: linear-gradient(
+      105deg,
+      color-mix(in oklab, var(--bottle) 10%, var(--card)) 0%,
+      color-mix(in oklab, var(--peel) 6%, var(--card)) 48%,
+      var(--card) 100%
+    );
   }
 }
 

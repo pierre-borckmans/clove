@@ -65,16 +65,16 @@ export function Waterfall({
             >
               {b.name}
             </span>
-            <div className="relative h-[5px] rounded-full bg-foreground/[0.055]">
+            <div className="relative h-[6px] rounded-full bg-foreground/[0.06]">
               {b.state === "skipped" ? (
                 <span
-                  className="absolute top-1/2 size-[5px] -translate-y-1/2 rounded-full border border-faint"
+                  className="absolute top-1/2 size-[6px] -translate-y-1/2 rounded-full border border-faint"
                   style={{ left: `${Math.min(left, 99)}%` }}
                 />
               ) : (
                 <span
                   className={cn(
-                    "absolute inset-y-0 min-w-[3px] rounded-full transition-[width] duration-100 ease-linear",
+                    "absolute inset-y-0 min-w-[4px] rounded-full transition-[width] duration-100 ease-linear",
                     b.state === "done" && "bg-sage",
                     b.state === "failed" && "bg-destructive",
                     b.state === "running" &&

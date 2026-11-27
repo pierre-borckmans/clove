@@ -47,13 +47,14 @@ export function WorktreeList({ root, worktrees }: { root: string; worktrees: Oth
   );
   return (
     <section>
-      <div className="mb-2 flex items-baseline gap-3">
-        <h2 className="text-[13px] font-medium text-muted-foreground">Other git worktrees</h2>
-        <span className="text-[12px] text-faint">
-          {worktrees.length} not made by clove · make one a clone to get warm deps
+      <div className="mb-2.5 flex items-center gap-2.5">
+        <h2 className="text-[13px] font-semibold tracking-tight text-muted-foreground">Other git worktrees</h2>
+        <span className="inline-flex h-5 items-center rounded-full border border-dashed border-border px-2 text-[11px] text-faint tabular-nums">
+          {worktrees.length}
         </span>
+        <span className="text-[12px] text-faint">not made by clove · make one a clone to get warm deps</span>
       </div>
-      <div className="overflow-hidden rounded-xl border border-dashed">
+      <div className="overflow-hidden rounded-xl border border-dashed border-border/90 bg-muted/25">
         {worktrees.map((w) => (
           <WorktreeRow key={w.path} worktree={w} root={root} busy={busy.has(w.path)} />
         ))}

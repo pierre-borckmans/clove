@@ -24,14 +24,20 @@ export function DoctorPage() {
   return (
     <>
       <PaneHeader>
-        <h1 className="text-[14px] font-semibold tracking-tight">Doctor</h1>
-        <span className="text-[12.5px] text-muted-foreground">
-          {fetching && checks.length === 0
-            ? "Checking…"
-            : problems === 0
-              ? "Everything looks right"
-              : `${problems} thing${problems === 1 ? "" : "s"} to look at`}
-        </span>
+        <h1 className="text-[14.5px] font-semibold tracking-tight">Doctor</h1>
+        {fetching && checks.length === 0 ? (
+          <span className="text-[12.5px] text-muted-foreground">Checking…</span>
+        ) : problems === 0 ? (
+          <span className="inline-flex h-5 items-center gap-1 rounded-full border border-sage/25 bg-sage-soft px-2 text-[11px] font-medium text-sage">
+            <CircleCheck className="size-3" />
+            Everything looks right
+          </span>
+        ) : (
+          <span className="inline-flex h-5 items-center gap-1 rounded-full border border-amber/30 bg-amber/12 px-2 text-[11px] font-medium text-amber">
+            <TriangleAlert className="size-3" />
+            {problems} thing{problems === 1 ? "" : "s"} to look at
+          </span>
+        )}
         <div data-tauri-drag-region className="h-full flex-1" />
         <Button
           variant="outline"
@@ -83,12 +89,12 @@ function Section({
 }) {
   return (
     <section>
-      <div className="mb-2 flex items-center gap-2">
+      <div className="mb-2.5 flex items-center gap-2">
         {icon}
-        <h2 className="text-[13px] font-medium">{title}</h2>
+        <h2 className="text-[13.5px] font-semibold tracking-tight">{title}</h2>
         {subtitle && <span className="truncate font-mono text-[11.5px] text-faint">{subtitle}</span>}
       </div>
-      <div className="overflow-hidden rounded-xl border bg-card">
+      <div className="clove-card overflow-hidden">
         {error ? (
           <div className="px-4 py-3 font-mono text-[12px] text-destructive">{String(error)}</div>
         ) : !checks ? (
@@ -106,25 +112,34 @@ function Section({
 
 function CheckRow({ check: c }: { check: Check }) {
   return (
-    <div className="grid grid-cols-[18px_120px_minmax(0,1fr)] items-start gap-x-3 border-b px-4 py-3 last:border-b-0">
-      {c.level === "ok" ? (
-        <CircleCheck className="mt-px size-4 text-sage" />
-      ) : c.level === "warn" ? (
-        <TriangleAlert className="mt-px size-4 text-amber" />
-      ) : (
-        <CircleX className="mt-px size-4 text-destructive" />
-      )}
-      <span className="text-[13px] font-medium">{c.name}</span>
+    <div className="grid grid-cols-[24px_124px_minmax(0,1fr)] items-start gap-x-3 border-b border-border/70 px-4 py-3.5 transition-colors last:border-b-0 hover:bg-foreground/[0.015]">
+      <span
+        className={cn(
+          "mt-px flex size-5 items-center justify-center rounded-full",
+          c.level === "ok" && "bg-sage-soft text-sage",
+          c.level === "warn" && "bg-amber/14 text-amber",
+          c.level !== "ok" && c.level !== "warn" && "bg-destructive/12 text-destructive",
+        )}
+      >
+        {c.level === "ok" ? (
+          <CircleCheck className="size-3.5" />
+        ) : c.level === "warn" ? (
+          <TriangleAlert className="size-3.5" />
+        ) : (
+          <CircleX className="size-3.5" />
+        )}
+      </span>
+      <span className="pt-px text-[13px] font-medium">{c.name}</span>
       <div className="min-w-0">
         <p className="selectable text-[13px] leading-relaxed text-muted-foreground">{c.detail}</p>
         {c.fix && (
-          <div className="group mt-2 flex items-center gap-2 rounded-md border bg-muted/50 py-1 pr-1 pl-2.5">
-            <span className="text-faint select-none font-mono text-[12px]">$</span>
-            <code className="selectable min-w-0 flex-1 truncate font-mono text-[12px]">{c.fix}</code>
+          <div className="group mt-2 flex items-center gap-2 rounded-lg border border-border/80 bg-muted/45 py-1 pr-1 pl-2.5 shadow-2xs">
+            <span className="select-none font-mono text-[12px] font-semibold text-bottle">$</span>
+            <code className="selectable min-w-0 flex-1 truncate font-mono text-[12px] text-foreground/90">{c.fix}</code>
             <Button
               variant="ghost"
               size="icon-sm"
-              className="size-6 text-muted-foreground"
+              className="size-6 text-muted-foreground hover:text-foreground"
               aria-label="Copy command"
               onClick={() => void copyText(c.fix as string, "Command copied")}
             >

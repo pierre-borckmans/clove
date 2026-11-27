@@ -172,9 +172,10 @@ export function DiffPage() {
           <LoaderCircle className="size-3.5 animate-spin text-faint" aria-label="Refreshing" />
         )}
         {ready && (
-          <span className="flex items-center gap-2 font-mono text-[12px] tabular-nums">
-            <span className="text-sage">+{totals.added}</span>
-            <span className="text-rose">−{totals.removed}</span>
+          <span className="inline-flex h-6 items-center gap-2 rounded-full border border-border/80 bg-card px-2.5 font-mono text-[11.5px] tabular-nums shadow-2xs">
+            <span className="font-medium text-sage">+{totals.added}</span>
+            <span className="font-medium text-rose">−{totals.removed}</span>
+            <span className="text-border">·</span>
             <span className="font-sans text-muted-foreground">
               {entries.length} {entries.length === 1 ? "file" : "files"}
             </span>
@@ -721,9 +722,11 @@ const FileRow = memo(function FileRow({
       onClick={() => onPick(e.id)}
       title={e.file.prevName ? `${e.file.prevName} → ${e.file.name}` : e.file.name}
       className={cn(
-        "mx-1.5 flex w-[calc(100%-12px)] items-center gap-2 rounded-md px-2 py-1 text-left transition-colors",
+        "relative mx-1.5 flex w-[calc(100%-12px)] items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
         prefix !== "" && "pl-6",
-        active ? "bg-foreground/[0.07]" : "hover:bg-foreground/[0.04]",
+        active
+          ? "bg-bottle/[0.08] before:absolute before:inset-y-1 before:left-0 before:w-[2.5px] before:rounded-r-full before:bg-bottle dark:bg-bottle/[0.12]"
+          : "hover:bg-foreground/[0.04]",
       )}
     >
       <span className={cn("w-3 shrink-0 font-mono text-[11px] font-semibold", kind.className)} title={kind.label}>
@@ -795,15 +798,17 @@ function Segmented<T extends string>({
   options: [T, string][];
 }) {
   return (
-    <div className="flex h-7 items-center rounded-md border bg-muted/50 p-0.5 text-[12px]">
+    <div className="flex h-7 items-center rounded-lg border border-border/85 bg-muted/60 p-0.5 text-[12px]">
       {options.map(([v, label]) => (
         <button
           key={v}
           type="button"
           onClick={() => onChange(v)}
           className={cn(
-            "h-full rounded-[5px] px-2.5 transition-colors",
-            v === value ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground",
+            "h-full rounded-[5.5px] px-2.5 font-medium transition-all",
+            v === value
+              ? "bg-card text-foreground shadow-[var(--btn-outline-shadow)]"
+              : "text-muted-foreground hover:text-foreground",
           )}
         >
           {label}
