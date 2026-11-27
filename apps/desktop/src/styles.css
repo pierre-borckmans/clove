@@ -219,7 +219,6 @@ html[data-shell="native"].dark {
   --diffs-addition-color-override: var(--sage);
   --diffs-deletion-color-override: var(--rose);
   --diffs-modified-color-override: var(--amber);
-  --diffs-bg-addition-override: var(--sage);
   --diffs-bg-deletion-override: var(--rose);
   --diffs-fg-number-override: var(--faint-foreground);
   --diffs-fg-number-addition-override: var(--sage);

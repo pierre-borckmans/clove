@@ -259,9 +259,8 @@ fn attrs(wt: &Path, paths: &str) -> Result<Vec<FileAttrs>> {
 /// `git check-attr -z` output: `path NUL attr NUL value NUL`, repeated.
 fn parse_attrs(out: &str) -> Vec<FileAttrs> {
     let mut by_path: Vec<FileAttrs> = vec![];
-    let f: Vec<&str> = out.split('\0').collect();
-    for t in f.chunks_exact(3) {
-        let (path, attr, value) = (t[0], t[1], t[2]);
+    let mut f = out.split('\0');
+    while let (Some(path), Some(attr), Some(value)) = (f.next(), f.next(), f.next()) {
         if value == "unspecified" {
             continue;
         }
