@@ -189,6 +189,17 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m "clove-app ${GITHUB_REF_NAME#v}"
           git pull --rebase -q && git push
+      - name: Mark the release latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Now both the formula and the cask have it, so update checks may
+          # offer it. An older release finishing late stays behind.
+          v="${GITHUB_REF_NAME#v}"
+          have=$(sed -n 's/^ *version "\(.*\)"/\1/p' tap/Casks/clove-app.rb)
+          if [ "$have" = "$v" ]; then
+            gh release edit "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --latest
+          fi
 
   app-linux:
     # Unsigned .deb and AppImage, added to the release. Independent of Apple.
@@ -241,7 +252,7 @@ jobs:
             clove-app-*.deb clove-app-*.AppImage clove-app-*.sha256
 
   release:
-    needs: build
+    needs: [signing, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -252,8 +263,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat clove-*.sha256 > checksums.txt
+          # Not "latest" yet when the app follows: clove's update check reads
+          # releases/latest, and the cask lands after Apple's notarization.
           gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" --generate-notes \
+            --latest=${{ needs.signing.outputs.on != 'true' }} \
             clove-*.tar.gz checksums.txt
 
   tap:

@@ -915,9 +915,17 @@ impl App {
                         self.upgraded_to = Some(to);
                         s
                     }
-                    Some(to) => format!("clove {to} is the latest in the tap"),
+                    Some(to) => format!("clove {to}: no newer CLI in the tap"),
                     None => "upgraded".into(),
                 };
+                if let Some(v) = &u.app_pending {
+                    toasts.push((
+                        ToastKind::Warn,
+                        format!(
+                            "the app's v{v} isn't in the tap yet (Apple is notarizing it): update it later"
+                        ),
+                    ));
+                }
                 toasts.push((ToastKind::Ok, s.clone()));
                 Ok(s)
             }
