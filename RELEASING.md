@@ -1,11 +1,18 @@
 # Releasing
 
-1. Bump `version` in `Cargo.toml` (`[workspace.package]`) and commit.
-2. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`.
+Tag a commit on `main` that passed CI, and push the tag:
+
+```sh
+git fetch origin
+git tag -m v0.2.0 v0.2.0 origin/main
+git push origin v0.2.0
+```
+
+The tag sets the version. Each build job stamps it into `Cargo.toml` and the clove crates' lockfile entries first (`scripts/ci/set-version.sh`), so a release needs no version-bump PR. Tags are signed here, so `-m` is required. A tag that isn't a version (`v1.2`) fails the release.
+
+The `version` in `Cargo.toml` on `main` is only what builds from source report. Bump it when convenient; nothing waits on it.
 
 `.github/workflows/release.yml` then builds the CLI for macOS (arm64, Intel) and Linux (arm64, x86_64), publishes a GitHub release with `checksums.txt`, and renders `packaging/homebrew/clove.rb.in` into `Formula/clove.rb` in [pierre-borckmans/homebrew-tap](https://github.com/pierre-borckmans/homebrew-tap). It pushes with the `TAP_DEPLOY_KEY` secret, a write deploy key on the tap.
-
-The workflow stops if the tag doesn't match the crate version.
 
 The `app-linux` job builds the desktop app for Linux (`.deb` and AppImage, x86_64 and aarch64, unsigned) and attaches it to the release. It needs no secrets.
 
