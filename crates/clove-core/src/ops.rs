@@ -942,14 +942,15 @@ impl Clove {
     ) -> Vec<String> {
         let env = self.step_env(wt, name);
         let mut failed = vec![];
-        // Before `uv sync`: venvs from the golden image still name its path.
-        if self
-            .config
-            .steps
-            .iter()
-            .any(|s| s.name.starts_with("uv") && s.setup.is_some())
-        {
-            let _ = timed(r, timings, "move venvs", || Ok(crate::venv::relocate(wt)));
+        // Before the setup steps: e.g. venvs from the golden image still name its path.
+        let with_setup = self.config.steps.iter().filter(|s| s.setup.is_some());
+        for t in crate::toolchains::used(with_setup) {
+            if let Some(f) = t.before_setup {
+                let _ = timed(r, timings, f.label, || {
+                    (f.run)(wt, t.files);
+                    Ok(())
+                });
+            }
         }
         // As in `changed_steps`: at the same commit nothing moved, and one
         // diff over all watched paths spares the per-step ones when nothing did.
@@ -1011,27 +1012,15 @@ impl Clove {
         env.insert("CLOVE_NAME".into(), name.into());
         env.insert("CLOVE_PATH".into(), wt.to_string_lossy().into());
         env.insert("CLOVE_ROOT".into(), self.root.to_string_lossy().into());
-        if self.uses_pnpm() {
-            // The image is its own volume; without this pnpm starts an empty store
-            // there. pnpm 11+ reads only pnpm_config_store_dir, older only the npm one.
-            let set = ["npm_config_store_dir", "pnpm_config_store_dir"]
-                .iter()
-                .find_map(|k| env.get(*k).cloned());
-            if let Some(store) = set.or_else(|| self.pnpm_store()) {
-                for k in ["npm_config_store_dir", "pnpm_config_store_dir"] {
-                    env.entry(k.into()).or_insert_with(|| store.clone());
-                }
+        for t in crate::toolchains::used(&self.config.steps) {
+            for (k, v) in t.env {
+                env.entry(k.to_string()).or_insert_with(|| v.to_string());
+            }
+            if let Some(f) = t.env_hook {
+                f(self, &mut env);
             }
         }
         env
-    }
-
-    pub fn uses_pnpm(&self) -> bool {
-        self.config.steps.iter().any(|s| {
-            [&s.warm, &s.setup]
-                .iter()
-                .any(|c| c.as_deref().is_some_and(|c| c.contains("pnpm")))
-        })
     }
 
     /// pnpm's store on the home volume, as pnpm resolves it in the main checkout.
@@ -1999,7 +1988,13 @@ const DETECT_COPY: &[&str] = &["**/.env", "**/.env.*", "**/.envrc.local", "**/.d
 
 fn step_hash(step: &Step) -> String {
     use sha2::{Digest, Sha256};
-    let json = serde_json::to_vec(step).unwrap_or_default();
+    // `tool` picks hooks, not what the step runs; left out so images from
+    // before it existed stay fresh.
+    let step = Step {
+        tool: None,
+        ..step.clone()
+    };
+    let json = serde_json::to_vec(&step).unwrap_or_default();
     Sha256::digest(&json)
         .iter()
         .take(8)

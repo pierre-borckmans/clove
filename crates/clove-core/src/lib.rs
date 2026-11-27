@@ -32,6 +32,7 @@ pub mod shellrc;
 pub mod spare;
 pub mod stats;
 pub mod steps;
+pub mod toolchains;
 pub mod update;
 pub mod upgrade;
 pub mod util;

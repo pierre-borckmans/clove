@@ -10,10 +10,19 @@
 use crate::git;
 use std::path::{Path, PathBuf};
 
-/// Rewrites the venvs next to each tracked `uv.lock` in `wt` that were made in
-/// another worktree of the repo. Returns how many venvs moved.
-pub fn relocate(wt: &Path) -> usize {
-    let Ok(locks) = git::out(wt, &["ls-files", "--", ":(glob)uv.lock", ":(glob)**/uv.lock"]) else {
+/// Rewrites the venvs next to each tracked lockfile named in `lockfiles`
+/// (e.g. `uv.lock`) in `wt` that were made in another worktree of the repo.
+/// Returns how many venvs moved.
+pub fn relocate(wt: &Path, lockfiles: &[&str]) -> usize {
+    if lockfiles.is_empty() {
+        return 0;
+    }
+    let mut args = vec!["ls-files".to_string(), "--".into()];
+    for f in lockfiles {
+        args.extend([format!(":(glob){f}"), format!(":(glob)**/{f}")]);
+    }
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let Ok(locks) = git::out(wt, &args) else {
         return 0;
     };
     locks
@@ -134,7 +143,7 @@ mod tests {
         std::fs::write(pkg.join("uv.lock"), "").unwrap();
         crate::git::run_ok(&wt, &["add", "pkg/uv.lock"]).unwrap();
 
-        assert_eq!(relocate(&wt), 1);
+        assert_eq!(relocate(&wt, &["uv.lock"]), 1);
         let new = wt.to_string_lossy();
         let read = |p: PathBuf| std::fs::read_to_string(p).unwrap();
         assert!(read(venv.join("bin/activate")).contains(&format!("'{new}/pkg/.venv'")));
@@ -147,6 +156,6 @@ mod tests {
             Path::new("/usr/bin/python3")
         );
         // Already moved: nothing to do.
-        assert_eq!(relocate(&wt), 0);
+        assert_eq!(relocate(&wt, &["uv.lock"]), 0);
     }
 }

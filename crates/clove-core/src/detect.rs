@@ -1,6 +1,7 @@
 //! Detects how to warm a repo from the files it contains.
 
 use crate::config::{Exec, Step};
+use crate::toolchains::Toolchain;
 use crate::util::which;
 use std::path::Path;
 
@@ -25,11 +26,14 @@ pub fn steps(root: &Path, max_installs: usize) -> Vec<Step> {
 /// Which nested projects detection warms, and which it leaves to the config.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub struct NestedPlan {
-    /// Dirs whose dependencies are installed (pnpm, bun, yarn, npm, uv).
+    /// Dirs whose dependencies are installed (`Kind::Install` toolchains).
     pub installs: Vec<String>,
-    /// Over `nested_installs`: none of them are, and these are named instead.
+    /// In groups (js, python, go, ...) with more nested projects than
+    /// `nested_installs`: none of a group's are, and these are named instead.
     pub skipped_installs: Vec<String>,
-    /// Dirs built in the golden image (cargo).
+    /// Those groups, with how many nested projects each has.
+    pub skipped_groups: Vec<(String, usize)>,
+    /// Dirs built in the golden image (`Kind::Build` toolchains).
     pub builds: Vec<String>,
     /// Over [`MAX_NESTED_BUILDS`].
     pub skipped_builds: Vec<String>,
@@ -49,189 +53,140 @@ impl NestedPlan {
     }
 }
 
-/// All or nothing per kind: above a limit, which ones to warm is the
-/// repo's call, not detection's.
+/// All or nothing per Install group and for builds: above a limit, which
+/// ones to warm is the repo's call, not detection's.
 pub fn plan(root: &Path, max_installs: usize) -> NestedPlan {
+    plan_groups(root, max_installs).0
+}
+
+/// [`plan`], and [`install_groups`] it was made from.
+fn plan_groups(root: &Path, max_installs: usize) -> (NestedPlan, Vec<InstallGroup>) {
+    use crate::toolchains::{Kind, TOOLCHAINS};
     let dirs = nested_projects(root);
-    let has = |d: &str, files: &[&str]| files.iter().any(|f| root.join(d).join(f).exists());
-    let installs: Vec<String> = dirs
+    let groups = install_groups(root, &dirs, max_installs);
+    // In `dirs` order, each once.
+    let union = |within: bool| -> Vec<String> {
+        dirs.iter()
+            .filter(|d| groups.iter().any(|(_, g, ok)| *ok == within && g.contains(d)))
+            .cloned()
+            .collect()
+    };
+    let builds: Vec<String> = dirs
         .iter()
-        .filter(|d| has(d, &INSTALL_LOCKFILES))
+        .filter(|d| {
+            TOOLCHAINS
+                .iter()
+                .any(|t| t.kind == Kind::Build && t.applies(root, d))
+        })
         .cloned()
         .collect();
-    let builds: Vec<String> = dirs.iter().filter(|d| has(d, &["Cargo.lock"])).cloned().collect();
-    let (installs, skipped_installs) = if installs.len() <= max_installs {
-        (installs, vec![])
-    } else {
-        (vec![], installs)
-    };
     let (builds, skipped_builds) = if builds.len() <= MAX_NESTED_BUILDS {
         (builds, vec![])
     } else {
         (vec![], builds)
     };
-    NestedPlan {
-        installs,
-        skipped_installs,
+    let plan = NestedPlan {
+        installs: union(true),
+        skipped_installs: union(false),
+        skipped_groups: groups
+            .iter()
+            .filter(|(_, _, ok)| !ok)
+            .map(|(g, d, _)| (g.to_string(), d.len()))
+            .collect(),
         builds,
         skipped_builds,
+    };
+    (plan, groups)
+}
+
+/// An Install group, its nested project dirs, and whether they get installed.
+type InstallGroup = (&'static str, Vec<String>, bool);
+
+/// Per Install group, in registry order: the nested `dirs` it applies to, and
+/// whether they are few enough (`max_installs`) to install.
+fn install_groups(root: &Path, dirs: &[String], max_installs: usize) -> Vec<InstallGroup> {
+    use crate::toolchains::{Kind, TOOLCHAINS};
+    let mut out: Vec<InstallGroup> = vec![];
+    for t in TOOLCHAINS.iter().filter(|t| t.kind == Kind::Install) {
+        if !out.iter().any(|(g, _, _)| *g == t.group) {
+            out.push((t.group, vec![], true));
+        }
     }
+    for (g, found, ok) in &mut out {
+        *found = dirs
+            .iter()
+            .filter(|d| {
+                TOOLCHAINS
+                    .iter()
+                    .any(|t| t.kind == Kind::Install && t.group == *g && t.applies(root, d))
+            })
+            .cloned()
+            .collect();
+        *ok = found.len() <= max_installs;
+    }
+    out
 }
 
 fn find_steps(root: &Path, max_installs: usize) -> Vec<Step> {
-    let has = |f: &str| root.join(f).exists();
+    use crate::toolchains::{Kind, TOOLCHAINS};
+    let applies = |t: &Toolchain, dir: &str| t.applies(root, dir);
     let mut out = vec![];
 
-    if has("mise.toml") || has(".mise.toml") || has(".tool-versions") {
-        // Trust is keyed by path, so every clone needs it; it is instant.
-        out.push(Step {
-            name: "mise-trust".into(),
-            warm: Some("mise trust --quiet --yes .".into()),
-            setup: Some("mise trust --quiet --yes .".into()),
-            wrap: false,
-            ..Default::default()
-        });
-        // Tools install once into the golden image and rerun when mise's config changes.
-        out.push(Step {
-            name: "mise".into(),
-            warm: Some("mise install --yes".into()),
-            watch: s(&["mise.toml", ".mise.toml", ".tool-versions", "mise.lock", ".mise"]),
-            wrap: false,
-            ..Default::default()
-        });
-    }
-
-    if has(".envrc") {
-        // `direnv allow` is keyed by path, so every clone needs it; it is instant.
-        out.push(Step {
-            name: "direnv-allow".into(),
-            warm: Some("direnv allow .".into()),
-            setup: Some("direnv allow .".into()),
-            wrap: false,
-            ..Default::default()
-        });
-        // The cached environment (e.g. nix-direnv's .direnv/) comes along in the
-        // image; it only needs rebuilding when its inputs changed.
-        out.push(Step {
-            name: "direnv".into(),
-            warm: Some("direnv exec . true".into()),
-            setup: Some("direnv exec . true".into()),
-            watch: s(&[
-                ".envrc",
-                "flake.nix",
-                "flake.lock",
-                "shell.nix",
-                "default.nix",
-                "devenv.nix",
-                "devenv.lock",
-                "devbox.json",
-            ]),
-            wrap: false,
-            ..Default::default()
-        });
+    // Environment managers, at the root only.
+    for t in TOOLCHAINS.iter().filter(|t| t.kind == Kind::Env) {
+        if applies(t, "") {
+            out.extend(toolchain_steps(root, t, ""));
+        }
     }
 
     // Package managers per project dir: the root, plus nested projects with
     // their own lockfile (a Tauri app's `src-tauri`, a `site/`, a monorepo's
-    // packages outside its workspace). Installs first, then builds, which may
-    // need them.
-    let nested = plan(root, max_installs);
-    let dirs: Vec<String> = std::iter::once(String::new()).chain(nested.installs).collect();
+    // packages outside its workspace). Installs first, group by group, then
+    // builds, which may need them.
+    let (nested, groups) = plan_groups(root, max_installs);
     let build_dirs: Vec<String> = std::iter::once(String::new()).chain(nested.builds).collect();
-    for d in &dirs {
-        out.extend(js_step(root, d));
-    }
-    for d in &dirs {
-        if root.join(d).join("uv.lock").exists() {
-            // Venvs embed absolute paths; setup first moves them to the clone
-            // (`venv::relocate`), so an unchanged lockfile needs no sync.
-            // A PYTHONPATH from the repo's env (e.g. a nix shell) leaks into isolated
-            // builds and shadows their setuptools, so sdists fail to build.
-            out.push(in_dir(
-                d,
-                Step {
-                    name: "uv".into(),
-                    warm: Some(UV_SYNC.into()),
-                    setup: Some(UV_SYNC.into()),
-                    watch: s(&["uv.lock", "pyproject.toml", ".python-version"]),
-                    ..Default::default()
-                },
-            ));
+    for (g, found, ok) in groups {
+        let nested = if ok { found } else { vec![] };
+        for d in std::iter::once(String::new()).chain(nested) {
+            let first = TOOLCHAINS
+                .iter()
+                .find(|t| t.kind == Kind::Install && t.group == g && applies(t, &d));
+            if let Some(t) = first {
+                out.extend(toolchain_steps(root, t, &d));
+            }
         }
     }
-    for d in &build_dirs {
-        if root.join(d).join("Cargo.lock").exists() {
-            // `target/` comes along in the image, so clones start with every
-            // dependency built. No setup: cargo builds incrementally on use.
-            out.push(in_dir(
-                d,
-                Step {
-                    name: "cargo".into(),
-                    warm: Some("cargo build --workspace --all-targets".into()),
-                    ..Default::default()
-                },
-            ));
+    for t in TOOLCHAINS.iter().filter(|t| t.kind == Kind::Build) {
+        for d in &build_dirs {
+            if applies(t, d) {
+                out.extend(toolchain_steps(root, t, d));
+            }
         }
     }
 
     out
 }
 
-fn js_step(root: &Path, dir: &str) -> Option<Step> {
-    let has = |f: &str| root.join(dir).join(f).exists();
-    let step = if has("pnpm-lock.yaml") {
-        Step {
-            name: "pnpm".into(),
-            warm: Some("pnpm install --frozen-lockfile".into()),
-            // Only runs when the lockfile changed; new packages may need the network.
-            setup: Some("pnpm install --prefer-offline --frozen-lockfile".into()),
-            watch: s(&["pnpm-lock.yaml", "pnpm-workspace.yaml", ".pnpmfile.cjs"]),
-            ..Default::default()
-        }
-    } else if has("bun.lock") || has("bun.lockb") {
-        Step {
-            name: "bun".into(),
-            warm: Some("bun install --frozen-lockfile".into()),
-            setup: Some("bun install --frozen-lockfile".into()),
-            watch: s(&["bun.lock", "bun.lockb"]),
-            ..Default::default()
-        }
-    } else if has("yarn.lock") {
-        let cmd = if has(".yarnrc.yml") {
-            "yarn install --immutable"
-        } else {
-            "yarn install --frozen-lockfile"
-        };
-        Step {
-            name: "yarn".into(),
-            warm: Some(cmd.into()),
-            setup: Some(cmd.into()),
-            watch: s(&["yarn.lock", ".yarnrc.yml"]),
-            ..Default::default()
-        }
-    } else if has("package-lock.json") {
-        Step {
-            name: "npm".into(),
-            warm: Some("npm ci --no-audit --no-fund".into()),
-            setup: Some("npm ci --prefer-offline --no-audit --no-fund".into()),
-            watch: s(&["package-lock.json"]),
-            ..Default::default()
-        }
-    } else {
-        return None;
-    };
-    Some(in_dir(dir, step))
+/// `t`'s steps for `dir`, tagged with its id.
+fn toolchain_steps(root: &Path, t: &Toolchain, dir: &str) -> Vec<Step> {
+    (t.steps)(&root.join(dir))
+        .iter()
+        .map(|spec| {
+            in_dir(
+                dir,
+                Step {
+                    name: format!("{}{}", t.id, spec.suffix),
+                    warm: spec.warm.map(Into::into),
+                    setup: spec.setup.map(Into::into),
+                    watch: s(spec.watch),
+                    wrap: spec.wrap,
+                    tool: Some(t.id.into()),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect()
 }
-
-const LOCKFILES: [&str; 7] = [
-    "pnpm-lock.yaml",
-    "bun.lock",
-    "bun.lockb",
-    "yarn.lock",
-    "package-lock.json",
-    "uv.lock",
-    "Cargo.lock",
-];
 
 /// Dirs below this are samples or copies, not projects to build.
 const NOT_PROJECTS: [&str; 10] = [
@@ -256,21 +211,17 @@ pub const DEFAULT_NESTED_INSTALLS: usize = 10;
 /// part, so a repo with more leaves them to the config.
 pub const MAX_NESTED_BUILDS: usize = 3;
 
-const INSTALL_LOCKFILES: [&str; 6] = [
-    "pnpm-lock.yaml",
-    "bun.lock",
-    "bun.lockb",
-    "yarn.lock",
-    "package-lock.json",
-    "uv.lock",
-];
-
 /// Dirs below `root`, up to three levels down, holding a lockfile git tracks.
 /// Untracked and ignored files don't count, so built or vendored copies are
 /// left out.
 pub fn nested_projects(root: &Path) -> Vec<String> {
     let mut dirs = std::collections::BTreeSet::new();
-    let patterns: Vec<String> = LOCKFILES.iter().map(|f| format!("**/{f}")).collect();
+    use crate::toolchains::{Kind, files};
+    let patterns: Vec<String> = [files(Kind::Install), files(Kind::Build)]
+        .concat()
+        .iter()
+        .map(|f| format!("**/{f}"))
+        .collect();
     let listed = std::process::Command::new(crate::git::bin())
         .arg("-C")
         .arg(root)
@@ -314,8 +265,6 @@ fn shell_quote(s: &str) -> String {
     }
 }
 
-const UV_SYNC: &str = "env -u PYTHONPATH uv sync --frozen";
-
 pub fn resolve_exec(exec: Exec, root: &Path) -> Exec {
     if exec != Exec::Auto {
         return exec;
@@ -339,20 +288,9 @@ pub fn wrap(exec: Exec, command: &str) -> Vec<String> {
     }
 }
 
-/// Tools a step needs on PATH, for `clove doctor`.
+/// The binary a step's `tool` needs on PATH, for `clove doctor`.
 pub fn required_tool(step: &Step) -> Option<&'static str> {
-    // Nested steps are named `<tool>-<dir>`.
-    match step.name.split('-').next().unwrap_or_default() {
-        "mise" => Some("mise"),
-        "direnv" => Some("direnv"),
-        "cargo" => Some("cargo"),
-        "pnpm" => Some("pnpm"),
-        "bun" => Some("bun"),
-        "yarn" => Some("yarn"),
-        "npm" => Some("npm"),
-        "uv" => Some("uv"),
-        _ => None,
-    }
+    crate::toolchains::of(step).map(|t| t.bin)
 }
 
 #[cfg(test)]

@@ -47,7 +47,7 @@ pub struct FileConfig {
     /// How `clove update` brings a clone up to the base.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub update: Option<UpdateFile>,
-    /// How many nested projects' dependency installs detection warms.
+    /// How many nested projects' dependency installs detection warms, per Install group.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nested_installs: Option<u32>,
     /// Replaces the detected steps.
@@ -241,7 +241,7 @@ pub const FIELDS: &[Field] = &[
         "steps",
         Kind::Int,
         Is("10"),
-        "nested projects with their own lockfile whose installs are warmed; above it, none are and doctor names them; 0 turns them off",
+        "nested projects with their own lockfile whose installs are warmed, per kind (js, python, go, ...); a kind above it gets none and doctor names them; 0 turns them off",
     ),
     field(
         "refresh.auto",
@@ -370,6 +370,11 @@ pub struct Step {
     /// Extra environment for this step only.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    /// The toolchain it runs (`pnpm`, `uv`, ...; see [`crate::toolchains`]):
+    /// `clove doctor` checks its binary and its hooks apply. Detection sets it;
+    /// unset in a config, it is inferred once on load.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
 }
 
 impl Default for Step {
@@ -381,6 +386,7 @@ impl Default for Step {
             watch: vec![],
             wrap: true,
             env: BTreeMap::new(),
+            tool: None,
         }
     }
 }
@@ -528,6 +534,11 @@ impl Config {
         for l in &layers {
             steps.extend(l.add_steps.iter().cloned());
         }
+        for s in &mut steps {
+            if s.tool.is_none() {
+                s.tool = crate::toolchains::infer(s).map(str::to_string);
+            }
+        }
 
         let exec = pick(&layers, |l| l.exec).unwrap_or_default();
         Ok(Self {
@@ -670,6 +681,8 @@ mod layer_tests {
         assert_eq!(c.image_size, "5G");
         let names: Vec<_> = c.steps.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["pnpm", "build"], "detected steps plus add_step");
+        let tools: Vec<_> = c.steps.iter().map(|s| s.tool.as_deref()).collect();
+        assert_eq!(tools, [Some("pnpm"), None]);
         assert!(c.steps_detected);
         assert_eq!(c.sources.len(), 3);
     }

@@ -28,6 +28,7 @@ export type Step = {
   watch: string[];
   wrap: boolean;
   env: Record<string, string>;
+  tool?: string | null;
 };
 
 export type GoldenStatus = {

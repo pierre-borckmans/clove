@@ -276,14 +276,18 @@ pub fn repo(c: &Clove) -> Vec<Check> {
                 "nested installs",
                 Level::Warn,
                 format!(
-                    "{} nested projects have their own lockfile, more than nested_installs ({}), so clones get none of their dependencies: {}",
-                    plan.skipped_installs.len(),
+                    "more nested projects than nested_installs ({}) for {}, so clones get none of their dependencies: {}",
                     c.config.nested_installs,
+                    plan.skipped_groups
+                        .iter()
+                        .map(|(g, n)| format!("{g} ({n})"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
                     list(&installs)
                 ),
                 Some(format!(
                     "clove config set nested_installs {} (or add [[add_step]] entries for the ones you work on)",
-                    plan.skipped_installs.len()
+                    plan.skipped_groups.iter().map(|(_, n)| *n).max().unwrap_or_default()
                 )),
             ));
         }
@@ -308,6 +312,17 @@ pub fn repo(c: &Clove) -> Vec<Check> {
         }
     }
     for s in &c.config.steps {
+        if let Some(id) = s.tool.as_deref()
+            && crate::toolchains::get(id).is_none()
+        {
+            let known: Vec<&str> = crate::toolchains::TOOLCHAINS.iter().map(|t| t.id).collect();
+            out.push(check(
+                &format!("step {}", s.name),
+                Level::Warn,
+                format!("unknown tool {id:?}: no tool check or hooks for it"),
+                Some(format!("use one of {}, or remove `tool`", known.join(", "))),
+            ));
+        }
         if let Some(tool) = required_tool(s)
             && which(tool).is_none()
             && c.config.exec == crate::config::Exec::None
