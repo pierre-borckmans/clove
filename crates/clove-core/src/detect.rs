@@ -143,7 +143,8 @@ fn find_steps(root: &Path, max_installs: usize) -> Vec<Step> {
     }
     for d in &dirs {
         if root.join(d).join("uv.lock").exists() {
-            // Virtualenvs embed absolute paths, so each clone re-syncs (fast with uv's cache).
+            // Venvs embed absolute paths; setup first moves them to the clone
+            // (`venv::relocate`), so an unchanged lockfile needs no sync.
             // A PYTHONPATH from the repo's env (e.g. a nix shell) leaks into isolated
             // builds and shadows their setuptools, so sdists fail to build.
             out.push(in_dir(
@@ -152,6 +153,7 @@ fn find_steps(root: &Path, max_installs: usize) -> Vec<Step> {
                     name: "uv".into(),
                     warm: Some(UV_SYNC.into()),
                     setup: Some(UV_SYNC.into()),
+                    watch: s(&["uv.lock", "pyproject.toml", ".python-version"]),
                     ..Default::default()
                 },
             ));

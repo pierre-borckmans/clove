@@ -942,6 +942,15 @@ impl Clove {
     ) -> Vec<String> {
         let env = self.step_env(wt, name);
         let mut failed = vec![];
+        // Before `uv sync`: venvs from the golden image still name its path.
+        if self
+            .config
+            .steps
+            .iter()
+            .any(|s| s.name.starts_with("uv") && s.setup.is_some())
+        {
+            let _ = timed(r, timings, "move venvs", || Ok(crate::venv::relocate(wt)));
+        }
         // As in `changed_steps`: at the same commit nothing moved, and one
         // diff over all watched paths spares the per-step ones when nothing did.
         let moved = since.map(|(since, _)| {
