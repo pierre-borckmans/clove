@@ -82,22 +82,22 @@ export function RepoPage() {
           <Button
             variant="ghost"
             size="sm"
-            aria-pressed={view === "map"}
-            className="h-6 gap-1.5 px-2 text-[11.5px] aria-pressed:bg-card aria-pressed:shadow-sm"
-            onClick={() => setView("map")}
-          >
-            <Network className="size-3.5" />
-            Map
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
             aria-pressed={view === "list"}
-            className="h-6 gap-1.5 px-2 text-[11.5px] aria-pressed:bg-card aria-pressed:shadow-sm"
+            className="h-6 gap-1.5 px-2 text-[11.5px] aria-pressed:bg-bottle-soft aria-pressed:font-medium aria-pressed:text-bottle aria-pressed:shadow-sm aria-pressed:ring-1 aria-pressed:ring-bottle/30 aria-pressed:hover:bg-bottle-soft aria-pressed:hover:text-bottle"
             onClick={() => setView("list")}
           >
             <List className="size-3.5" />
             List
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-pressed={view === "map"}
+            className="h-6 gap-1.5 px-2 text-[11.5px] aria-pressed:bg-bottle-soft aria-pressed:font-medium aria-pressed:text-bottle aria-pressed:shadow-sm aria-pressed:ring-1 aria-pressed:ring-bottle/30 aria-pressed:hover:bg-bottle-soft aria-pressed:hover:text-bottle"
+            onClick={() => setView("map")}
+          >
+            <Network className="size-3.5" />
+            Map
           </Button>
         </fieldset>
         <Button

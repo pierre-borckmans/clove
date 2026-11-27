@@ -119,7 +119,12 @@ export async function startOp(req: OpRequest): Promise<string> {
 
 let wired = false;
 
-type Hooks = { onSuccess?: (op: Op) => void; toasts: boolean };
+type Hooks = {
+  onSuccess?: (op: Op) => void;
+  toasts: boolean;
+  /** This window shows op cards (OpsPanel): they say done or failed, so plain toasts would repeat them. */
+  opCards?: boolean;
+};
 
 /** Subscribes this window to op events. Call once at startup. */
 export function wireOps(qc: QueryClient, hooks: Hooks) {
@@ -222,6 +227,9 @@ export function wireOps(qc: QueryClient, hooks: Hooks) {
         id: op.id,
         description: `By ${later.join(", ")}. clove removes it as soon as ${later.length === 1 ? "it exits" : "they exit"}.`,
       });
+    } else if (hooks.opCards) {
+      // The op's own card turns into the done (or failed) message.
+      return;
     } else if (op.status === "ok") {
       const clone = op.req.kind === "new" || op.req.kind === "adopt" ? (op.result as CloneInfo | null) : null;
       toast.success(doneTitle(op), {
@@ -249,7 +257,7 @@ export function resolveInTerminal(root: string, name: string) {
     .catch((e) => toast.error(`Could not start the resolver for ${name}`, { description: String(e) }));
 }
 
-function doneTitle(op: Op): string {
+export function doneTitle(op: Op): string {
   switch (op.req.kind) {
     case "init":
       return `Golden image ready for ${op.subject}`;

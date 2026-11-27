@@ -1,9 +1,14 @@
 import { ArrowDown, ArrowUp, Check, GitBranch, Lock } from "lucide-react";
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, KeyboardEvent, MouseEvent, ReactNode } from "react";
 import { CLOVE_PATH } from "@/components/glyph";
 import type { CloneInfo, OtherWorktree, Pr } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ageOf, cloneState, type LabelSpot, labelSize, type StatePart, worktreeState } from "./geometry";
+
+/** What a radial menu is open on. */
+export type MenuTarget = { kind: "clone"; name: string } | { kind: "image" };
+/** Where a menu opens, in viewport client pixels, and the radius of the node it surrounds (0 for none). */
+export type MenuAnchor = { x: number; y: number; radius: number };
 
 export type Selection =
   | { kind: "image"; generation: number }
@@ -26,6 +31,9 @@ export type MapCtx = {
   setHovered: (update: (name: string | null) => string | null) => void;
   select: (selection: Selection) => void;
   open: (path: string) => void;
+  /** What the radial menu is open on: a clone's name, or "image". */
+  menuFor: string | undefined;
+  menu: (target: MenuTarget, at: MenuAnchor, keyboard: boolean) => void;
 };
 
 export const isDimmed = (ctx: MapCtx, generation: number) =>
@@ -35,13 +43,11 @@ export const isDimmed = (ctx: MapCtx, generation: number) =>
 function Label({
   name,
   state,
-  tag,
   at,
   origin,
 }: {
   name: string;
   state: ReactNode;
-  tag?: string;
   at: LabelSpot;
   origin: { x: number; y: number };
 }) {
@@ -58,7 +64,6 @@ function Label({
     >
       <span className="map-clone-name flex max-w-full items-baseline gap-1.5 rounded px-1.5 py-0.5 text-[12px] font-medium">
         <span className="truncate">{name}</span>
-        {tag && <span className="map-gen-tag shrink-0 font-mono text-[10px] font-normal">{tag}</span>}
       </span>
       <span className="map-clone-state mt-0.5 flex h-4 items-center justify-center gap-2 text-[10.5px] text-muted-foreground">
         {state}
@@ -89,8 +94,7 @@ function StateLine({ parts }: { parts: StatePart[] }) {
   );
 }
 
-export const cloneLabelSize = (c: CloneInfo, prOf: MapCtx["prOf"], tag?: string) =>
-  labelSize(c.name, cloneState(c, prOf(c.name)), tag);
+export const cloneLabelSize = (c: CloneInfo, prOf: MapCtx["prOf"]) => labelSize(c.name, cloneState(c, prOf(c.name)));
 
 /** A clone on the map: a button holding a symbol, with its name and state beside it. */
 export function CloneNode({
@@ -100,7 +104,6 @@ export function CloneNode({
   y,
   size,
   label,
-  tag,
   leaving,
   className,
   style,
@@ -113,7 +116,6 @@ export function CloneNode({
   y: number;
   size: number;
   label: LabelSpot;
-  tag?: string;
   /** On its way out: shown while it animates, but no longer interactive. */
   leaving?: boolean;
   className?: string;
@@ -129,30 +131,79 @@ export function CloneNode({
       aria-label={`Clone ${c.name}`}
       aria-pressed={ctx.picked === c.name}
       title={c.branch ?? c.name}
-      onClick={() => ctx.select({ kind: "clone", name: c.name })}
+      {...menuTrigger(ctx, { kind: "clone", name: c.name }, ctx.picked === c.name, () =>
+        ctx.select({ kind: "clone", name: c.name }),
+      )}
       onPointerEnter={() => ctx.setHovered(() => c.name)}
       onPointerLeave={() => ctx.setHovered((h) => (h === c.name ? null : h))}
       onDoubleClick={() => c.mounted && ctx.open(c.path)}
       className={cn(
         "map-clone absolute",
         ctx.picked === c.name && "map-node-selected",
+        ctx.menuFor === c.name && "map-menu-open",
+        leaving && "map-leaving",
         isDimmed(ctx, c.golden_generation) && "map-dim",
         !c.mounted && "map-clone-unmounted",
         warning && "map-clone-warning",
         className,
       )}
-      style={{ left: origin.x, top: origin.y, width: size, height: size, ...style }}
+      // Placed with a transform, not left/top: cheaper to move every frame.
+      style={{
+        left: 0,
+        top: 0,
+        width: size,
+        height: size,
+        transform: `translate(${origin.x}px, ${origin.y}px)`,
+        ...style,
+      }}
     >
       {children}
-      <Label
-        name={c.name}
-        tag={tag}
-        at={label}
-        origin={origin}
-        state={<StateLine parts={cloneState(c, ctx.prOf(c.name))} />}
-      />
+      <Label name={c.name} at={label} origin={origin} state={<StateLine parts={cloneState(c, ctx.prOf(c.name))} />} />
     </button>
   );
+}
+
+/**
+ * Where a menu opens. A clone's opens on its clove; one whose button is
+ * bigger than a clove (a bulb slice) opens at the pointer, or its label from
+ * the keyboard. The image's centres on it, with a hole it fits in.
+ */
+function menuAnchor(target: MenuTarget, button: HTMLElement, pointer?: { clientX: number; clientY: number }) {
+  const box = button.getBoundingClientRect();
+  const centre = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+  const radius = Math.min(box.width, box.height) / 2;
+  // Judge "a clove" by its size on the map, not on screen, which grows with zoom.
+  if (target.kind === "image" || button.offsetWidth <= 60) return { ...centre, radius };
+  if (pointer?.clientX) return { x: pointer.clientX, y: pointer.clientY, radius: 0 };
+  const label = button.querySelector(".map-leaf-label")?.getBoundingClientRect() ?? box;
+  return { x: label.left + label.width / 2, y: label.top + label.height / 2, radius: 0 };
+}
+
+const isMenuKey = (event: KeyboardEvent<HTMLElement>) =>
+  event.key === "." || event.key === "ContextMenu" || (event.shiftKey && event.key === "F10");
+
+/**
+ * Handlers that open a node's radial menu: right-click, a second click once it
+ * is picked, or period (or the menu key) from the keyboard.
+ */
+export function menuTrigger(ctx: MapCtx, target: MenuTarget, picked: boolean, select: () => void) {
+  return {
+    onClick: (event: MouseEvent<HTMLElement>) => {
+      if (picked) ctx.menu(target, menuAnchor(target, event.currentTarget, event), event.detail === 0);
+      else select();
+    },
+    onContextMenu: (event: MouseEvent<HTMLElement>) => {
+      event.preventDefault();
+      select();
+      ctx.menu(target, menuAnchor(target, event.currentTarget, event), false);
+    },
+    onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+      if (!isMenuKey(event)) return;
+      event.preventDefault();
+      select();
+      ctx.menu(target, menuAnchor(target, event.currentTarget), true);
+    },
+  };
 }
 
 /** Garlic skin states, as classes on a clone node. */

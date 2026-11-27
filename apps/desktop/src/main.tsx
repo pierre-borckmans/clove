@@ -22,7 +22,7 @@ const queryClient = new QueryClient({
 });
 
 const isPopover = window.location.hash.startsWith("#/popover");
-wireOps(queryClient, { toasts: true });
+wireOps(queryClient, { toasts: true, opCards: !isPopover });
 if (isPopover) document.documentElement.dataset.window = "popover";
 
 const root = document.getElementById("root");

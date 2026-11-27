@@ -14,7 +14,7 @@ import {
   nearestOn,
   spotToward,
 } from "./geometry";
-import { CloneNode, ClovePiece, isDimmed, type MapCtx, MergedBadge, skinClasses } from "./nodes";
+import { CloneNode, ClovePiece, isDimmed, type MapCtx, MergedBadge, menuTrigger, skinClasses } from "./nodes";
 import { useMotion } from "./use-motion";
 
 const RING_GAP = 46;
@@ -125,9 +125,24 @@ export function ringsLayout(clones: CloneInfo[], newest: number, labelOf: (c: Cl
 }
 
 type RingsLayout = ReturnType<typeof ringsLayout>;
+
+/** Spin and sideways sway for a clove flying off, `q` from 0 (start) to 1 (gone). */
+function leafFlight(node: { x: number; y: number; angle: number; clone: { name: string } }, q: number) {
+  // Neighbours turn opposite ways, so a batch of removals doesn't spin in step.
+  const turn = [...node.clone.name].reduce((n, ch) => n + ch.charCodeAt(0), 0) % 2 ? 1 : -1;
+  const sway = Math.sin(q * Math.PI * 3) * 26 * (1 - q * 0.4);
+  // Across the clove's ray, which points along its angle from the core.
+  return {
+    spin: turn * 480 * q,
+    sway: { x: -Math.sin(node.angle) * sway * turn, y: Math.cos(node.angle) * sway * turn },
+  };
+}
 type RingNode = RingsLayout["nodes"][number];
 
-/** Motion tracks for a layout: clones grow out of the core, rings out of the centre. */
+/** How far a removed clove flies outward, enough to leave the view at a fitted zoom. */
+const FLY = 900;
+
+/** Motion tracks for a layout: clones grow out of the core and fly off outward; rings grow from the centre. */
 function tracks(layout: RingsLayout) {
   const { cx, cy } = layout;
   return {
@@ -135,10 +150,15 @@ function tracks(layout: RingsLayout) {
     rings: layout.rings.map((ring) => ({ id: `ring-${ring.ring}`, values: [ring.r], origin: [0], data: ring })),
     nodes: layout.nodes.map((node) => {
       const leader = node.leader ?? [node.x, node.y, node.x, node.y];
+      const values = [node.x, node.y, node.label.x, node.label.y, ...leader];
+      const len = Math.hypot(node.x - cx, node.y - cy) || 1;
+      const dx = ((node.x - cx) / len) * FLY;
+      const dy = ((node.y - cy) / len) * FLY;
       return {
         id: node.clone.name,
-        values: [node.x, node.y, node.label.x, node.label.y, ...leader],
+        values,
         origin: [cx, cy, cx, cy, cx, cy, cx, cy],
+        exit: values.map((v, i) => v + (i % 2 ? dy : dx)),
         data: node,
       };
     }),
@@ -166,7 +186,9 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
             ry={r}
           />
         ))}
-        {nodes.map(({ id, values: [x, y], data: node, presence }) => {
+        {nodes.map(({ id, values: [x, y], data: node, presence, leaving }) => {
+          // A leaving clove lets go of its edge as it flies off.
+          if (leaving) return null;
           const dx = x - cx;
           const dy = y - cy;
           const len = Math.hypot(dx, dy);
@@ -194,8 +216,9 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
           );
         })}
         {nodes.map(
-          ({ id, values, data: node, presence }) =>
-            node.leader && (
+          ({ id, values, data: node, presence, leaving }) =>
+            node.leader &&
+            !leaving && (
               <line
                 key={`leader-${id}`}
                 x1={values[4]}
@@ -241,7 +264,12 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
           ctx.imageGeneration === ctx.current && "map-node-selected",
         )}
         style={{ left: cx - 72, top: cy - 72 }}
-        onClick={() => ctx.current !== undefined && ctx.select({ kind: "image", generation: ctx.current })}
+        {...menuTrigger(
+          ctx,
+          { kind: "image" },
+          ctx.imageGeneration === ctx.current,
+          () => ctx.current !== undefined && ctx.select({ kind: "image", generation: ctx.current }),
+        )}
       >
         <span className="map-image-symbol flex size-10 items-center justify-center rounded-full">
           <Glyph mono className="size-8" />
@@ -249,8 +277,13 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
         <span className="mt-2 text-[13px] font-medium">Golden image</span>
         <span className="mt-1 font-mono text-[10px] text-muted-foreground">generation {ctx.newest}</span>
       </button>
-      {nodes.map(({ id, values: [x, y, lx, ly], data: node, presence, leaving }) => {
+      {nodes.map(({ id, values: [x0, y0, lx, ly], data: node, presence, leaving }) => {
         const pr = ctx.prOf(node.clone.name);
+        // A leaving clove tumbles off like a leaf: it spins and sways across
+        // its path as it flies out.
+        const flight = leaving ? leafFlight(node, 1 - presence) : null;
+        const x = x0 + (flight?.sway.x ?? 0);
+        const y = y0 + (flight?.sway.y ?? 0);
         return (
           <CloneNode
             key={id}
@@ -261,12 +294,21 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
             size={34}
             label={{ ...node.label, x: lx, y: ly }}
             leaving={leaving}
-            style={{ "--appear": presence } as CSSProperties}
+            style={
+              // While it animates, the per-frame fade replaces the CSS transition.
+              { "--appear": presence, transition: presence < 1 ? "none" : undefined } as CSSProperties
+            }
             className={cn(node.ring > 0 && "map-clone-old", skinClasses(node.clone, pr))}
           >
             <span
               className="map-clone-symbol flex size-[34px] items-center justify-center rounded-full"
-              style={{ transform: presence < 1 ? `scale(${0.25 + 0.75 * presence})` : undefined }}
+              style={{
+                transform: flight
+                  ? `rotate(${flight.spin}deg)`
+                  : presence < 1
+                    ? `scale(${0.25 + 0.75 * presence})`
+                    : undefined,
+              }}
             >
               {/* Size follows the clone's own data, kept inside the 34px target. */}
               <ClovePiece

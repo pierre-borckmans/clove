@@ -1,28 +1,36 @@
 import { Link } from "@tanstack/react-router";
-import { Activity, Check, ChevronDown, Loader, TriangleAlert, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Activity, Check, ChevronDown, Copy, Loader, TriangleAlert, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useHotkey } from "@/hooks/use-hotkey";
 import { useNow } from "@/hooks/use-now";
+import { api } from "@/lib/api";
 import { ms } from "@/lib/format";
-import { dismissOp, forgetOp, type Op, useOps } from "@/lib/ops";
+import { dismissOp, doneTitle, forgetOp, type Op, useOps } from "@/lib/ops";
+import type { CloneInfo } from "@/lib/types";
 import { setUi, useUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 import { barsFromSteps, Waterfall } from "./waterfall";
+
+/** How long a finished card stays, from when its op ended. */
+const DONE_FOR = 3000;
 
 /** Floating stack of live operations, bottom right of the main pane. */
 export function OpsPanel() {
   const ops = useOps();
   const { activity, addRepo } = useUi();
   const visible = (activity ? ops : ops.filter((o) => !o.dismissed)).slice(0, 4);
+  /** A card under the pointer stays until the pointer leaves. */
+  const [held, setHeld] = useState<string | null>(null);
 
+  // A finished card says done briefly, then goes; one just left gets a moment.
   useEffect(() => {
     const timers = ops
-      .filter((o) => o.status === "ok" && !o.dismissed && !activity)
-      .map((o) => setTimeout(() => dismissOp(o.id), Math.max(0, 7000 - (Date.now() - (o.finishedAt ?? 0)))));
+      .filter((o) => o.status === "ok" && !o.dismissed && !activity && o.id !== held)
+      .map((o) => setTimeout(() => dismissOp(o.id), Math.max(1200, DONE_FOR - (Date.now() - (o.finishedAt ?? 0)))));
     return () => {
       for (const t of timers) clearTimeout(t);
     };
-  }, [ops, activity]);
+  }, [ops, activity, held]);
 
   useHotkey({ key: "Escape" }, () => setUi({ activity: false }), activity);
 
@@ -47,7 +55,7 @@ export function OpsPanel() {
         </div>
       )}
       {visible.map((op) => (
-        <OpCard key={op.id} op={op} />
+        <OpCard key={op.id} op={op} onHold={(on) => setHeld((h) => (on ? op.id : h === op.id ? null : h))} />
       ))}
       {activity && visible.length === 0 && (
         <div className="pointer-events-auto flex gap-3 rounded-xl border bg-popover px-3.5 py-3 shadow-[0_8px_30px_-6px_rgb(0_0_0/0.18),0_2px_6px_-2px_rgb(0_0_0/0.08)] backdrop-blur-xl animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
@@ -69,7 +77,7 @@ export function OpsPanel() {
   );
 }
 
-export function OpCard({ op, embedded }: { op: Op; embedded?: boolean }) {
+export function OpCard({ op, embedded, onHold }: { op: Op; embedded?: boolean; onHold?: (held: boolean) => void }) {
   const running = op.status === "running";
   const now = useNow(running);
   const [open, setOpen] = useState(true);
@@ -78,9 +86,22 @@ export function OpCard({ op, embedded }: { op: Op; embedded?: boolean }) {
   const bars = barsFromSteps(op.steps, op.startedAt, end);
   const current = [...op.steps].reverse().find((s) => s.end === undefined);
   const tail = current?.output.slice(-2) ?? [];
+  const clone =
+    op.status === "ok" && (op.req.kind === "new" || op.req.kind === "adopt") ? (op.result as CloneInfo | null) : null;
+
+  // The steps list keeps to a few rows and follows new ones, unless scrolled up.
+  const steps = useRef<HTMLDivElement>(null);
+  const follow = useRef(true);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs as steps arrive.
+  useEffect(() => {
+    const el = steps.current;
+    if (el && follow.current) el.scrollTop = el.scrollHeight;
+  }, [op.steps.length]);
 
   return (
     <div
+      onPointerEnter={() => onHold?.(true)}
+      onPointerLeave={() => onHold?.(false)}
       className={cn(
         "pointer-events-auto overflow-hidden",
         !embedded &&
@@ -92,10 +113,28 @@ export function OpCard({ op, embedded }: { op: Op; embedded?: boolean }) {
           <StatusIcon status={op.status} />
           <div className="min-w-0 flex-1 leading-tight">
             <div className="truncate text-[13px] font-medium">
-              {op.title} <span className="font-mono text-[12px] font-normal text-muted-foreground">{op.subject}</span>
+              {op.status === "ok" ? (
+                doneTitle(op)
+              ) : (
+                <>
+                  {op.title}{" "}
+                  <span className="font-mono text-[12px] font-normal text-muted-foreground">{op.subject}</span>
+                </>
+              )}
             </div>
           </div>
           <span className="font-mono text-[11.5px] tabular-nums text-muted-foreground">{ms(total)}</span>
+          {clone?.path && (
+            <button
+              type="button"
+              aria-label="Copy path"
+              title="Copy path"
+              onClick={() => void api.copy(clone.path)}
+              className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Copy className="size-3.5" />
+            </button>
+          )}
           <button
             type="button"
             aria-label={open ? "Collapse" : "Expand"}
@@ -119,7 +158,16 @@ export function OpCard({ op, embedded }: { op: Op; embedded?: boolean }) {
       {open && (
         <div className={cn(!embedded && "border-t px-3.5 pt-2.5 pb-3")}>
           {bars.length > 0 ? (
-            <Waterfall bars={bars} total={total} dense />
+            <div
+              ref={steps}
+              className={cn(!embedded && "max-h-[150px] overflow-y-auto")}
+              onScroll={(event) => {
+                const el = event.currentTarget;
+                follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+              }}
+            >
+              <Waterfall bars={bars} total={total} dense />
+            </div>
           ) : (
             <div className="py-1 text-[12px] text-muted-foreground">Starting…</div>
           )}
