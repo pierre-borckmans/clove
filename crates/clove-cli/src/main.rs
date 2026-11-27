@@ -249,7 +249,7 @@ enum Cmd {
         #[command(subcommand)]
         action: ServiceAction,
     },
-    /// Teach Claude Code, Codex, OpenCode V2 and Pi to use clove: skills, global
+    /// Teach Claude Code, Codex, OpenCode and Pi to use clove: skills, global
     /// instructions, and hooks or extensions where supported.
     Agents {
         #[command(subcommand)]
@@ -257,7 +257,7 @@ enum Cmd {
     },
     /// How to use clove, written for coding agents (what `clove agents install` points them to).
     Guide,
-    /// Hooks for Claude Code, OpenCode V2 and Pi. Codex uses instructions only.
+    /// Hooks for Claude Code, OpenCode and Pi. Codex uses instructions only.
     Hook {
         #[command(subcommand)]
         action: HookAction,
@@ -280,7 +280,7 @@ enum Cmd {
 enum HookAction {
     /// Print the settings.json block that makes Claude Code use clove for worktrees.
     Claude,
-    /// Print the OpenCode V2 plugin (worktree strategy and context hint).
+    /// Print the OpenCode plugin (worktree strategy and context hint).
     Opencode,
     /// Print the Pi extension (managed-repo prompt hint).
     Pi,
@@ -293,14 +293,14 @@ enum HookAction {
         #[arg(long)]
         dir: Option<PathBuf>,
     },
-    /// OpenCode V2 worktree create: JSON on stdin; prints the resulting directory as JSON.
+    /// OpenCode worktree create: JSON on stdin; prints the resulting directory as JSON.
     OpencodeWorktreeCreate,
-    /// OpenCode V2 worktree remove: JSON on stdin with directory and force.
+    /// OpenCode worktree remove: JSON on stdin with directory and force.
     OpencodeWorktreeRemove,
     /// Roll back only the clone reserved by an interrupted OpenCode create.
     #[command(hide = true)]
     OpencodeWorktreeAbort,
-    /// OpenCode V2 worktree list: JSON on stdin; prints clove's worktree inventory as JSON.
+    /// OpenCode worktree list: JSON on stdin; prints clove's worktree inventory as JSON.
     OpencodeWorktreeList,
 }
 
@@ -2623,24 +2623,31 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
 
 fn cmd_agents(cli: &Cli, action: &AgentsAction) -> Result<()> {
     use clove_core::agents::{self, State};
-    let (ts, verb) = match action {
-        AgentsAction::Install => (agents::install()?, "installed"),
-        AgentsAction::Remove => (agents::remove()?, "removed"),
-        AgentsAction::Status => (agents::status()?, ""),
+    let (ts, verb, no_targets) = match action {
+        AgentsAction::Install => {
+            let report = agents::install_with_report()?;
+            if report.opencode_skipped {
+                eprintln!(
+                    "OpenCode skipped: the clove plugin requires OpenCode V2 (stable 2.x) on PATH. \
+                     Update OpenCode and rerun `clove agents install`."
+                );
+            }
+            (report.changed, "installed", !report.has_targets)
+        }
+        AgentsAction::Remove => (agents::remove()?, "removed", false),
+        AgentsAction::Status => {
+            let ts = agents::status()?;
+            let no_targets = ts.is_empty();
+            (ts, "", no_targets)
+        }
     };
     if cli.json {
         return emit(&ts);
     }
-    if ts.is_empty()
-        && match action {
-            AgentsAction::Status => true,
-            AgentsAction::Install => agents::status()?.is_empty(),
-            AgentsAction::Remove => false,
-        }
-    {
+    if no_targets {
         eprintln!(
             "no supported coding agent found (looked for ~/.claude, ~/.codex, ~/.pi/agent, \
-             Pi on PATH, and OpenCode V2 on PATH)"
+             and opencode or pi on PATH)"
         );
         return Ok(());
     }

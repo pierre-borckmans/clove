@@ -170,6 +170,7 @@ struct Env {
     pub opencode_config_dir: Option<PathBuf>,
     pub opencode_disable_claude_prompt: bool,
     pub pi_agent_dir: Option<PathBuf>,
+    pub opencode_on_path: bool,
     pub has_opencode_v2: bool,
     pub has_pi_bin: bool,
 }
@@ -182,6 +183,7 @@ impl Env {
                 .map(PathBuf::from)
         };
         let path = std::env::var_os("PATH").unwrap_or_default();
+        let opencode_on_path = probe_opencode && on_path(&path, "opencode");
         Ok(Self {
             home: home()?,
             xdg_config_home: var("XDG_CONFIG_HOME"),
@@ -193,7 +195,8 @@ impl Env {
             .iter()
             .any(|name| std::env::var(name).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))),
             pi_agent_dir: var("PI_CODING_AGENT_DIR"),
-            has_opencode_v2: probe_opencode && opencode_v2(&path),
+            opencode_on_path,
+            has_opencode_v2: opencode_on_path && opencode_v2(&path),
             has_pi_bin: on_path(&path, "pi"),
         })
     }
@@ -205,6 +208,7 @@ impl Env {
             opencode_config_dir: None,
             opencode_disable_claude_prompt: false,
             pi_agent_dir: None,
+            opencode_on_path: false,
             has_opencode_v2: false,
             has_pi_bin: false,
         }
@@ -244,9 +248,6 @@ fn opencode_version(path: &std::ffi::OsStr) -> Option<String> {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
 
-    if !on_path(path, "opencode") {
-        return None;
-    }
     // Even --version can initialize OpenCode's user directories. Keep the
     // probe's files private and bound its wait so other agents can still install.
     let probe = tempfile::tempdir().ok()?;
@@ -726,6 +727,27 @@ pub fn install() -> Result<Vec<Target>> {
     apply_with(&Env::from_env(true)?, true)
 }
 
+pub struct InstallReport {
+    pub changed: Vec<Target>,
+    /// There are supported agents even if their integrations were already up to date.
+    pub has_targets: bool,
+    /// An executable was found, but it did not report a supported version.
+    pub opencode_skipped: bool,
+}
+
+pub fn install_with_report() -> Result<InstallReport> {
+    install_report_with(&Env::from_env(true)?)
+}
+
+fn install_report_with(env: &Env) -> Result<InstallReport> {
+    let changed = apply_with(env, true)?;
+    Ok(InstallReport {
+        has_targets: !changed.is_empty() || !targets(env, false).is_empty(),
+        changed,
+        opencode_skipped: env.opencode_on_path && !env.has_opencode_v2,
+    })
+}
+
 pub fn remove() -> Result<Vec<Target>> {
     apply_with(&Env::from_env(false)?, false)
 }
@@ -783,25 +805,45 @@ mod tests {
                 .map(|t| t.path)
         };
         assert_eq!(plugin(&env), None);
+        let absent = install_report_with(&env).unwrap();
+        assert!(!absent.has_targets);
+        assert!(!absent.opencode_skipped);
+
+        env.opencode_on_path = true;
         env.has_opencode_v2 = opencode_v2(h.join("new-bin").as_os_str());
         assert_eq!(plugin(&env), Some(h.join(".config/opencode/plugins/clove.js")));
         env.xdg_config_home = Some(h.join("xdg"));
         assert_eq!(plugin(&env), Some(h.join("xdg/opencode/plugins/clove.js")));
         env.opencode_config_dir = Some(h.join("override"));
         assert_eq!(plugin(&env), Some(h.join("override/plugins/clove.js")));
-        assert_eq!(apply_with(&env, true).unwrap().len(), 3);
+        let installed = install_report_with(&env).unwrap();
+        assert_eq!(installed.changed.len(), 3);
+        assert!(installed.has_targets);
+        assert!(!installed.opencode_skipped);
+
+        let unchanged = install_report_with(&env).unwrap();
+        assert!(unchanged.changed.is_empty());
+        assert!(unchanged.has_targets);
+        assert!(!unchanged.opencode_skipped);
 
         let path = std::env::join_paths([h.join("old-bin"), h.join("new-bin")]).unwrap();
         env.has_opencode_v2 = opencode_v2(&path);
         assert_eq!(plugin(&env), None);
         assert_eq!(apply_with(&env, false).unwrap().len(), 3);
+        let skipped = install_report_with(&env).unwrap();
+        assert!(skipped.changed.is_empty());
+        assert!(!skipped.has_targets);
+        assert!(skipped.opencode_skipped);
 
         // An existing config and even a conflicting plugin don't make V1 eligible.
         let plugin_path = h.join("override/plugins/clove.js");
         std::fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
         std::fs::write(&plugin_path, "// user plugin\n").unwrap();
         std::fs::create_dir_all(h.join(".pi/agent")).unwrap();
-        assert_eq!(apply_with(&env, true).unwrap().len(), 3);
+        let partial = install_report_with(&env).unwrap();
+        assert_eq!(partial.changed.len(), 3);
+        assert!(partial.has_targets);
+        assert!(partial.opencode_skipped);
         assert_eq!(read(&plugin_path), "// user plugin\n");
         assert!(!h.join("override/AGENTS.md").exists());
         assert!(!h.join("override/skills").exists());

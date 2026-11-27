@@ -2,7 +2,7 @@
 
 [← README](../README.md)
 
-`clove agents install` teaches Claude Code, Codex, OpenCode V2 and Pi to use clove. The instructions go in a short block between markers, leaving the rest of each file alone. Agents read `clove guide`, which matches the installed version.
+`clove agents install` teaches Claude Code, Codex, OpenCode and Pi to use clove. The instructions go in a short block between markers, leaving the rest of each file alone. Agents read `clove guide`, which matches the installed version.
 
 ## Claude Code
 
@@ -12,9 +12,7 @@ Installs a skill at `~/.claude/skills/clove/SKILL.md`, adds the instructions to 
 
 Adds the instructions to `~/.codex/AGENTS.md`.
 
-## OpenCode V2
-
-Requires an `opencode` CLI on `PATH` that reports a stable 2.x version. Otherwise, clove skips OpenCode during install and omits it from agent status, without changing its files or skipping other agents.
+## OpenCode
 
 Installs `skills/clove/SKILL.md` and `plugins/clove.js` in OpenCode's config directory: `~/.config/opencode` by default, `$XDG_CONFIG_HOME/opencode` with an XDG config home, or `$OPENCODE_CONFIG_DIR` when set.
 
@@ -24,7 +22,7 @@ Registers a native `clove` worktree strategy to create, remove and list worktree
 
 The plugin checks whether a repo is managed when loaded. Reload or restart OpenCode after `clove init` or `clove deinit`.
 
-Before uninstalling the plugin or downgrading OpenCode, remove any OpenCode worktrees that use the `clove` strategy, either through OpenCode or with `clove rm`. OpenCode tracks which strategy owns each worktree. `clove agents remove` can remove the clove plugin even if the V2 CLI is no longer on `PATH`.
+Before uninstalling the plugin or downgrading OpenCode, remove any OpenCode worktrees that use the `clove` strategy, either through OpenCode or with `clove rm`. OpenCode tracks which strategy owns each worktree. `clove agents remove` can remove the clove plugin even if `opencode` is no longer on `PATH`.
 
 ## Pi
 
@@ -35,7 +33,7 @@ Pi's `ExtensionAPI` has no native `WorktreeCreate` or `WorktreeRemove` hooks. Th
 ## Commands
 
 - `clove hook claude` prints the settings block.
-- `clove hook opencode` prints the OpenCode V2 plugin.
+- `clove hook opencode` prints the OpenCode plugin.
 - `clove hook pi` prints the self-contained extension.
 - `clove agents status` shows what's installed.
 - `clove agents remove` takes the integration out.

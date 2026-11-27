@@ -63,7 +63,7 @@ Then, in a repository:
 clove init                       # shows what it will set up, then builds the golden image (once)
 clove new feat/login             # a ready worktree on that branch
 clove service install            # remount clones at login, keep golden images fresh
-clove agents install             # teach Claude Code, Codex, OpenCode V2 and Pi to use clove (optional)
+clove agents install             # teach Claude Code, Codex, OpenCode and Pi to use clove (optional)
 ```
 
 <details>
@@ -145,7 +145,7 @@ More in [internals](docs/internals.md).
 - **Brings clones up to date:** `clove update` rebases onto the latest base and reruns only the setup steps that changed; conflicts stop cleanly, with `--continue` or `--abort`. → [Updating a clone](docs/commands.md#updating-a-clone)
 - **Works next to plain git worktrees:** lists them, removes them safely, or adopts them as clones. → [Plain git worktrees](docs/commands.md#plain-git-worktrees)
 - **Cleans up after merged PRs,** squash merges included, by hand or automatically, with a history to get any branch back. → [Cleaning up](docs/cleanup.md)
-- **Built for coding agents:** one command teaches Claude Code, Codex, OpenCode V2 and Pi to use clones. Claude Code and OpenCode V2 use clones for native worktrees in repos clove manages. → [Coding agents](docs/agents.md)
+- **Built for coding agents:** one command teaches Claude Code, Codex, OpenCode and Pi to use clones. Claude Code and OpenCode use clones for native worktrees in repos clove manages. → [Coding agents](docs/agents.md)
 - **Stays fresh on its own:** incremental refreshes, only when a step's inputs change on the base. → [Staying fresh](docs/freshness.md)
 - **Detects your toolchain:** mise, direnv + nix, cargo, uv, pnpm, bun, yarn, npm, plus your own steps and local files like `.env`. → [Configuration](docs/configuration.md)
 
