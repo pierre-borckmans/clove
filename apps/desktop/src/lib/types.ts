@@ -311,7 +311,7 @@ export type Removed = {
   path: string;
   branch: string | null;
   head: string | null;
-  by: "hand" | "prune" | "auto-prune" | "claude-hook";
+  by: "hand" | "prune" | "auto-prune" | "claude-hook" | "opencode-hook";
   reason: string | null;
   branch_deleted: boolean;
   /** The command that brings the branch back, when it was deleted. */

@@ -199,7 +199,7 @@ export function useAgentsToggle() {
       toast.success(state === "installed" ? "Coding agents now know clove" : "clove taken out of agent instructions", {
         description:
           state === "installed"
-            ? "Claude Code and Codex use clove for worktrees. Restart running sessions to pick it up."
+            ? "Claude Code, Codex, OpenCode and Pi use clove for worktrees. Restart running sessions to pick it up."
             : "They go back to git worktree add",
       }),
     onError: (e) => toast.error("Could not change agent instructions", { description: String(e) }),

@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::engine::ArgValueCompleter;
 use clove_core::doctor::{self, Level};
-use clove_core::{Clove, Exec, NewOptions, RemoveOptions, Silent};
+use clove_core::{Clove, Exec, NewOptions, RemoveOptions, Silent, git};
 use render::*;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -198,7 +198,8 @@ enum Cmd {
         apply: bool,
     },
     /// Clones and worktrees clove removed: when, by what (rm, prune,
-    /// auto-prune, Claude Code), why, and how to get the branch back.
+    /// auto-prune, Claude Code, OpenCode), why, and how to get the branch back.
+    /// Codex and Pi use the regular clove commands.
     Log {
         /// How many, newest first.
         #[arg(short = 'n', long, default_value_t = 20)]
@@ -247,15 +248,15 @@ enum Cmd {
         #[command(subcommand)]
         action: ServiceAction,
     },
-    /// Teach coding agents (Claude Code, Codex) to use clove: a skill, a
-    /// short block in their global instructions, and Claude's worktree hooks.
+    /// Teach Claude Code, Codex, OpenCode and Pi to use clove: skills, global
+    /// instructions, and hooks or extensions where supported.
     Agents {
         #[command(subcommand)]
         action: AgentsAction,
     },
     /// How to use clove, written for coding agents (what `clove agents install` points them to).
     Guide,
-    /// Hooks for other tools. `clove hook claude` prints the Claude Code settings.
+    /// Hooks for Claude Code, OpenCode and Pi. Codex uses instructions only.
     Hook {
         #[command(subcommand)]
         action: HookAction,
@@ -278,10 +279,28 @@ enum Cmd {
 enum HookAction {
     /// Print the settings.json block that makes Claude Code use clove for worktrees.
     Claude,
+    /// Print the OpenCode plugin (worktree strategy and tool guard).
+    Opencode,
+    /// Print the Pi extension (prompt guidance and tool guard).
+    Pi,
     /// Claude Code WorktreeCreate hook: JSON on stdin, prints the clone path.
     WorktreeCreate,
     /// Claude Code WorktreeRemove hook: JSON on stdin with worktree_path.
     WorktreeRemove,
+    #[command(hide = true)]
+    Check {
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+    /// OpenCode V2 worktree create: JSON on stdin; prints the resulting directory as JSON.
+    OpencodeWorktreeCreate,
+    /// OpenCode V2 worktree remove: JSON on stdin with directory and force.
+    OpencodeWorktreeRemove,
+    /// Roll back only the clone reserved by an interrupted OpenCode create.
+    #[command(hide = true)]
+    OpencodeWorktreeAbort,
+    /// OpenCode V2 worktree list: JSON on stdin; prints clove's worktree inventory as JSON.
+    OpencodeWorktreeList,
 }
 
 #[derive(Subcommand)]
@@ -2442,12 +2461,19 @@ const CLAUDE_HOOKS: &str = r#"{
   }
 }"#;
 
-/// Claude Code worktree hooks. Progress goes to stderr; stdout carries only the path.
+/// Agent worktree hooks. Progress goes to stderr; stdout carries the protocol response.
 fn cmd_hook(action: &HookAction) -> Result<()> {
     let read_input = || -> Result<serde_json::Value> {
         let mut buf = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
         serde_json::from_str(&buf).context("hook input is not JSON")
+    };
+    let required = |input: &serde_json::Value, key: &str| {
+        input[key]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .with_context(|| format!("hook input requires a non-empty {key}"))
     };
     match action {
         HookAction::Claude => {
@@ -2461,6 +2487,23 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
                 )
             );
         }
+        HookAction::Opencode | HookAction::Pi => {
+            let (body, location) = match action {
+                HookAction::Opencode => (
+                    clove_core::agents::OPENCODE_PLUGIN,
+                    "~/.config/opencode/plugins/clove.js (or .opencode/plugins/clove.js in a repo)",
+                ),
+                _ => (
+                    clove_core::agents::PI_EXTENSION,
+                    "~/.pi/agent/extensions/clove.js (or .pi/extensions/clove.js in a repo)",
+                ),
+            };
+            print!("{body}");
+            eprintln!(
+                "{}",
+                paint(DIM, format!("save to {location}, or run `clove agents install`"))
+            );
+        }
         HookAction::WorktreeCreate => {
             let input = read_input()?;
             let name = input["name"].as_str().context("hook input has no name")?;
@@ -2470,10 +2513,7 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
                 .unwrap_or(std::env::current_dir()?);
             // Claude Code has no fallback once this hook exists, so repos
             // clove doesn't manage get what Claude would have made.
-            let managed = Clove::discover(&cwd)
-                .ok()
-                .filter(|c| c.record().ok().flatten().is_some());
-            let Some(c) = managed else {
+            let Some(c) = managed_repo(&cwd) else {
                 println!("{}", plain_worktree_add(&cwd, name)?.display());
                 return Ok(());
             };
@@ -2516,6 +2556,72 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
                 &TermReporter::new(false),
             )?;
         }
+        HookAction::Check { dir } => {
+            let dir = match dir {
+                Some(dir) => dir.clone(),
+                None => std::env::current_dir()?,
+            };
+            let output = match managed_repo(&dir) {
+                Some(c) => serde_json::json!({ "managed": true, "root": c.root }),
+                None => serde_json::json!({ "managed": false }),
+            };
+            println!("{output}");
+        }
+        HookAction::OpencodeWorktreeCreate => {
+            let input = read_input()?;
+            let source = required(&input, "sourceDirectory")?;
+            let directory = required(&input, "directory")?;
+            let branch = match &input["branch"] {
+                serde_json::Value::Null => None,
+                serde_json::Value::String(s) => Some(s.as_str()).filter(|s| !s.is_empty()),
+                _ => bail!("hook input branch must be a starting ref string"),
+            };
+            let request_id = match &input["requestId"] {
+                serde_json::Value::Null => None,
+                v => Some(v.as_str().context("hook input requestId must be a string")?),
+            };
+            let directory = match managed_repo(&source) {
+                Some(c) => opencode_clone_create(&c, &source, &directory, branch, request_id)?,
+                None => opencode_git_add(&source, &directory, branch)?,
+            };
+            println!("{}", serde_json::json!({ "directory": directory }));
+        }
+        HookAction::OpencodeWorktreeRemove => {
+            let input = read_input()?;
+            let path = required(&input, "directory")?;
+            let project = (!input["projectDirectory"].is_null())
+                .then(|| required(&input, "projectDirectory"))
+                .transpose()?;
+            let force = input["force"].as_bool().unwrap_or(false);
+            if let Some((c, name)) = opencode_find_clone(&path, project.as_deref(), managed_repo)? {
+                opencode_clone_remove(&c, &name, force)?;
+            } else {
+                plain_worktree_remove_with_force(&path, force)?;
+            }
+        }
+        HookAction::OpencodeWorktreeAbort => {
+            let input = read_input()?;
+            let project = required(&input, "projectDirectory")?;
+            let c = managed_repo(&project).context("OpenCode project is not managed by clove")?;
+            let reporter = TermReporter::new(false);
+            if input["requestId"].is_null() {
+                let name = input["name"].as_str().context("hook input has no clone name")?;
+                c.abort_opencode_clone(name, &reporter)?;
+            } else {
+                let id = input["requestId"]
+                    .as_str()
+                    .context("hook input requestId must be a string")?;
+                // Don't fall back to the name if an ID no longer matches:
+                // another operation may already have reused that name.
+                c.abort_opencode_clone_by_request(id, &reporter)?;
+            }
+        }
+        HookAction::OpencodeWorktreeList => {
+            let input = read_input()?;
+            let source = required(&input, "sourceDirectory")?;
+            let entries = opencode_worktree_inventory(managed_repo(&source).as_ref())?;
+            println!("{}", serde_json::json!(entries));
+        }
     }
     Ok(())
 }
@@ -2532,7 +2638,10 @@ fn cmd_agents(cli: &Cli, action: &AgentsAction) -> Result<()> {
     }
     let all = agents::status()?;
     if all.is_empty() {
-        eprintln!("no supported coding agent found (looked for ~/.claude and ~/.codex)");
+        eprintln!(
+            "no supported coding agent found (looked for ~/.claude, ~/.codex, ~/.config/opencode, \
+             ~/.pi/agent, and opencode or pi on PATH)"
+        );
         return Ok(());
     }
     if ts.is_empty() && !verb.is_empty() {
@@ -2601,11 +2710,225 @@ fn plain_worktree_add(cwd: &Path, name: &str) -> Result<PathBuf> {
 /// Removes a worktree clove didn't make, as Claude Code would: never forced,
 /// so uncommitted changes stop it. The branch stays.
 fn plain_worktree_remove(path: &Path) -> Result<()> {
+    plain_worktree_remove_with_force(path, false)
+}
+
+fn plain_worktree_remove_with_force(path: &Path, force: bool) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
-    let p = path.to_string_lossy().to_string();
-    clove_core::git::run_ok(path, &["worktree", "remove", &p]).context("git worktree remove")
+    let path = path.canonicalize()?;
+    let mut cmd = git::cmd(&path);
+    cmd.args(["worktree", "remove"]);
+    if force {
+        cmd.arg("--force");
+    }
+    clove_core::util::output(cmd.arg("--").arg(&path)).context("git worktree remove")?;
+    Ok(())
+}
+
+fn managed_repo(dir: &Path) -> Option<Clove> {
+    Clove::discover(dir)
+        .ok()
+        .filter(|c| c.record().ok().flatten().is_some())
+}
+
+fn opencode_start_commit(cwd: &Path, start: &str) -> Result<String> {
+    git::out(
+        cwd,
+        &[
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            &format!("{start}^{{commit}}"),
+        ],
+    )
+    .with_context(|| format!("OpenCode starting ref `{start}` does not resolve to a commit"))
+}
+
+/// Match OpenCode's detached Git fallback, without moving or creating a branch.
+fn opencode_git_add(cwd: &Path, directory: &Path, start: Option<&str>) -> Result<PathBuf> {
+    let commit = match start {
+        Some(start) => opencode_start_commit(cwd, start)?,
+        None => opencode_start_commit(cwd, "refs/remotes/origin/HEAD")
+            .or_else(|_| opencode_start_commit(cwd, "HEAD"))?,
+    };
+    let mut cmd = git::cmd(cwd);
+    clove_core::util::output(
+        cmd.args(["worktree", "add", "--detach", "--"])
+            .arg(directory)
+            .arg(commit),
+    )
+    .context("git worktree add")?;
+    Ok(cwd.join(directory).canonicalize()?)
+}
+
+fn opencode_clone_branch(c: &Clove, directory: &Path) -> Result<Option<String>> {
+    let name = directory.file_name().and_then(|p| p.to_str()).unwrap_or_default();
+    let base = clove_core::repo::sanitize_name(name).replace("..", "-");
+    if base.is_empty() {
+        return Ok(None);
+    }
+    for n in 1.. {
+        let branch = if n == 1 {
+            base.clone()
+        } else {
+            format!("{base}-{n}")
+        };
+        if c.clone_meta(&branch)?.is_some() || c.clone_dir(&branch).exists() {
+            continue;
+        }
+        let local = format!("refs/heads/{branch}");
+        if !git::ok(&c.root, &["check-ref-format", "--branch", &branch])
+            || git::ref_exists(&c.root, &local)
+            // A branch namespace (e.g. feature/login) reserves its parent.
+            || !git::out(&c.root, &["for-each-ref", "--count=1", "--format=%(refname)", &local])?.is_empty()
+            // clove new would check out this remote branch instead of using the requested base.
+            || git::ref_exists(&c.root, &format!("refs/remotes/origin/{branch}"))
+        {
+            continue;
+        }
+        return Ok(Some(branch));
+    }
+    unreachable!()
+}
+
+fn opencode_resolve_base(source: &Path, start: &str) -> Result<String> {
+    let commit = opencode_start_commit(source, start)?;
+    // Relative revisions depend on the source checkout. Keep named refs for
+    // future clove updates, but pin checkout-relative revisions to a commit.
+    let named = !matches!(start, "HEAD" | "@")
+        && !start.contains("@{")
+        && !start.starts_with('-')
+        && git::out(
+            source,
+            &[
+                "rev-parse",
+                "--verify",
+                "--symbolic-full-name",
+                "--end-of-options",
+                start,
+            ],
+        )
+        .is_ok_and(|r| r.starts_with("refs/"));
+    Ok(if named { start.to_string() } else { commit })
+}
+
+fn opencode_clone_create(
+    c: &Clove,
+    source: &Path,
+    directory: &Path,
+    start: Option<&str>,
+    request_id: Option<&str>,
+) -> Result<PathBuf> {
+    let base = start
+        .map(|start| opencode_resolve_base(source, start))
+        .transpose()?;
+    let name = match opencode_clone_branch(c, directory)? {
+        Some(name) => name,
+        None => {
+            let generated = clove_core::names::generate(|n| {
+                !c.clone_dir(n).exists() && !git::ref_exists(&c.root, &format!("refs/heads/{n}"))
+            });
+            // Check all the same collisions as for a caller-supplied name.
+            opencode_clone_branch(c, Path::new(&generated))?.context("could not name OpenCode clone")?
+        }
+    };
+    let info = c.new_clone_with_start(
+        &NewOptions {
+            branch: Some(name.clone()),
+            name: Some(name),
+            base,
+            ..Default::default()
+        },
+        &TermReporter::new(false),
+        request_id,
+        |name| eprintln!("clove:creating:{name}"),
+    )?;
+    Ok(info.path.canonicalize().unwrap_or(info.path))
+}
+
+/// Resolve aliases in the existing part of a path, even when an unmounted
+/// checkout (and possibly its mount point) is absent.
+fn canonicalize_existing_prefix(path: &Path) -> Option<PathBuf> {
+    let path = std::path::absolute(path).ok()?;
+    path.ancestors().find_map(|parent| {
+        let canonical = parent.canonicalize().ok()?;
+        Some(canonical.join(path.strip_prefix(parent).ok()?))
+    })
+}
+
+fn opencode_clone_name(c: &Clove, path: &Path) -> Result<Option<String>> {
+    let canonical = canonicalize_existing_prefix(path);
+    for name in c.clone_names()? {
+        if let Some(meta) = c.clone_meta(&name)?
+            && (path == meta.path
+                || canonical
+                    .as_ref()
+                    .is_some_and(|p| canonicalize_existing_prefix(&meta.path).as_ref() == Some(p)))
+        {
+            return Ok(Some(name));
+        }
+    }
+    Ok(None)
+}
+
+fn opencode_find_clone(
+    path: &Path,
+    project: Option<&Path>,
+    discover: impl Fn(&Path) -> Option<Clove>,
+) -> Result<Option<(Clove, String)>> {
+    let c = if let Some(project) = project {
+        let c = discover(project);
+        let common_dir = match &c {
+            Some(c) => c.common_dir.clone(),
+            None => git::common_dir(project).context("could not identify OpenCode project repository")?,
+        };
+        if path.exists()
+            && let Ok(actual) = git::common_dir(path)
+            && actual.canonicalize()? != common_dir.canonicalize()?
+        {
+            bail!(
+                "refusing to remove {}: belongs to a different repository",
+                path.display()
+            );
+        }
+        c
+    } else {
+        discover(path)
+    };
+    let Some(c) = c else {
+        return Ok(None);
+    };
+    Ok(opencode_clone_name(&c, path)?.map(|name| (c, name)))
+}
+
+fn opencode_clone_remove(c: &Clove, name: &str, force: bool) -> Result<()> {
+    if !force {
+        c.require_clean_clone(name)?;
+    }
+    c.remove(
+        name,
+        &RemoveOptions {
+            force,
+            delete_branch: false,
+            by: clove_core::history::By::OpencodeHook,
+            ..Default::default()
+        },
+        &TermReporter::new(false),
+    )
+}
+
+fn opencode_worktree_inventory(c: Option<&Clove>) -> Result<Vec<serde_json::Value>> {
+    let Some(c) = c else { return Ok(vec![]) };
+    let mut entries = vec![serde_json::json!({ "directory": c.root, "type": "root" })];
+    for clone in c.list(false)? {
+        if clone.mounted && clone.path.exists() {
+            let directory = clone.path.canonicalize().unwrap_or(clone.path);
+            entries.push(serde_json::json!({ "directory": directory, "type": "worktree" }));
+        }
+    }
+    Ok(entries)
 }
 
 /// `clove` with no command: the mark, where this repo stands, and what to type next.
@@ -2680,6 +3003,305 @@ fn home(cli: &Cli) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct TestRepo(PathBuf);
+
+    impl TestRepo {
+        fn new() -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let seq = NEXT.fetch_add(1, Ordering::Relaxed);
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let dir = std::env::temp_dir().join(format!("clove-cli-{}-{nonce}-{seq}", std::process::id()));
+            std::fs::create_dir(&dir).unwrap();
+            let repo = Self(dir.canonicalize().unwrap());
+            repo.git(&["init", "--initial-branch=main", "--template="]);
+            repo.commit();
+            repo
+        }
+
+        fn git(&self, args: &[&str]) {
+            git::run_ok(&self.0, args).unwrap();
+        }
+
+        fn commit(&self) {
+            self.git(&[
+                "-c",
+                "user.name=clove test",
+                "-c",
+                "user.email=clove@example.test",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "test",
+            ]);
+        }
+
+        fn clove(&self) -> Clove {
+            let mut c = Clove::open(&self.0).unwrap();
+            c.state = self.0.join("state");
+            c
+        }
+
+        fn managed_clove(&self) -> Clove {
+            use clove_core::backend::Backend;
+            use clove_core::repo::RepoRecord;
+
+            let c = self.clove();
+            c.save_record(&RepoRecord {
+                root: c.root.clone(),
+                name: c.name.clone(),
+                backend: if cfg!(target_os = "macos") {
+                    Backend::Sparse
+                } else {
+                    Backend::Btrfs
+                },
+                golden_admin: String::new(),
+                created_at: 0,
+            })
+            .unwrap();
+            c
+        }
+    }
+
+    fn record_clone(c: &Clove, mount: &Path, branch: Option<&str>) {
+        use clove_core::repo::{CloneMeta, write_json};
+        write_json(
+            &c.clone_dir("clone").join("meta.json"),
+            &CloneMeta {
+                name: "clone".into(),
+                branch: branch.map(str::to_string),
+                path: mount.join("checkout"),
+                mount: mount.into(),
+                base: "main".into(),
+                golden_commit: String::new(),
+                golden_generation: 0,
+                created_at: 0,
+                timings: vec![],
+                total_ms: 0.0,
+                failed_steps: vec![],
+                setup_commit: None,
+            },
+        )
+        .unwrap();
+    }
+
+    impl Drop for TestRepo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn opencode_clone_names_avoid_existing_clones_and_branches() {
+        let r = TestRepo::new();
+        let c = r.clove();
+        std::fs::create_dir_all(c.clone_dir("new-feature")).unwrap();
+        r.git(&["branch", "new-feature-2"]);
+        r.git(&["branch", "new-feature-3/nested"]);
+        r.git(&["update-ref", "refs/remotes/origin/new-feature-4", "HEAD"]);
+        assert_eq!(
+            opencode_clone_branch(&c, Path::new("/worktrees/new feature")).unwrap(),
+            Some("new-feature-5".into())
+        );
+        assert_eq!(
+            opencode_clone_branch(&c, Path::new("/worktrees/!!!")).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn opencode_plain_worktree_honors_starting_refs_and_force() {
+        let r = TestRepo::new();
+        let tagged = git::head_commit(&r.0).unwrap();
+        r.git(&["update-ref", "refs/tags/start", &tagged]);
+        r.git(&["update-ref", "refs/remotes/origin/main", &tagged]);
+        r.git(&[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ]);
+        r.commit();
+        let head = git::head_commit(&r.0).unwrap();
+        let dir = Path::new("plain worktree");
+
+        for (start, expected) in [
+            (Some("start"), &tagged),
+            (Some(tagged.as_str()), &tagged),
+            (Some("main"), &head),
+            (None, &tagged),
+        ] {
+            let path = opencode_git_add(&r.0, dir, start).unwrap();
+            assert_eq!(path, r.0.join(dir));
+            assert_eq!(&git::head_commit(&path).unwrap(), expected);
+            assert!(git::current_branch(&path).is_none());
+            plain_worktree_remove_with_force(&path, false).unwrap();
+            assert!(!path.exists());
+        }
+
+        let path = opencode_git_add(&r.0, dir, None).unwrap();
+        std::fs::write(path.join("dirty"), "keep until forced").unwrap();
+        let err = plain_worktree_remove_with_force(&path, false).unwrap_err();
+        assert!(format!("{err:#}").contains("modified or untracked files"));
+        assert!(path.exists());
+        plain_worktree_remove_with_force(&path, true).unwrap();
+        assert!(!path.exists());
+        assert!(opencode_git_add(&r.0, dir, Some("no-such-ref")).is_err());
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn opencode_resolves_checkout_relative_refs_in_the_linked_source() {
+        let r = TestRepo::new();
+        let first = git::head_commit(&r.0).unwrap();
+        r.commit();
+        let second = git::head_commit(&r.0).unwrap();
+        let source = opencode_git_add(&r.0, Path::new("linked"), Some(&second)).unwrap();
+        r.commit();
+        assert_ne!(git::head_commit(&r.0).unwrap(), second);
+        r.git(&["update-ref", "refs/remotes/origin/main", &first]);
+
+        for named in ["main", "origin/main", "refs/heads/main"] {
+            assert_eq!(opencode_resolve_base(&source, named).unwrap(), named);
+        }
+        assert_eq!(opencode_resolve_base(&source, "HEAD").unwrap(), second);
+        assert_eq!(opencode_resolve_base(&source, "HEAD~1").unwrap(), first);
+        r.git(&["branch", "source-previous", &second]);
+        git::run_ok(&source, &["switch", "source-previous"]).unwrap();
+        git::run_ok(&source, &["switch", "--detach", &first]).unwrap();
+        assert_eq!(
+            git::out(
+                &source,
+                &["rev-parse", "--verify", "--symbolic-full-name", "@{-1}"]
+            )
+            .unwrap(),
+            "refs/heads/source-previous"
+        );
+        assert_eq!(opencode_resolve_base(&source, "@{-1}").unwrap(), second);
+        assert!(opencode_resolve_base(&source, "no-such-ref").is_err());
+    }
+
+    #[test]
+    fn opencode_finds_unmounted_clones_from_the_project_and_keeps_branches() {
+        let r = TestRepo::new();
+        let c = r.managed_clove();
+        r.git(&["switch", "--detach"]);
+        r.commit();
+        r.git(&["branch", "user-feature"]);
+        r.git(&["switch", "main"]);
+        assert!(!git::ok(
+            &r.0,
+            &["merge-base", "--is-ancestor", "user-feature", "main"]
+        ));
+        let mounts = r.0.join("mounts");
+        std::fs::create_dir(&mounts).unwrap();
+        let alias = r.0.join("alias");
+        std::os::unix::fs::symlink(&mounts, &alias).unwrap();
+        record_clone(&c, &alias.join("missing"), Some("user-feature"));
+        let path = mounts.join("missing/checkout");
+        assert!(!path.exists());
+        let lookup = |p: &Path| (p == r.0).then(|| r.clove());
+        assert!(opencode_find_clone(&path, None, lookup).unwrap().is_none());
+        let (c, name) = opencode_find_clone(&path, Some(&r.0), lookup).unwrap().unwrap();
+        assert_eq!(name, "clone");
+
+        // Leave a stale checkout directory. Its existence doesn't mean the
+        // image is attached. Without an image, removal must fail safely.
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(opencode_clone_remove(&c, &name, false).is_err());
+        assert!(c.clone_meta(&name).unwrap().is_some());
+        opencode_clone_remove(&c, &name, true).unwrap();
+        assert!(c.clone_meta(&name).unwrap().is_none());
+        assert!(git::ref_exists(&c.root, "refs/heads/user-feature"));
+        let removed = c.history().remove(0);
+        assert_eq!(removed.by, clove_core::history::By::OpencodeHook);
+        assert!(!removed.branch_deleted);
+    }
+
+    #[test]
+    fn opencode_refuses_paths_in_another_project_even_for_plain_git() {
+        let a = TestRepo::new();
+        let b = TestRepo::new();
+        let stale = opencode_git_add(&b.0, Path::new("linked"), None).unwrap();
+        for managed in [false, true] {
+            let lookup = |p: &Path| {
+                if p == a.0 && managed {
+                    Some(a.clove())
+                } else if p == stale {
+                    panic!("must not discover managed state from the removal target");
+                } else {
+                    None
+                }
+            };
+            let err = opencode_find_clone(&stale, Some(&a.0), lookup).err().unwrap();
+            assert!(err.to_string().contains("belongs to a different repository"));
+            assert!(stale.exists());
+        }
+    }
+
+    #[test]
+    fn opencode_rollback_only_removes_the_named_clone() {
+        let r = TestRepo::new();
+        let mut c = r.managed_clove();
+        c.config.clone_root = r.0.join("mounts");
+        for name in ["interrupted", "other-creator"] {
+            for dir in [c.clone_dir(name), c.clone_admin(name), c.clone_mount(name)] {
+                std::fs::create_dir_all(dir).unwrap();
+            }
+        }
+        c.abort_opencode_clone("interrupted", &Silent).unwrap();
+        assert!(!c.clone_dir("interrupted").exists());
+        assert!(!c.clone_admin("interrupted").exists());
+        assert!(!c.clone_mount("interrupted").exists());
+        assert!(c.clone_dir("other-creator").is_dir());
+        assert!(c.clone_admin("other-creator").is_dir());
+        assert!(c.clone_mount("other-creator").is_dir());
+        assert!(c.abort_opencode_clone("../other-creator", &Silent).is_err());
+
+        r.git(&["branch", "finished"]);
+        record_clone(&c, &c.clone_mount("clone"), Some("finished"));
+        std::fs::write(c.clone_dir("clone").join(".request"), "finished-request").unwrap();
+        c.abort_opencode_clone_by_request("finished-request", &Silent)
+            .unwrap();
+        assert!(c.clone_meta("clone").unwrap().is_none());
+        assert!(git::ref_exists(&c.root, "refs/heads/finished"));
+        assert_eq!(c.history()[0].by, clove_core::history::By::OpencodeHook);
+        assert!(c.clone_dir("other-creator").is_dir());
+    }
+
+    #[test]
+    fn opencode_inventory_only_claims_managed_roots_and_mounted_clones() {
+        let r = TestRepo::new();
+        opencode_git_add(&r.0, Path::new("ordinary"), None).unwrap();
+        assert!(
+            opencode_worktree_inventory(managed_repo(&r.0).as_ref())
+                .unwrap()
+                .is_empty()
+        );
+        let c = r.managed_clove();
+        let mount = r.0.join("not-mounted");
+        let clone = mount.join("checkout");
+        std::fs::create_dir_all(&clone).unwrap();
+        let alias = r.0.join("mount-alias");
+        std::os::unix::fs::symlink(&mount, &alias).unwrap();
+        record_clone(&c, &alias, None);
+
+        assert_eq!(
+            opencode_worktree_inventory(Some(&c)).unwrap(),
+            [serde_json::json!({ "directory": c.root, "type": "root" })]
+        );
+        assert_eq!(opencode_clone_name(&c, &clone).unwrap().as_deref(), Some("clone"));
+        assert!(opencode_clone_name(&c, &r.0.join("ordinary")).unwrap().is_none());
+        let err = opencode_clone_create(&c, &r.0, Path::new("/worktrees/clone"), Some("no-such-ref"), None)
+            .unwrap_err();
+        assert!(err.to_string().contains("does not resolve to a commit"));
+    }
 
     /// Agents learn clove from `clove guide`; a command missing there is one
     /// they won't use.

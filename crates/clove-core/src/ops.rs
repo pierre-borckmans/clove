@@ -652,6 +652,19 @@ impl Clove {
     /// Creates a clone: O(1) image copy, mount, git registration, branch checkout,
     /// then only the setup steps whose inputs changed since the golden commit.
     pub fn new_clone(&self, opts: &NewOptions, r: &dyn Reporter) -> Result<CloneInfo> {
+        self.new_clone_with_start(opts, r, None, |_| {})
+    }
+
+    /// Like `new_clone`, with a notification after reserving the name but
+    /// before creating its image. A request ID can identify the reservation
+    /// even if the caller never receives the notification or output.
+    pub fn new_clone_with_start(
+        &self,
+        opts: &NewOptions,
+        r: &dyn Reporter,
+        request_id: Option<&str>,
+        on_start: impl FnOnce(&str),
+    ) -> Result<CloneInfo> {
         let started = std::time::Instant::now();
         let record = self.require_record()?;
         let branch = match (&opts.branch, opts.detach) {
@@ -712,7 +725,9 @@ impl Clove {
                 .context("golden image missing; run `clove init`")?;
             let gen_dir = self.golden_gen_dir(generation);
             let meta: GoldenMeta = read_json(&gen_dir.join("meta.json"))?.context("golden meta missing")?;
-            std::fs::create_dir_all(&dir)?;
+            self.reserve_clone(&name, request_id)
+                .with_context(|| format!("reserve clone `{name}`"))?;
+            on_start(&name);
             timed(r, &mut timings, "clone image", || {
                 store.clone_create(self, generation, &name, &mount)
             })?;
@@ -795,6 +810,42 @@ impl Clove {
         };
         write_json(&dir.join("meta.json"), &meta)?;
         self.info(&name, false)
+    }
+
+    fn request_staging(&self, id: &str) -> Result<PathBuf> {
+        if id.is_empty()
+            || id.len() > 80
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        {
+            bail!("invalid clone request ID");
+        }
+        Ok(self.clone_dir(&format!(".reserve-{id}")))
+    }
+
+    /// Called under the repo lock. The named slot becomes visible only with
+    /// its request marker already in place. Keep the marker with the clone so
+    /// late cancellation still works after metadata and stdout are written.
+    fn reserve_clone(&self, name: &str, request_id: Option<&str>) -> Result<()> {
+        let dir = self.clone_dir(name);
+        std::fs::create_dir_all(self.state.join("clones"))?;
+        let Some(id) = request_id else {
+            return std::fs::create_dir(dir).map_err(Into::into);
+        };
+        match dir.symlink_metadata() {
+            Ok(_) => bail!("clone `{name}` already exists"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        let staging = self.request_staging(id)?;
+        std::fs::create_dir(&staging)?;
+        let result =
+            std::fs::write(staging.join(".request"), id).and_then(|()| std::fs::rename(&staging, &dir));
+        if result.is_err() {
+            let _ = std::fs::remove_dir_all(&staging);
+        }
+        result.with_context(|| format!("publish {}", dir.display()))
     }
 
     fn checkout(&self, wt: &Path, branch: Option<&str>, base: &str) -> Result<()> {
@@ -971,6 +1022,16 @@ impl Clove {
     }
 
     pub fn remove(&self, name: &str, opts: &RemoveOptions, r: &dyn Reporter) -> Result<()> {
+        self.remove_with_lock(name, opts, r, None)
+    }
+
+    fn remove_with_lock(
+        &self,
+        name: &str,
+        opts: &RemoveOptions,
+        r: &dyn Reporter,
+        lock: Option<FileLock>,
+    ) -> Result<()> {
         let meta = self.clone_meta(name)?.ok_or_else(|| self.no_clone(name))?;
         let mut timings = vec![];
         let store = self.store()?;
@@ -998,7 +1059,10 @@ impl Clove {
         timed(r, &mut timings, "unmount", || {
             store.clone_detach(self, name, &meta.mount, opts.force)
         })?;
-        let _lock = self.lock()?;
+        let _lock = match lock {
+            Some(lock) => lock,
+            None => self.lock()?,
+        };
         timed(r, &mut timings, "delete image", || {
             let _ = std::fs::remove_dir_all(self.clone_admin(name));
             store.clone_delete(self, name, &meta.mount)?;
@@ -1036,6 +1100,93 @@ impl Clove {
             reason: opts.reason.clone(),
             branch_deleted,
         });
+        Ok(())
+    }
+
+    /// Remounts if necessary and requires a successful, clean Git inspection.
+    pub fn require_clean_clone(&self, name: &str) -> Result<()> {
+        let meta = self.clone_meta(name)?.ok_or_else(|| self.no_clone(name))?;
+        if !self.store()?.clone_attached(self, name, &meta.mount) {
+            self.mount(name)?;
+        }
+        if git::is_dirty(&meta.path).with_context(|| format!("inspect git status in `{name}`"))? {
+            bail!("`{name}` has uncommitted changes; commit them, or `clove rm --force {name}` to discard");
+        }
+        Ok(())
+    }
+
+    /// Rolls back one interrupted OpenCode creation, leaving all branches and
+    /// all other clones alone. The caller must have stopped the creator first.
+    pub fn abort_opencode_clone(&self, name: &str, r: &dyn Reporter) -> Result<()> {
+        if name.is_empty() || sanitize_name(name) != name {
+            bail!("invalid clone name `{name}`");
+        }
+        self.abort_opencode_clone_locked(name, r, self.lock()?)
+    }
+
+    /// Looks up and rolls back a canceled request without trusting a possibly
+    /// reused clone name. The creator must have stopped before calling this.
+    pub fn abort_opencode_clone_by_request(&self, id: &str, r: &dyn Reporter) -> Result<()> {
+        let staging = self.request_staging(id)?;
+        let lock = self.lock()?;
+        // The process may have stopped before writing or publishing the marker.
+        remove_reservation_dir(&staging)?;
+        let clones = match std::fs::read_dir(self.state.join("clones")) {
+            Ok(clones) => clones,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        let mut found = None;
+        for entry in clones {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str().filter(|n| sanitize_name(n) == *n) else {
+                continue;
+            };
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            match std::fs::read(entry.path().join(".request")) {
+                Ok(marker) if marker == id.as_bytes() => {
+                    if found.replace(name.to_string()).is_some() {
+                        bail!("ambiguous clone request ID");
+                    }
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        if let Some(name) = found {
+            self.abort_opencode_clone_locked(&name, r, lock)?;
+        }
+        Ok(())
+    }
+
+    fn abort_opencode_clone_locked(&self, name: &str, r: &dyn Reporter, lock: FileLock) -> Result<()> {
+        if self.clone_meta(name)?.is_some() {
+            return self.remove_with_lock(
+                name,
+                &RemoveOptions {
+                    force: true,
+                    by: crate::history::By::OpencodeHook,
+                    ..Default::default()
+                },
+                r,
+                Some(lock),
+            );
+        }
+        let _lock = lock;
+
+        let mount = self.clone_mount(name);
+        let store = self.store()?;
+        store.clone_detach(self, name, &mount, true)?;
+        store.clone_delete(self, name, &mount)?;
+        for path in [self.clone_admin(name), self.clone_dir(name)] {
+            remove_reservation_dir(&path)?;
+        }
+        // A mount directory with unexpected contents must not be removed recursively.
+        let _ = std::fs::remove_dir(&mount);
         Ok(())
     }
 
@@ -1606,6 +1757,14 @@ pub const PENDING_FILE: &str = "remove-when-free.json";
 
 /// The lock reason git prints when something tries `git worktree remove` on a
 /// clone: it names the command that works.
+fn remove_reservation_dir(path: &Path) -> Result<()> {
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e).with_context(|| format!("remove {}", path.display())),
+    }
+}
+
 fn lock_reason(name: &str) -> String {
     format!("clove clone: remove it with `clove rm {name}` (git can't unmount or delete its disk image)")
 }
@@ -1773,6 +1932,47 @@ impl Clove {
 #[cfg(test)]
 mod stray_tests {
     use super::*;
+
+    #[test]
+    fn opencode_abort_by_request_only_rolls_back_its_own_reservation() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut c = Clove::open(temp.path()).unwrap();
+        c.state = temp.path().join("state");
+        c.config.clone_root = temp.path().join("mounts");
+        {
+            let _lock = c.lock().unwrap();
+            c.reserve_clone("interrupted", Some("cancel-me")).unwrap();
+            c.reserve_clone("other", Some("leave-me")).unwrap();
+            c.reserve_clone("legacy", None).unwrap();
+            assert!(c.reserve_clone("other", Some("collision")).is_err());
+            std::fs::create_dir(c.request_staging("pre-publish").unwrap()).unwrap();
+        }
+        for name in ["interrupted", "other", "legacy"] {
+            std::fs::create_dir_all(c.clone_mount(name)).unwrap();
+            std::fs::create_dir_all(c.clone_admin(name)).unwrap();
+        }
+
+        assert!(c.clone_meta("interrupted").unwrap().is_none());
+        c.abort_opencode_clone_by_request("cancel-me", &crate::events::Silent)
+            .unwrap();
+        assert!(!c.clone_dir("interrupted").exists());
+        assert!(!c.clone_admin("interrupted").exists());
+        assert!(!c.clone_mount("interrupted").exists());
+        c.abort_opencode_clone_by_request("pre-publish", &crate::events::Silent)
+            .unwrap();
+        assert!(!c.request_staging("pre-publish").unwrap().exists());
+        c.abort_opencode_clone_by_request("collision", &crate::events::Silent)
+            .unwrap();
+        assert_eq!(
+            std::fs::read(c.clone_dir("other").join(".request")).unwrap(),
+            b"leave-me"
+        );
+        for name in ["other", "legacy"] {
+            assert!(c.clone_dir(name).is_dir());
+            assert!(c.clone_admin(name).is_dir());
+            assert!(c.clone_mount(name).is_dir());
+        }
+    }
 
     #[test]
     fn a_missing_clone_folder_claims_no_process() {

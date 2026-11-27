@@ -157,12 +157,21 @@ fn full_lifecycle() {
     // new: O(1) clone, setup skipped because lock.txt is unchanged
     let start = Instant::now();
     let a = c
-        .new_clone(
+        .new_clone_with_start(
             &NewOptions {
                 branch: Some("feat/a".into()),
                 ..Default::default()
             },
             &Silent,
+            Some("first-worktree-request"),
+            |name| {
+                assert_eq!(name, "feat-a");
+                assert_eq!(std::fs::read_dir(c.clone_dir(name)).unwrap().count(), 1);
+                assert_eq!(
+                    std::fs::read_to_string(c.clone_dir(name).join(".request")).unwrap(),
+                    "first-worktree-request"
+                );
+            },
         )
         .expect("new a");
     let took = start.elapsed();
@@ -171,11 +180,35 @@ fn full_lifecycle() {
     assert!(a.mounted);
     assert_eq!(a.branch.as_deref(), Some("feat/a"));
     assert_eq!(
+        std::fs::read_to_string(c.clone_dir(&a.name).join(".request")).unwrap(),
+        "first-worktree-request"
+    );
+    assert!(
+        c.new_clone_with_start(
+            &NewOptions {
+                branch: Some("feat/a".into()),
+                ..Default::default()
+            },
+            &Silent,
+            None,
+            |_| panic!("must not announce a name reserved by another clone"),
+        )
+        .is_err()
+    );
+    assert_eq!(
         std::fs::read_to_string(a.path.join("deps/installed")).unwrap(),
         "v1\n"
     );
     assert!(!a.path.join("deps/setup-ran").exists(), "setup should be skipped");
     assert_eq!(git(&a.path, &["status", "--porcelain"]), "", "clone starts clean");
+    c.require_clean_clone(&a.name).unwrap();
+    let link = a.path.join(".git");
+    let gitfile = std::fs::read(&link).unwrap();
+    std::fs::write(&link, "gitdir: missing\n").unwrap();
+    let err = c.require_clean_clone(&a.name).unwrap_err();
+    assert!(err.to_string().contains("inspect git status in `feat-a`"));
+    assert!(!format!("{err:#}").contains("uncommitted changes"));
+    std::fs::write(&link, gitfile).unwrap();
     assert!(git(&root, &["worktree", "list"]).contains(&a.path.display().to_string()));
     let clone_ms = a.timings.iter().find(|t| t.step == "clone image").unwrap().ms;
     assert!(clone_ms < 1000.0, "clone image took {clone_ms}ms");
@@ -597,6 +630,12 @@ fn full_lifecycle() {
 
     // remove refuses dirty clones without --force
     std::fs::write(a.path.join("app.txt"), "dirty\n").unwrap();
+    assert!(
+        c.require_clean_clone(&a.name)
+            .unwrap_err()
+            .to_string()
+            .contains("has uncommitted changes")
+    );
     assert!(c.remove("feat-a", &RemoveOptions::default(), &Silent).is_err());
     c.remove(
         "feat-a",
