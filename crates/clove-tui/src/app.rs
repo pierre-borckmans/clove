@@ -1205,6 +1205,12 @@ impl App {
                 self.modal = Some(Modal::Removals(RemovalsView::default()));
                 return vec![];
             }
+            KeyCode::Char('t') => {
+                if self.current().is_some() {
+                    self.modal = Some(Modal::Stats(RemovalsView::default()));
+                }
+                return vec![];
+            }
             KeyCode::Char('D') => {
                 self.modal = Some(Modal::Doctor(DoctorView::default()));
                 return self.spawn(Task::Doctor, After::Nothing);
@@ -1658,6 +1664,7 @@ impl App {
             Modal::Gc(g) => self.gc_key(g, k),
             Modal::Doctor(d) => self.doctor_key(d, k),
             Modal::Removals(v) => self.removals_key(v, k),
+            Modal::Stats(v) => self.stats_key(v, k),
             Modal::ResolveOffer(o) => self.resolve_offer_key(o, k),
             Modal::Settings(v) => self.settings_key(v, k),
             Modal::Diff(v) => self.diff_key(v, k),
@@ -2152,6 +2159,18 @@ impl App {
         (Some(Modal::Removals(v)), vec![])
     }
 
+    fn stats_key(&mut self, mut v: RemovalsView, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('t') | KeyCode::Enter => return (None, vec![]),
+            KeyCode::Up | KeyCode::Char('k') => v.scroll.set(v.scroll.target().saturating_sub(1)),
+            KeyCode::Down | KeyCode::Char('j') => v.scroll.set(v.scroll.target() + 1),
+            KeyCode::PageUp => v.scroll.set(v.scroll.target().saturating_sub(10)),
+            KeyCode::PageDown | KeyCode::Char(' ') => v.scroll.set(v.scroll.target() + 10),
+            _ => {}
+        }
+        (Some(Modal::Stats(v)), vec![])
+    }
+
     fn doctor_key(&mut self, mut d: DoctorView, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
         match k.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('D') | KeyCode::Enter => {
@@ -2259,7 +2278,7 @@ impl App {
                         }
                     }
                     Some(Hit::ScrollRemovals) => {
-                        if let Some(Modal::Removals(v)) = &mut self.modal {
+                        if let Some(Modal::Removals(v) | Modal::Stats(v)) = &mut self.modal {
                             let t = v.scroll.target() as isize + d * 2;
                             v.scroll.set(t.max(0) as usize);
                         }

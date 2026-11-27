@@ -24,6 +24,7 @@ clove setup                      # in a clone, after a pull: rerun the setup ste
 clove rm feat-login -D           # unmount, delete, and delete the branch
 clove prune                      # remove clones whose PR is merged, and their branches
 clove log                        # what clove removed, when, why, and how to get the branch back
+clove stats                      # how fast clones come: median, p90, where the time goes, reruns
 
 # maintain
 clove refresh                    # bring the golden image to the latest base (incremental)
@@ -44,7 +45,7 @@ Every feature is in three places:
 - **The CLI** above. Every command takes `--json`; `clove new --json` prints the clone's path, branch and timings.
 - **The terminal UI:** `clove` on its own (or `clove tui`), with mouse support.
   - A sidebar lists every repo, its clones, and whether its golden image is fresh.
-  - `s` settings (Enter edits or toggles, ←/→ picks the file it saves to, `x` resets) · `g` clean up · `L` removal history · `A` add a repo · Enter quits into the selected clone.
+  - `s` settings (Enter edits or toggles, ←/→ picks the file it saves to, `x` resets) · `g` clean up · `L` removal history · `t` clone timings · `A` add a repo · Enter quits into the selected clone.
   - `v` shows a clone's changes: a file list (`g` groups it by package) beside a split or unified diff (`s`), syntax-highlighted, with changed words marked. Lockfiles, generated and large files start folded (`z` opens one); `e` opens a file in `$EDITOR`.
 - **The desktop app** (macOS and Linux): the same sidebar, settings, cleanup and history, plus a popover listing every clone. `D` on a clone opens the same diff view, built on [@pierre/diffs](https://diffs.com). On macOS it opens from the menu bar; on Linux from the tray icon's menu ("Quick open…").
 

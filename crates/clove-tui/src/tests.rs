@@ -186,6 +186,8 @@ fn data(root: impl Into<PathBuf>, status: RepoStatus, clones: Vec<CloneInfo>) ->
         summary,
         watch: vec![],
         history: vec![],
+        created: vec![],
+        golden_builds: vec![],
     }
 }
 
@@ -2459,4 +2461,60 @@ fn diff_view_panels_resize() {
     let (s, _) = render(&mut app, 120, 24);
     assert_eq!(list_right(&s), start + 6, "{s}");
     assert!(matches!(app.modal, Some(crate::model::Modal::Diff(_))));
+}
+
+#[test]
+fn timings_view() {
+    use clove_core::Timing;
+    use clove_core::stats::Created;
+    let mut app = app();
+    let made = |name: &str, ago: u64, steps: &[(&str, f64)], total: f64| Created {
+        at: app.now_unix.saturating_sub(ago),
+        name: name.into(),
+        branch: Some(name.into()),
+        base: "origin/main".into(),
+        golden_generation: 3,
+        total_ms: total,
+        timings: steps
+            .iter()
+            .map(|(s, ms)| Timing {
+                step: s.to_string(),
+                ms: *ms,
+            })
+            .collect(),
+        failed_steps: vec![],
+    };
+    let created = vec![
+        made(
+            "feat-login",
+            60,
+            &[("mount", 950.0), ("checkout", 800.0), ("setup mise-trust", 44.0)],
+            2330.0,
+        ),
+        made(
+            "fix-race",
+            3600,
+            &[("mount", 890.0), ("checkout", 840.0), ("setup mise-trust", 235.0)],
+            2520.0,
+        ),
+        made(
+            "spike-cache",
+            86_400,
+            &[
+                ("mount", 700.0),
+                ("checkout", 1300.0),
+                ("setup direnv", 24_880.0),
+                ("setup pnpm", 3760.0),
+            ],
+            32_130.0,
+        ),
+    ];
+    let root = app.root().unwrap();
+    app.data.get_mut(&root).unwrap().created = created;
+    key(&mut app, KeyCode::Char('t'));
+    let (s, _) = render(&mut app, 120, 30);
+    assert!(s.contains("clove itself"), "{s}");
+    insta::assert_snapshot!(s);
+    key(&mut app, KeyCode::Esc);
+    assert!(app.modal.is_none());
 }

@@ -100,6 +100,8 @@ fn repo_data(root: &Path, git_status: bool) -> Result<Box<RepoData>, String> {
         fields: clove_core::settings::fields(&c.root, &c.name, &c.config).unwrap_or_default(),
         config: c.config.clone(),
         history: c.history().into_iter().take(200).collect(),
+        created: c.created(),
+        golden_builds: c.golden_builds(),
         prs,
         watch: {
             let mut t = c.watch_targets();

@@ -12,25 +12,25 @@ expression: s
 │   web       set up ││         U / X   update to latest base / abort        │        3h    230M   │
 │ + add repo         ││             o   open in $EDITOR                      │ed      3h     14M   │
 │                    ││             v   see its changes (diff)               │        4d     14M   │
-│                    ││             c   make a plain git worktree a clone    │        3h     14M   │
+│                    ││             t   how fast clones come (timings)       │        3h     14M   │
+│                    ││             c   make a plain git worktree a clone    │                     │
 │                    ││             /   filter by name or branch             │                     │
 │                    ││         ↑↓ jk   move · wheel scrolls                 │                     │
 │                    ││                                                      │                     │
 │                    ││  GOLDEN IMAGE                                        │                     │
 │                    ││             r   refresh to latest base               │                     │
 │                    ││             i   build it (first time)                │                     │
-│                    ││             l   watch the last operation             │                     │
-│                    ││                                                      │─────────────────────╯
-│                    ││  ANYWHERE                                            │─────────────────────╮
+│                    ││             l   watch the last operation             │─────────────────────╯
+│                    ││                                                      │─────────────────────╮
+│                    ││  ANYWHERE                                            │                     │
 │                    ││   tab [ ] 1-9   switch repository                    │                     │
 │                    ││             A   add a repo clove doesn't manage yet  │                     │
 │                    ││             s   settings, service                    │                     │
 │                    ││             g   cleanup: merged clones/worktrees     │                     │
-│                    ││             L   log: what clove removed, and why     │                     │
-│ ────────────────── ││             D   doctor                               │                     │
-│ s settings         ││        ctrl-r   reload now                           │                     │
-│ g cleanup          ││         q esc   quit                                 │               3.2s  │
-│ D doctor           ││                                                      │                6ms  │
-│ S service          ││  PANELS                                              │                     │
+│ ────────────────── ││             L   log: what clove removed, and why     │                     │
+│ s settings         ││             D   doctor                               │                     │
+│ g cleanup          ││        ctrl-r   reload now                           │               3.2s  │
+│ D doctor           ││         q esc   quit                                 │                6ms  │
+│ S service          ││                                                      │                     │
 ╰────────────────────╯│                                                      │─────────────────────╯
  esc close            ╰──────────────────────────────────────────────────────╯

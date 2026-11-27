@@ -38,6 +38,7 @@ are named after the branch, with `/` turned into `-`.
     clove run <clone> -- <cmd>     # run a command there, in its dev environment
     clove setup                    # after a pull/rebase changed lockfiles: reinstall what changed
     clove ls --json                # clones with branch, changes, PR state
+    clove stats --json             # how long clones take, and which step took it
     clove diff <clone> --stat      # what it changed against the base (--json: per file and package)
 
 `clove cd <clone>` only works in an interactive shell with clove's shell
