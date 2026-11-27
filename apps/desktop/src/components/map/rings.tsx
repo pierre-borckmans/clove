@@ -55,8 +55,8 @@ export function ringsLayout(clones: CloneInfo[], newest: number, labelOf: (c: Cl
   // one). When the circle can't hold that, every ring grows together.
   let scale = 1;
   const radiusOf = (age: number) => (MIN_INNER + slotOf(age) * RING_GAP) * scale;
-  const topGap = () =>
-    ringCount > 1 ? 2 * Math.asin(Math.min(1, 100 / (Math.min(...groups.map((_, a) => radiusOf(a))) * STRETCH))) : 0;
+  // Every ring has its label pill at the top: keep clones clear of it.
+  const topGap = () => 2 * Math.asin(Math.min(1, 100 / (Math.min(...groups.map((_, a) => radiusOf(a))) * STRETCH)));
   const needed = () => groups.reduce((sum, g, age) => sum + (g.length * SPACING) / radiusOf(age), 0);
   for (let i = 0; i < 6 && needed() > Math.PI * 2 - topGap(); i++) {
     scale *= (needed() / (Math.PI * 2 - topGap())) * 1.02;
@@ -80,6 +80,8 @@ export function ringsLayout(clones: CloneInfo[], newest: number, labelOf: (c: Cl
   });
   const rings = Array.from({ length: ringCount }, (_, ring) => {
     const gens = [...new Set(placed.filter((n) => n.ring === ring).map((n) => n.clone.golden_generation))];
+    // A ring with no clones still stands for one image: label it with that generation.
+    if (!gens.length) gens.push(newest - ring);
     return { ring, r: radiusOf(ring), generations: gens.sort((a, b) => b - a) };
   });
 
@@ -88,7 +90,7 @@ export function ringsLayout(clones: CloneInfo[], newest: number, labelOf: (c: Cl
   const obstacles: Box[] = [
     centerBox(cx, cy, 150),
     ...placed.map((n) => centerBox(n.x, n.y, 34)),
-    ...rings.filter((r) => r.ring > 0).map((r) => centerBox(cx, cy - r.r, 170, 20)),
+    ...rings.map((r) => centerBox(cx, cy - r.r, 170, 20)),
   ];
   const nodes = placed.map((n) => {
     const dx = n.x - cx;
@@ -231,30 +233,37 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
             ),
         )}
       </svg>
-      {rings
-        .filter(({ data }) => data.ring > 0)
-        .map(({ id, values: [r], data: { ring, generations }, presence, leaving }) => {
-          const active = generations.includes(ctx.imageGeneration ?? -1) && ctx.imageGeneration !== ctx.current;
-          const label =
-            ring === MAX_AGE && generations.length > 1
-              ? `gen ${generations[generations.length - 1]}–${generations[0]}`
-              : `gen ${generations.join(", ")}`;
-          return (
-            <button
-              type="button"
-              key={id}
-              inert={leaving}
-              aria-label={`Clones from older image, ${label}`}
-              aria-pressed={active}
-              className={cn("map-ring-label absolute -translate-x-1/2 -translate-y-1/2", active && "map-node-selected")}
-              style={{ left: cx, top: cy - r, opacity: presence }}
-              onClick={() => ctx.select({ kind: "image", generation: generations[0] })}
-            >
-              {label}
-              <span className="text-faint"> · {ring === 1 ? "previous image" : `${ring} images ago`}</span>
-            </button>
-          );
-        })}
+      {rings.map(({ id, values: [r], data: { ring, generations }, presence, leaving }) => {
+        // Ring 0 is the current image's own ring.
+        const active =
+          ring === 0
+            ? ctx.imageGeneration === ctx.current
+            : generations.includes(ctx.imageGeneration ?? -1) && ctx.imageGeneration !== ctx.current;
+        const label =
+          ring === MAX_AGE && generations.length > 1
+            ? `gen ${generations[generations.length - 1]}–${generations[0]}`
+            : `gen ${generations.join(", ")}`;
+        return (
+          <button
+            type="button"
+            key={id}
+            inert={leaving}
+            aria-label={ring === 0 ? `Clones from the current image, ${label}` : `Clones from older image, ${label}`}
+            aria-pressed={active}
+            className={cn("map-ring-label absolute -translate-x-1/2 -translate-y-1/2", active && "map-node-selected")}
+            style={{ left: cx, top: cy - r, opacity: presence }}
+            onClick={() =>
+              ctx.select({ kind: "image", generation: ring === 0 ? (ctx.current ?? generations[0]) : generations[0] })
+            }
+          >
+            {label}
+            <span className="text-faint">
+              {" "}
+              · {ring === 0 ? "current image" : ring === 1 ? "previous image" : `${ring} images ago`}
+            </span>
+          </button>
+        );
+      })}
       <button
         type="button"
         aria-label={`Golden image, generation ${ctx.newest}`}
@@ -267,7 +276,6 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
         {...menuTrigger(
           ctx,
           { kind: "image" },
-          ctx.imageGeneration === ctx.current,
           () => ctx.current !== undefined && ctx.select({ kind: "image", generation: ctx.current }),
         )}
       >

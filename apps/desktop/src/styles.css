@@ -191,7 +191,25 @@ html[data-shell="native"].dark {
     user-select: text;
     -webkit-user-select: text;
   }
-  button {
+  /* Everything clickable shows the hand; disabled controls keep the arrow. */
+  button:not(:disabled),
+  a[href],
+  summary,
+  select,
+  label[for],
+  input[type="checkbox"],
+  input[type="radio"],
+  [role="button"]:not([aria-disabled="true"]),
+  [role="option"]:not([aria-disabled="true"]),
+  [role="tab"],
+  [role="switch"],
+  [role="checkbox"],
+  [role="menuitem"]:not([data-disabled]),
+  [role="menuitemcheckbox"]:not([data-disabled]),
+  [role="menuitemradio"]:not([data-disabled]) {
+    cursor: pointer;
+  }
+  button:disabled {
     cursor: default;
   }
   ::selection {
@@ -323,6 +341,20 @@ html[data-shell="native"].dark {
 .map-clone-state {
   padding-inline: 3px;
 }
+/* A label rises above its clove's open menu and drops back (see .map-menu-open). */
+.map-clone .map-leaf-label {
+  transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.map-clone .map-clone-name {
+  transition:
+    background-color 300ms,
+    color 300ms,
+    box-shadow 300ms;
+}
+/* Back from a menu, the state line waits for its label to land, then fades in. */
+.map-clone .map-clone-state {
+  transition: opacity 180ms ease-out 140ms;
+}
 .map-clone.map-node-selected .map-clone-name {
   background: var(--bottle-soft);
   color: var(--bottle);
@@ -409,6 +441,15 @@ html[data-shell="native"].dark {
   background: radial-gradient(circle at 50% 25%, var(--bottle-soft), var(--card) 80%);
 }
 
+/* The map fades in when it opens (its camera is already fitted by then). */
+.map-world {
+  animation: map-world-in 420ms ease-out both;
+}
+@keyframes map-world-in {
+  from {
+    opacity: 0;
+  }
+}
 .map-viewport {
   cursor: grab;
   touch-action: none;
@@ -510,7 +551,6 @@ html[data-shell="native"].dark {
   background: color-mix(in oklab, var(--card) 92%, transparent);
   box-shadow: var(--pane-shadow);
   backdrop-filter: blur(8px);
-  cursor: default;
 }
 .map-shelf-item {
   transition:
@@ -537,6 +577,9 @@ html[data-shell="native"].dark {
 }
 .map-radial-disc {
   position: absolute;
+  /* Click-through: only the action buttons take the pointer, so a node under
+     the ring can still be clicked. */
+  pointer-events: none;
   left: 0;
   top: 0;
   width: calc(var(--outer) * 2);
@@ -590,6 +633,7 @@ html[data-shell="native"].dark {
   outline: none;
 }
 .map-radial-hint {
+  pointer-events: none;
   left: 0;
   translate: -50% 0;
   /* Solid: the popover surface is see-through in the native shell. */
@@ -621,9 +665,135 @@ html[data-shell="native"].dark {
     scale: 0.4;
   }
 }
-/* The pill under the ring names the clone; its own label would sit blurred
-   under the ring, so it steps aside while the menu is open. */
-.map-clone.map-menu-open .map-leaf-label,
+/* A clove flying off leaves its label behind, hidden. */
 .map-clone.map-leaving .map-leaf-label {
+  /* Hidden, not just transparent: it must not catch the pointer either. */
+  visibility: hidden;
+}
+/* While its menu is open, a clone's own label rises above the ring (an inline
+   transform) and wears the title's pill; its state line steps aside. */
+.map-clone.map-menu-open {
+  z-index: 5;
+}
+.map-clone.map-menu-open .map-clone-name {
+  background: var(--popover);
+  color: var(--bottle);
+  box-shadow:
+    0 0 0 1px var(--border),
+    0 4px 14px oklch(0 0 0 / 0.14);
+}
+.map-clone.map-menu-open .map-clone-state {
   opacity: 0;
+  transition: opacity 120ms;
+}
+
+/* Screen changes (router view transitions): only the main pane is captured,
+   so the sidebar and title bar stay still. The diff slides over its repo and
+   back; other changes crossfade. */
+:root {
+  view-transition-name: none;
+}
+.route-view {
+  view-transition-name: page;
+}
+/* The page header doesn't take part: it is captured on its own and swaps
+   instantly, so only the content below it fades or slides. */
+.pane-header {
+  view-transition-name: pane-header;
+}
+::view-transition-group(pane-header),
+::view-transition-new(pane-header) {
+  animation: none;
+}
+::view-transition-old(pane-header) {
+  display: none;
+}
+::view-transition-group(page) {
+  overflow: clip;
+  border-radius: 10px;
+  animation-duration: 280ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+::view-transition-old(page),
+::view-transition-new(page) {
+  animation-duration: 280ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+html:active-view-transition-type(fade)::view-transition-old(page),
+html:active-view-transition-type(fade)::view-transition-new(page) {
+  animation-duration: 240ms;
+}
+@media (prefers-reduced-motion: no-preference) {
+  html:active-view-transition-type(push)::view-transition-old(page) {
+    animation-name: page-out-left;
+  }
+  html:active-view-transition-type(push)::view-transition-new(page) {
+    animation-name: page-in-right;
+  }
+  html:active-view-transition-type(pop)::view-transition-old(page) {
+    animation-name: page-out-right;
+  }
+  html:active-view-transition-type(pop)::view-transition-new(page) {
+    animation-name: page-in-left;
+  }
+  /* Other screens: the old one fades, the new one rises into place. */
+  html:active-view-transition-type(fade)::view-transition-old(page) {
+    animation-name: page-fade-out;
+    animation-duration: 160ms;
+  }
+  html:active-view-transition-type(fade)::view-transition-new(page) {
+    animation-name: page-rise-in;
+  }
+}
+@keyframes page-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+@keyframes page-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes page-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(48px);
+  }
+}
+@keyframes page-out-left {
+  to {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+@keyframes page-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+@keyframes page-out-right {
+  to {
+    opacity: 0;
+    transform: translateX(48px);
+  }
+}
+
+/* Segmented controls: the highlight slides to the picked option. Inside a view
+   transition the browser moves it instead (it has its own name there). */
+.segmented-highlight {
+  transition:
+    transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+::view-transition-group(repo-view-tabs) {
+  animation-duration: 260ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .segmented-highlight {
+    transition: none;
+  }
 }

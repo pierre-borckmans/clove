@@ -1,5 +1,5 @@
-import { List, Minus, Plus, Scan, X } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { Minus, Plus, Scan, X } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GoldenCard } from "@/components/golden-card";
 import { ageOf } from "@/components/map/geometry";
 import { MapInspector } from "@/components/map/inspector";
@@ -15,7 +15,6 @@ import {
 import { CloneRadialMenu, ImageRadialMenu } from "@/components/map/radial-menu";
 import { RingsLayer, ringsLayout } from "@/components/map/rings";
 import { Button } from "@/components/ui/button";
-import { WorktreeList } from "@/components/worktree-list";
 import { useMapCamera } from "@/hooks/use-map-camera";
 import { useOps } from "@/lib/ops";
 import { usePrefs } from "@/lib/prefs";
@@ -27,6 +26,7 @@ import { cn } from "@/lib/utils";
 const SHELF_INSET = 44;
 /** The smallest hole a radial menu leaves: a clove and its halo. */
 const MENU_HOLE = 34;
+const menuKey = (target: MenuTarget) => (target.kind === "clone" ? `clone:${target.name}` : "image");
 
 /** An image-to-clone map. Placement shows provenance, not inferred Git ancestry. */
 export function RepoGraph({
@@ -40,7 +40,9 @@ export function RepoGraph({
 }) {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
-  const [panel, setPanel] = useState<"image" | "worktrees" | null>(null);
+  const [panel, setPanel] = useState<"image" | null>(null);
+  /** The menu a press just closed, so clicking its node again toggles it shut. */
+  const justClosed = useRef<{ key: string; at: number } | null>(null);
   /** The open radial menu: what it is on, anchored in world coordinates. */
   const [radial, setRadial] = useState<{
     target: MenuTarget;
@@ -49,7 +51,13 @@ export function RepoGraph({
     /** The node's radius in world units, so the ring follows the zoom. */
     radius: number;
     keyboard: boolean;
+    /** The clone's name on the map when it opened (centre and height, world units): its label rises from there. */
+    name?: { x: number; y: number; h: number };
+    /** Animating out; the menu calls back once it is gone. */
+    closing?: boolean;
   } | null>(null);
+  /** Close the menu with its animation (the menu removes itself when done). */
+  const dismissRadial = useCallback(() => setRadial((r) => (r && !r.closing ? { ...r, closing: true } : r)), []);
   const prefs = usePrefs();
   const { data: prs } = usePrs(status.root);
   usePrCheck(status.root);
@@ -80,17 +88,24 @@ export function RepoGraph({
       setPanel(null);
     },
     open: (path) => void openIn(path, prefs.editor),
-    menuFor: radial ? (radial.target.kind === "clone" ? radial.target.name : "image") : undefined,
+    // While closing, nothing is "open": a clone's label drops back as the ring fades.
+    menuFor: radial && !radial.closing ? (radial.target.kind === "clone" ? radial.target.name : "image") : undefined,
+    menuLift: undefined,
     menu: (target, at, keyboard) => {
+      const closed = justClosed.current;
+      justClosed.current = null;
+      if (closed && closed.key === menuKey(target) && performance.now() - closed.at < 600) return;
       const box = viewport.current?.getBoundingClientRect();
       if (!box) return;
       const { x, y, scale } = camera;
+      const toWorld = (sx: number, sy: number) => ({ x: (sx - box.left - x) / scale, y: (sy - box.top - y) / scale });
+      const t = at.title;
       setRadial({
         target,
         keyboard,
         radius: at.radius / scale,
-        x: (at.x - box.left - x) / scale,
-        y: (at.y - box.top - y) / scale,
+        name: t && { ...toWorld(t.x + t.w / 2, t.y + t.h / 2), h: t.h / scale },
+        ...toWorld(at.x, at.y),
       });
     },
   };
@@ -113,20 +128,32 @@ export function RepoGraph({
   // image's when a clone or worktree is picked.
   useEffect(() => {
     if (!radial) return;
+    // Its clone is gone: nothing to glide back to, close at once.
+    if (radial.target.kind === "clone" && !radialClone) return setRadial(null);
     const stale =
       radial.target.kind === "clone"
-        ? !radialClone || picked?.name !== radial.target.name
+        ? picked?.name !== radial.target.name
         : !!picked || !!pickedWt || generation !== current;
-    if (stale) setRadial(null);
-  }, [radial, radialClone, picked, pickedWt, generation, current]);
+    if (stale) dismissRadial();
+  }, [radial, radialClone, picked, pickedWt, generation, current, dismissRadial]);
   // The ring's hole tracks the zoom: the node's radius on screen plus a gap
   // (more around the image), never smaller than a clove's ring.
   const menuHole = radial
     ? Math.max(MENU_HOLE, radial.radius * camera.scale + (radial.target.kind === "image" ? 16 : 6))
     : 0;
+  // While its menu is open, a clone's own label rises to sit above the ring
+  // (the ring's outer edge plus a gap, converted to world units): one element
+  // throughout, moved by a CSS transition.
+  if (radial?.name && !radial.closing) {
+    const outer = menuHole + 50;
+    ctx.menuLift = {
+      dx: radial.x - radial.name.x,
+      dy: radial.y - (outer + 8) / camera.scale - radial.name.h / 2 - radial.name.y,
+    };
+  }
   const closeRadial = (refocus: boolean) => {
     const target = radial?.target;
-    setRadial(null);
+    dismissRadial();
     if (!refocus || !target) return;
     const label = target.kind === "clone" ? `Clone ${target.name}` : `Golden image, generation ${newest}`;
     viewport.current?.querySelector<HTMLElement>(`[aria-label="${CSS.escape(label)}"]`)?.focus();
@@ -134,33 +161,21 @@ export function RepoGraph({
 
   return (
     <section className="repo-map flex min-h-0 flex-1 flex-col" aria-label="Repository map">
-      <div className="flex h-12 shrink-0 items-center gap-3 border-b px-5">
-        <h2 className="text-[13px] font-medium">Image lineage</h2>
-        <span className="text-[12px] text-muted-foreground">
-          {clones.length} clones · {new Set(clones.map((c) => c.golden_generation)).size} image generations
-        </span>
-        <div className="flex-1" />
-        {worktrees.length > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-[12px]"
-            onClick={() => setPanel(panel === "worktrees" ? null : "worktrees")}
-          >
-            <List className="size-3.5" /> Other worktrees <span className="text-faint">{worktrees.length}</span>
-          </Button>
-        )}
-      </div>
       <p id="map-navigation-help" className="sr-only">
         Placement shows image origin, not Git ancestry. Drag or scroll to pan. Pinch or hold Command or Control while
         scrolling to zoom. Focus the map and use arrow keys to pan, plus and minus to zoom, or zero to fit. Hold Space
-        to drag over a node. On a clone, press period or click it again for its actions.
+        to drag over a node. Click a clone or the golden image, or press period on it, for its actions.
       </p>
       <section
         ref={viewport}
         {...bindings}
         onPointerDown={(event) => {
-          if (radial) setRadial(null);
+          // Any press outside the ring closes it; remember which, so the click
+          // that follows on the same node closes rather than reopens.
+          if (radial) {
+            justClosed.current = { key: menuKey(radial.target), at: event.timeStamp };
+            dismissRadial();
+          }
           bindings.onPointerDown(event);
         }}
         // biome-ignore lint/a11y/noNoninteractiveTabindex: This canvas implements keyboard pan, zoom, and fit.
@@ -206,6 +221,8 @@ export function RepoGraph({
                 hole={menuHole}
                 keyboard={radial.keyboard}
                 onClose={closeRadial}
+                closing={!!radial.closing}
+                onClosed={() => setRadial(null)}
               />
             )}
             {radial.target.kind === "image" && (
@@ -218,6 +235,8 @@ export function RepoGraph({
                 hole={menuHole}
                 keyboard={radial.keyboard}
                 onClose={closeRadial}
+                closing={!!radial.closing}
+                onClosed={() => setRadial(null)}
               />
             )}
           </>
@@ -258,7 +277,7 @@ export function RepoGraph({
       {panel && (
         <div className="map-details absolute inset-x-4 bottom-[106px] z-10 max-h-[70%] overflow-y-auto rounded-xl border bg-background p-3 shadow-xl">
           <div className="mb-2 flex items-center justify-between px-1 text-[12px] font-medium">
-            <span>{panel === "image" ? "Image details" : "Other worktrees"}</span>
+            <span>Image details</span>
             <Button
               variant="ghost"
               size="icon-sm"
@@ -269,11 +288,7 @@ export function RepoGraph({
               <X className="size-3.5" />
             </Button>
           </div>
-          {panel === "image" ? (
-            <GoldenCard status={status} />
-          ) : (
-            <WorktreeList root={status.root} worktrees={worktrees} />
-          )}
+          <GoldenCard status={status} />
         </div>
       )}
     </section>

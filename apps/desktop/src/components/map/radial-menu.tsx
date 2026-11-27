@@ -13,7 +13,7 @@ import {
   Trash2,
   Unplug,
 } from "lucide-react";
-import { type CSSProperties, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useOpenDiff } from "@/components/clone-list";
 import { startOp } from "@/lib/ops";
 import { APP_LABELS, usePrefs } from "@/lib/prefs";
@@ -40,19 +40,26 @@ export function useCloneActions(c: CloneInfo, root: string): RadialAction[] {
   const mount = useMountToggle(root);
   const openDiff = useOpenDiff(root);
   return [
-    {
-      label: `Open in ${APP_LABELS[prefs.editor]}`,
-      icon: Code,
-      tone: TONE.open,
-      run: () => void openIn(c.path, prefs.editor),
-    },
+    { label: "View changes", icon: FileDiff, tone: TONE.changes, run: () => openDiff(c), disabled: !c.mounted },
     {
       label: `Open in ${APP_LABELS[prefs.terminal]}`,
       icon: SquareTerminal,
       tone: TONE.terminal,
       run: () => void openIn(c.path, prefs.terminal),
     },
-    { label: "View changes", icon: FileDiff, tone: TONE.changes, run: () => openDiff(c), disabled: !c.mounted },
+    {
+      label: `Open in ${APP_LABELS[prefs.editor]}`,
+      icon: Code,
+      tone: TONE.open,
+      run: () => void openIn(c.path, prefs.editor),
+    },
+    { label: "Remove clone…", icon: Trash2, tone: TONE.remove, run: () => setUi({ remove: { root, clones: [c] } }) },
+    {
+      label: c.mounted ? "Unmount" : "Mount",
+      icon: c.mounted ? Unplug : HardDrive,
+      tone: TONE.disk,
+      run: () => mount.mutate({ name: c.name, mounted: c.mounted }),
+    },
     c.operation
       ? {
           label: "Continue update",
@@ -67,13 +74,6 @@ export function useCloneActions(c: CloneInfo, root: string): RadialAction[] {
           run: () => void startOp({ kind: "update", root, name: c.name }),
           disabled: !c.branch || !c.mounted,
         },
-    {
-      label: c.mounted ? "Unmount" : "Mount",
-      icon: c.mounted ? Unplug : HardDrive,
-      tone: TONE.disk,
-      run: () => mount.mutate({ name: c.name, mounted: c.mounted }),
-    },
-    { label: "Remove clone…", icon: Trash2, tone: TONE.remove, run: () => setUi({ remove: { root, clones: [c] } }) },
   ];
 }
 
@@ -112,6 +112,9 @@ export function useImageActions(status: RepoStatus, refreshing: boolean, showDet
   ];
 }
 
+/** How long the ring takes to go. */
+const CLOSE_MS = 180;
+
 /**
  * Actions in a ring around a node. Drawn over the map in screen space, so it
  * keeps its size at any zoom; `x`/`y` are viewport pixels and `hole` the radius
@@ -125,6 +128,9 @@ export function RadialMenu({
   hole,
   keyboard,
   onClose,
+  closing,
+  onClosed,
+  showTitle = true,
 }: {
   title: string;
   actions: RadialAction[];
@@ -134,9 +140,41 @@ export function RadialMenu({
   /** Opened from the keyboard: focus moves into the ring. */
   keyboard: boolean;
   onClose: (refocus: boolean) => void;
+  /** Animate out, then call onClosed. */
+  closing: boolean;
+  onClosed: () => void;
+  /**
+   * Draw the title above the ring. Off for a clone: its own map label rises
+   * into that place instead (MapCtx.menuLift), so nothing is swapped.
+   */
+  showTitle?: boolean;
 }) {
   const [hint, setHint] = useState<string | null>(null);
   const items = useRef<(HTMLButtonElement | null)[]>([]);
+
+  // Closing: the ring, its buttons and pills fade and shrink away, then the
+  // menu is removed. (A clone's label drops back by itself, in CSS.)
+  const root = useRef<HTMLDivElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when closing starts.
+  useLayoutEffect(() => {
+    if (!closing) return;
+    const el = root.current;
+    if (!el || matchMedia("(prefers-reduced-motion: reduce)").matches) return onClosed();
+    const animations = [
+      ...el.querySelectorAll<HTMLElement>(".map-radial-disc, .map-radial-item, .map-radial-hint"),
+    ].map((part) =>
+      part.animate([{ opacity: 1 }, { opacity: 0, scale: "0.85" }], {
+        duration: CLOSE_MS,
+        easing: "cubic-bezier(0.4, 0, 0.6, 1)",
+        fill: "forwards",
+      }),
+    );
+    const done = setTimeout(onClosed, CLOSE_MS);
+    return () => {
+      clearTimeout(done);
+      for (const a of animations) a.cancel();
+    };
+  }, [closing]);
   const reach = hole + 24;
   const outer = reach + 26;
 
@@ -166,10 +204,19 @@ export function RadialMenu({
 
   return (
     <div
+      ref={root}
       role="menu"
       aria-label={`Actions for ${title}`}
       className="map-radial absolute z-20"
-      style={{ left: x, top: y, "--hole": `${hole}px`, "--outer": `${outer}px` } as CSSProperties}
+      style={
+        {
+          left: x,
+          top: y,
+          "--hole": `${hole}px`,
+          "--outer": `${outer}px`,
+          pointerEvents: closing ? "none" : undefined,
+        } as CSSProperties
+      }
       onKeyDown={onKeyDown}
       onPointerDown={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
@@ -209,12 +256,14 @@ export function RadialMenu({
           </button>
         );
       })}
-      <span
-        className="map-radial-hint map-radial-name absolute whitespace-nowrap rounded-full px-2.5 py-1 text-[12px] font-semibold"
-        aria-hidden="true"
-      >
-        {title}
-      </span>
+      {showTitle && (
+        <span
+          className="map-radial-hint map-radial-name absolute whitespace-nowrap rounded-full px-2.5 py-1 text-[12px] font-semibold"
+          aria-hidden="true"
+        >
+          {title}
+        </span>
+      )}
       {hint && (
         <span
           className="map-radial-hint map-radial-action absolute whitespace-nowrap rounded-full px-2.5 py-1 text-[12px] font-medium"
@@ -227,10 +276,18 @@ export function RadialMenu({
   );
 }
 
-type Placement = { x: number; y: number; hole: number; keyboard: boolean; onClose: (refocus: boolean) => void };
+type Placement = {
+  x: number;
+  y: number;
+  hole: number;
+  keyboard: boolean;
+  onClose: (refocus: boolean) => void;
+  closing: boolean;
+  onClosed: () => void;
+};
 
 export function CloneRadialMenu({ clone, root, ...place }: { clone: CloneInfo; root: string } & Placement) {
-  return <RadialMenu title={clone.name} actions={useCloneActions(clone, root)} {...place} />;
+  return <RadialMenu title={clone.name} actions={useCloneActions(clone, root)} showTitle={false} {...place} />;
 }
 
 export function ImageRadialMenu({

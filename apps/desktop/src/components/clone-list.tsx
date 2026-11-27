@@ -51,10 +51,18 @@ import type { CloneInfo, MergeCheck } from "@/lib/types";
 import { setUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 import { Empty } from "./empty";
+import { PointerMenu } from "./pointer-menu";
 import { Shortcut } from "./shortcut";
 import { StatusDot } from "./status-dot";
 
-const COLS = "grid-cols-[16px_14px_minmax(0,1fr)_176px_84px_72px_148px]";
+// Columns by pane width. Narrow: no hover actions (the ••• menu, the keys and
+// the map's ring have them), so the name keeps its room. Medium: actions on
+// hover. Wide: actions inline, with Update too. The name takes what's left.
+const COLS = cn(
+  "grid-cols-[16px_14px_minmax(0,1fr)_128px_60px_64px_60px]",
+  "@min-[1000px]:grid-cols-[16px_14px_minmax(0,1fr)_140px_64px_72px_180px]",
+  "@min-[1300px]:grid-cols-[16px_14px_minmax(0,1fr)_176px_72px_80px_auto]",
+);
 
 export function CloneList({
   root,
@@ -396,6 +404,7 @@ function CloneRow({
   onSelect: (e: MouseEvent) => void;
 }) {
   const prefs = usePrefs();
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
   const openDiff = useOpenDiff(root);
   const failed = c.failed_steps.length > 0;
   const state = busy ? "busy" : c.issue ? "warn" : !c.mounted ? "unmounted" : failed ? "warn" : "mounted";
@@ -406,6 +415,11 @@ function CloneRow({
       aria-selected={selected}
       data-selected={selected}
       onMouseDown={onSelect}
+      onContextMenu={(e) => {
+        // Right-click: the ••• menu's items, at the pointer (the mouse-down selected the row).
+        e.preventDefault();
+        setMenuAt({ x: e.clientX, y: e.clientY });
+      }}
       onDoubleClick={() => void openIn(c.path, prefs.editor)}
       className={cn(
         "group grid h-[52px] items-center gap-x-4 border-b px-4 transition-colors last:border-b-0",
@@ -414,6 +428,11 @@ function CloneRow({
         busy && "opacity-55",
       )}
     >
+      {menuAt && (
+        <PointerMenu at={menuAt} onClose={() => setMenuAt(null)}>
+          <CloneMenuItems clone={c} root={root} />
+        </PointerMenu>
+      )}
       <PickBox checked={picked} visible={selected || picking} label={`Select ${c.name}`} onToggle={onPick} />
       <Tooltip>
         <TooltipTrigger asChild>
@@ -515,7 +534,7 @@ function CloneRow({
       <div className="flex items-center justify-end gap-0.5">
         <div
           className={cn(
-            "flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100",
+            "hidden items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 @min-[1000px]:flex @min-[1300px]:opacity-100",
             selected && "opacity-100",
           )}
         >
@@ -533,6 +552,15 @@ function CloneRow({
               <FileDiff />
             </RowAction>
           )}
+          {c.branch && !c.operation && (
+            <RowAction
+              label="Update to latest base"
+              className="hidden @min-[1300px]:inline-flex"
+              onClick={() => void startOp({ kind: "update", root, name: c.name })}
+            >
+              <GitPullRequestArrow />
+            </RowAction>
+          )}
           <RowAction label={`Reveal in ${FILE_MANAGER}`} onClick={() => void openIn(c.path, "finder")}>
             <FolderOpen />
           </RowAction>
@@ -540,6 +568,14 @@ function CloneRow({
             <Copy />
           </RowAction>
         </div>
+        {/* Remove stays on every row, at every width. */}
+        <RowAction
+          label="Remove clone…"
+          className="hover:bg-destructive/10 hover:text-destructive"
+          onClick={() => setUi({ remove: { root, clones: [c] } })}
+        >
+          <Trash2 />
+        </RowAction>
         <CloneMenu clone={c} root={root}>
           <Button
             variant="ghost"
@@ -582,13 +618,6 @@ function Changes({ clone: c, check }: { clone: CloneInfo; check?: MergeCheck }) 
       </span>
     );
   const parts: ReactNode[] = [...prParts];
-  if (c.dirty)
-    parts.push(
-      <span key="d" className="flex items-center gap-1 text-amber">
-        <span className="size-1.5 rounded-full bg-amber" />
-        modified
-      </span>,
-    );
   if (c.ahead)
     parts.push(
       <span
@@ -611,17 +640,40 @@ function Changes({ clone: c, check }: { clone: CloneInfo; check?: MergeCheck }) 
         {c.behind}
       </span>,
     );
-  if (parts.length === 0)
+  // "modified" gets its own line under the commits and PR, so the column stays narrow.
+  const modified = c.dirty && (
+    <span className="flex items-center gap-1 text-amber">
+      <span className="size-1.5 rounded-full bg-amber" />
+      modified
+    </span>
+  );
+  if (parts.length === 0 && !modified)
     return <span className="flex items-center gap-2.5 text-[12px] text-faint">clean{openPr}</span>;
+  const commits = parts.length > 0 || openPr;
   return (
-    <span className="flex min-w-0 items-center gap-2.5 overflow-hidden text-[12px] tabular-nums">
-      {parts}
-      {openPr}
+    <span className="flex min-w-0 flex-col justify-center gap-0.5 overflow-hidden text-[12px] tabular-nums">
+      {commits && (
+        <span className="flex min-w-0 items-center gap-2.5">
+          {parts}
+          {openPr}
+        </span>
+      )}
+      {modified}
     </span>
   );
 }
 
-function RowAction({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
+function RowAction({
+  label,
+  onClick,
+  className,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  className?: string;
+  children: ReactNode;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -633,7 +685,7 @@ function RowAction({ label, onClick, children }: { label: string; onClick: () =>
             e.stopPropagation();
             onClick();
           }}
-          className="size-7 text-muted-foreground hover:text-foreground [&_svg]:size-[15px]"
+          className={cn("size-7 text-muted-foreground hover:text-foreground [&_svg]:size-[15px]", className)}
         >
           {children}
         </Button>
@@ -644,76 +696,85 @@ function RowAction({ label, onClick, children }: { label: string; onClick: () =>
 }
 
 export function CloneMenu({ clone: c, root, children }: { clone: CloneInfo; root: string; children: ReactNode }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-60">
+        <CloneMenuItems clone={c} root={root} />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** A clone's menu items, shared by its ••• button and its right-click menu. */
+export function CloneMenuItems({ clone: c, root }: { clone: CloneInfo; root: string }) {
   const prefs = usePrefs();
   const mount = useMountToggle(root);
   const openDiff = useOpenDiff(root);
   const resolver = useRepoConfig(c.operation ? root : undefined).data?.config.update?.resolver;
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-60">
-        <DropdownMenuItem onSelect={() => void openIn(c.path, prefs.editor)}>
-          <Code /> Open in {APP_LABELS[prefs.editor]}
-          <DropdownMenuShortcut>↵</DropdownMenuShortcut>
+    <>
+      <DropdownMenuItem onSelect={() => void openIn(c.path, prefs.editor)}>
+        <Code /> Open in {APP_LABELS[prefs.editor]}
+        <DropdownMenuShortcut>↵</DropdownMenuShortcut>
+      </DropdownMenuItem>
+      <DropdownMenuItem onSelect={() => void openIn(c.path, prefs.terminal)}>
+        <SquareTerminal /> Open in {APP_LABELS[prefs.terminal]}
+        <DropdownMenuShortcut>T</DropdownMenuShortcut>
+      </DropdownMenuItem>
+      <DropdownMenuItem onSelect={() => void openIn(c.path, "finder")}>
+        <FolderOpen /> Reveal in {FILE_MANAGER}
+        <DropdownMenuShortcut>F</DropdownMenuShortcut>
+      </DropdownMenuItem>
+      {c.mounted && (
+        <DropdownMenuItem onSelect={() => openDiff(c)}>
+          <FileDiff /> View changes
+          <DropdownMenuShortcut>D</DropdownMenuShortcut>
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => void openIn(c.path, prefs.terminal)}>
-          <SquareTerminal /> Open in {APP_LABELS[prefs.terminal]}
-          <DropdownMenuShortcut>T</DropdownMenuShortcut>
+      )}
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onSelect={() => void copyPath(c.path)}>
+        <Copy /> Copy path
+        <DropdownMenuShortcut>C</DropdownMenuShortcut>
+      </DropdownMenuItem>
+      {c.branch && (
+        <DropdownMenuItem onSelect={() => void copyText(c.branch as string, "Branch copied")}>
+          <GitBranch /> Copy branch name
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => void openIn(c.path, "finder")}>
-          <FolderOpen /> Reveal in {FILE_MANAGER}
-          <DropdownMenuShortcut>F</DropdownMenuShortcut>
-        </DropdownMenuItem>
-        {c.mounted && (
-          <DropdownMenuItem onSelect={() => openDiff(c)}>
-            <FileDiff /> View changes
-            <DropdownMenuShortcut>D</DropdownMenuShortcut>
+      )}
+      <DropdownMenuSeparator />
+      {c.operation ? (
+        <>
+          {resolver && (
+            <DropdownMenuItem onSelect={() => resolveInTerminal(root, c.name)}>
+              <Sparkles /> Resolve with {resolverName(resolver)}
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onSelect={() => void startOp({ kind: "update", root, name: c.name, step: "continue" })}>
+            <GitPullRequestArrow /> Continue update
           </DropdownMenuItem>
-        )}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => void copyPath(c.path)}>
-          <Copy /> Copy path
-          <DropdownMenuShortcut>C</DropdownMenuShortcut>
-        </DropdownMenuItem>
-        {c.branch && (
-          <DropdownMenuItem onSelect={() => void copyText(c.branch as string, "Branch copied")}>
-            <GitBranch /> Copy branch name
+          <DropdownMenuItem onSelect={() => void startOp({ kind: "update", root, name: c.name, step: "abort" })}>
+            <Undo2 /> Abort update
           </DropdownMenuItem>
-        )}
-        <DropdownMenuSeparator />
-        {c.operation ? (
-          <>
-            {resolver && (
-              <DropdownMenuItem onSelect={() => resolveInTerminal(root, c.name)}>
-                <Sparkles /> Resolve with {resolverName(resolver)}
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem onSelect={() => void startOp({ kind: "update", root, name: c.name, step: "continue" })}>
-              <GitPullRequestArrow /> Continue update
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => void startOp({ kind: "update", root, name: c.name, step: "abort" })}>
-              <Undo2 /> Abort update
-            </DropdownMenuItem>
-          </>
-        ) : (
-          c.branch && (
-            <DropdownMenuItem onSelect={() => void startOp({ kind: "update", root, name: c.name })}>
-              <GitPullRequestArrow /> Update to latest base
-              <DropdownMenuShortcut>U</DropdownMenuShortcut>
-            </DropdownMenuItem>
-          )
-        )}
-        <DropdownMenuItem onSelect={() => mount.mutate({ name: c.name, mounted: c.mounted })}>
-          {c.mounted ? <Unplug /> : <HardDrive />}
-          {c.mounted ? "Unmount" : "Mount"}
-          <DropdownMenuShortcut>M</DropdownMenuShortcut>
-        </DropdownMenuItem>
-        <DropdownMenuItem variant="destructive" onSelect={() => setUi({ remove: { root, clones: [c] } })}>
-          <Trash2 /> Remove clone…
-          <DropdownMenuShortcut>{isMac ? "⌘⌫" : "Ctrl+⌫"}</DropdownMenuShortcut>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+        </>
+      ) : (
+        c.branch && (
+          <DropdownMenuItem onSelect={() => void startOp({ kind: "update", root, name: c.name })}>
+            <GitPullRequestArrow /> Update to latest base
+            <DropdownMenuShortcut>U</DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )
+      )}
+      <DropdownMenuItem onSelect={() => mount.mutate({ name: c.name, mounted: c.mounted })}>
+        {c.mounted ? <Unplug /> : <HardDrive />}
+        {c.mounted ? "Unmount" : "Mount"}
+        <DropdownMenuShortcut>M</DropdownMenuShortcut>
+      </DropdownMenuItem>
+      <DropdownMenuItem variant="destructive" onSelect={() => setUi({ remove: { root, clones: [c] } })}>
+        <Trash2 /> Remove clone…
+        <DropdownMenuShortcut>{isMac ? "⌘⌫" : "Ctrl+⌫"}</DropdownMenuShortcut>
+      </DropdownMenuItem>
+    </>
   );
 }
 

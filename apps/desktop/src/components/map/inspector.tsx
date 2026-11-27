@@ -29,8 +29,8 @@ export function MapInspector({
   picked: CloneInfo | undefined;
   pickedWt: OtherWorktree | undefined;
   generation: number | undefined;
-  panel: "image" | "worktrees" | null;
-  setPanel: (panel: "image" | "worktrees" | null) => void;
+  panel: "image" | null;
+  setPanel: (panel: "image" | null) => void;
   refreshing: boolean;
 }) {
   const prefs = usePrefs();

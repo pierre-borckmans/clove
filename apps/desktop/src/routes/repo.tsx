@@ -5,6 +5,7 @@ import { PaneHeader } from "@/components/app-shell";
 import { CloneList, CloneListSkeleton } from "@/components/clone-list";
 import { GoldenCard, GoldenCardSkeleton } from "@/components/golden-card";
 import { RepoGraph } from "@/components/repo-graph";
+import { Segmented } from "@/components/segmented";
 import { Shortcut } from "@/components/shortcut";
 import { RepoMark } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import { WorktreeList } from "@/components/worktree-list";
 import { api } from "@/lib/api";
 import { tildify } from "@/lib/format";
 import { copyPath, useClones, useRepo, useStatus, useWorktrees } from "@/lib/queries";
+import { withTransition } from "@/lib/transition";
 import { setUi } from "@/lib/ui";
 
 export function RepoPage() {
@@ -75,31 +77,18 @@ export function RepoPage() {
           <Copy className="size-3 opacity-0 group-hover:opacity-70" />
         </button>
         <div data-tauri-drag-region className="h-full flex-1" />
-        <fieldset
-          className="flex shrink-0 items-center gap-0.5 rounded-md border bg-muted/50 p-0.5"
-          aria-label="Repository view"
-        >
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-pressed={view === "list"}
-            className="h-6 gap-1.5 px-2 text-[11.5px] aria-pressed:bg-bottle-soft aria-pressed:font-medium aria-pressed:text-bottle aria-pressed:shadow-sm aria-pressed:ring-1 aria-pressed:ring-bottle/30 aria-pressed:hover:bg-bottle-soft aria-pressed:hover:text-bottle"
-            onClick={() => setView("list")}
-          >
-            <List className="size-3.5" />
-            List
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-pressed={view === "map"}
-            className="h-6 gap-1.5 px-2 text-[11.5px] aria-pressed:bg-bottle-soft aria-pressed:font-medium aria-pressed:text-bottle aria-pressed:shadow-sm aria-pressed:ring-1 aria-pressed:ring-bottle/30 aria-pressed:hover:bg-bottle-soft aria-pressed:hover:text-bottle"
-            onClick={() => setView("map")}
-          >
-            <Network className="size-3.5" />
-            Map
-          </Button>
-        </fieldset>
+        <Segmented
+          label="Repository view"
+          value={view}
+          transitionName="repo-view-tabs"
+          options={[
+            { value: "list", label: "List", icon: <List /> },
+            { value: "map", label: "Map", icon: <Network /> },
+          ]}
+          // To the map: the map fades itself in, so skip the crossfade (it would
+          // freeze that fade on a blank snapshot). Back to the list: crossfade.
+          onChange={(next) => (next === "map" ? setView(next) : withTransition(() => setView(next)))}
+        />
         <Button
           size="sm"
           className="h-7 gap-1.5 pr-1.5 pl-2.5 text-[12.5px]"
@@ -135,8 +124,9 @@ export function RepoPage() {
 
 function Body({ golden, clones, worktrees }: { golden: ReactNode; clones: ReactNode; worktrees?: ReactNode }) {
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex max-w-[1080px] flex-col gap-6 px-6 pt-5 pb-24">
+    // A container, so the list can use a wide pane (sidebar collapsed or not).
+    <div className="@container min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex max-w-[1080px] flex-col gap-6 px-6 pt-5 pb-24 @min-[1500px]:max-w-[1440px]">
         {golden}
         {clones}
         {worktrees}

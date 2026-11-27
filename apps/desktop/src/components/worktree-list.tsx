@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { PickBox } from "@/components/clone-list";
+import { PointerMenu } from "@/components/pointer-menu";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -118,16 +119,26 @@ function WorktreeRow({
   onPick: () => void;
 }) {
   const prefs = usePrefs();
+  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null);
   return (
     <div
       onDoubleClick={() => !w.missing && void openIn(w.path, prefs.editor)}
       onMouseDown={(e) => (e.metaKey || e.ctrlKey) && onPick()}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenuAt({ x: e.clientX, y: e.clientY });
+      }}
       className={cn(
         "group grid h-[44px] grid-cols-[16px_14px_minmax(0,1fr)_minmax(0,220px)_auto] items-center gap-x-4 border-b px-4 transition-colors last:border-b-0",
         picked ? "bg-primary/[0.06]" : "hover:bg-foreground/[0.025]",
         busy && "opacity-55",
       )}
     >
+      {menuAt && (
+        <PointerMenu at={menuAt} onClose={() => setMenuAt(null)}>
+          <WorktreeMenuItems worktree={w} root={root} />
+        </PointerMenu>
+      )}
       <PickBox checked={picked} visible={picking} label={`Select ${w.name}`} onToggle={onPick} />
       <span className="size-2 rotate-45 border-[1.5px] border-faint" aria-hidden="true" />
       <div className="min-w-0">
@@ -226,37 +237,46 @@ export function WorktreeMenu({
   root: string;
   children: ReactNode;
 }) {
-  const prefs = usePrefs();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-60">
-        <DropdownMenuItem disabled={w.missing} onSelect={() => void openIn(w.path, prefs.editor)}>
-          <Code /> Open in {APP_LABELS[prefs.editor]}
-        </DropdownMenuItem>
-        <DropdownMenuItem disabled={w.missing} onSelect={() => void openIn(w.path, prefs.terminal)}>
-          <SquareTerminal /> Open in {APP_LABELS[prefs.terminal]}
-        </DropdownMenuItem>
-        <DropdownMenuItem disabled={w.missing} onSelect={() => void openIn(w.path, "finder")}>
-          <FolderOpen /> Reveal in {FILE_MANAGER}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => void copyPath(w.path)}>
-          <Copy /> Copy path
-        </DropdownMenuItem>
-        {w.branch && (
-          <DropdownMenuItem onSelect={() => void copyText(w.branch as string, "Branch copied")}>
-            <GitBranch /> Copy branch name
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => setUi({ adopt: { root, worktree: w } })}>
-          <CopyPlus /> Make it a clone…
-        </DropdownMenuItem>
-        <DropdownMenuItem variant="destructive" onSelect={() => setUi({ removeWorktree: { root, worktrees: [w] } })}>
-          <Trash2 /> Remove worktree…
-        </DropdownMenuItem>
+        <WorktreeMenuItems worktree={w} root={root} />
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/** A worktree's menu items, shared by its ••• button and its right-click menu. */
+function WorktreeMenuItems({ worktree: w, root }: { worktree: OtherWorktree; root: string }) {
+  const prefs = usePrefs();
+  return (
+    <>
+      <DropdownMenuItem disabled={w.missing} onSelect={() => void openIn(w.path, prefs.editor)}>
+        <Code /> Open in {APP_LABELS[prefs.editor]}
+      </DropdownMenuItem>
+      <DropdownMenuItem disabled={w.missing} onSelect={() => void openIn(w.path, prefs.terminal)}>
+        <SquareTerminal /> Open in {APP_LABELS[prefs.terminal]}
+      </DropdownMenuItem>
+      <DropdownMenuItem disabled={w.missing} onSelect={() => void openIn(w.path, "finder")}>
+        <FolderOpen /> Reveal in {FILE_MANAGER}
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onSelect={() => void copyPath(w.path)}>
+        <Copy /> Copy path
+      </DropdownMenuItem>
+      {w.branch && (
+        <DropdownMenuItem onSelect={() => void copyText(w.branch as string, "Branch copied")}>
+          <GitBranch /> Copy branch name
+        </DropdownMenuItem>
+      )}
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onSelect={() => setUi({ adopt: { root, worktree: w } })}>
+        <CopyPlus /> Make it a clone…
+      </DropdownMenuItem>
+      <DropdownMenuItem variant="destructive" onSelect={() => setUi({ removeWorktree: { root, worktrees: [w] } })}>
+        <Trash2 /> Remove worktree…
+      </DropdownMenuItem>
+    </>
   );
 }

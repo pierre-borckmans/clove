@@ -1,6 +1,6 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { CircleCheck, CircleX, Copy, Laptop, RefreshCw, TriangleAlert } from "lucide-react";
-import { PaneHeader } from "@/components/app-shell";
+import { CircleCheck, CircleX, Copy, Laptop, RefreshCw, Stethoscope, TriangleAlert } from "lucide-react";
+import { PageTitle, PaneHeader } from "@/components/app-shell";
 import { RepoMark } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,7 +24,7 @@ export function DoctorPage() {
   return (
     <>
       <PaneHeader>
-        <h1 className="text-[14px] font-semibold tracking-tight">Doctor</h1>
+        <PageTitle icon={<Stethoscope />}>Doctor</PageTitle>
         <span className="text-[12.5px] text-muted-foreground">
           {fetching && checks.length === 0
             ? "Checking…"

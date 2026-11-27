@@ -8,7 +8,21 @@ import { ageOf, cloneState, type LabelSpot, labelSize, type StatePart, worktreeS
 /** What a radial menu is open on. */
 export type MenuTarget = { kind: "clone"; name: string } | { kind: "image" };
 /** Where a menu opens, in viewport client pixels, and the radius of the node it surrounds (0 for none). */
-export type MenuAnchor = { x: number; y: number; radius: number };
+export type MenuAnchor = {
+  x: number;
+  y: number;
+  radius: number;
+  /** Where the node's name sits on screen, for the menu's title to grow out of. */
+  title?: ScreenRect;
+};
+export type ScreenRect = { x: number; y: number; w: number; h: number };
+
+/** Where a label's name sits on screen. */
+export function nameRect(name: Element | null | undefined): ScreenRect | undefined {
+  if (!name) return undefined;
+  const box = name.getBoundingClientRect();
+  return { x: box.left, y: box.top, w: box.width, h: box.height };
+}
 
 export type Selection =
   | { kind: "image"; generation: number }
@@ -33,6 +47,8 @@ export type MapCtx = {
   open: (path: string) => void;
   /** What the radial menu is open on: a clone's name, or "image". */
   menuFor: string | undefined;
+  /** How far the open clone's label rises (world units) to sit above its ring. */
+  menuLift: { dx: number; dy: number } | undefined;
   menu: (target: MenuTarget, at: MenuAnchor, keyboard: boolean) => void;
 };
 
@@ -45,11 +61,13 @@ function Label({
   state,
   at,
   origin,
+  lift,
 }: {
   name: string;
   state: ReactNode;
   at: LabelSpot;
   origin: { x: number; y: number };
+  lift?: { dx: number; dy: number };
 }) {
   const align = at.align;
   return (
@@ -60,7 +78,12 @@ function Label({
         align === "right" && "items-end text-right",
         align === "center" && "items-center text-center",
       )}
-      style={{ left: at.x - origin.x, top: at.y - origin.y, width: at.w }}
+      style={{
+        left: at.x - origin.x,
+        top: at.y - origin.y,
+        width: at.w,
+        transform: lift ? `translate(${lift.dx}px, ${lift.dy}px)` : undefined,
+      }}
     >
       <span className="map-clone-name flex max-w-full items-baseline gap-1.5 rounded px-1.5 py-0.5 text-[12px] font-medium">
         <span className="truncate">{name}</span>
@@ -131,12 +154,9 @@ export function CloneNode({
       aria-label={`Clone ${c.name}`}
       aria-pressed={ctx.picked === c.name}
       title={c.branch ?? c.name}
-      {...menuTrigger(ctx, { kind: "clone", name: c.name }, ctx.picked === c.name, () =>
-        ctx.select({ kind: "clone", name: c.name }),
-      )}
+      {...menuTrigger(ctx, { kind: "clone", name: c.name }, () => ctx.select({ kind: "clone", name: c.name }))}
       onPointerEnter={() => ctx.setHovered(() => c.name)}
       onPointerLeave={() => ctx.setHovered((h) => (h === c.name ? null : h))}
-      onDoubleClick={() => c.mounted && ctx.open(c.path)}
       className={cn(
         "map-clone absolute",
         ctx.picked === c.name && "map-node-selected",
@@ -158,7 +178,13 @@ export function CloneNode({
       }}
     >
       {children}
-      <Label name={c.name} at={label} origin={origin} state={<StateLine parts={cloneState(c, ctx.prOf(c.name))} />} />
+      <Label
+        name={c.name}
+        at={label}
+        origin={origin}
+        state={<StateLine parts={cloneState(c, ctx.prOf(c.name))} />}
+        lift={ctx.menuFor === c.name ? ctx.menuLift : undefined}
+      />
     </button>
   );
 }
@@ -172,8 +198,10 @@ function menuAnchor(target: MenuTarget, button: HTMLElement, pointer?: { clientX
   const box = button.getBoundingClientRect();
   const centre = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
   const radius = Math.min(box.width, box.height) / 2;
+  const title = nameRect(button.querySelector(".map-clone-name"));
   // Judge "a clove" by its size on the map, not on screen, which grows with zoom.
-  if (target.kind === "image" || button.offsetWidth <= 60) return { ...centre, radius };
+  if (target.kind === "image") return { ...centre, radius };
+  if (button.offsetWidth <= 60) return { ...centre, radius, title };
   if (pointer?.clientX) return { x: pointer.clientX, y: pointer.clientY, radius: 0 };
   const label = button.querySelector(".map-leaf-label")?.getBoundingClientRect() ?? box;
   return { x: label.left + label.width / 2, y: label.top + label.height / 2, radius: 0 };
@@ -183,14 +211,15 @@ const isMenuKey = (event: KeyboardEvent<HTMLElement>) =>
   event.key === "." || event.key === "ContextMenu" || (event.shiftKey && event.key === "F10");
 
 /**
- * Handlers that open a node's radial menu: right-click, a second click once it
- * is picked, or period (or the menu key) from the keyboard.
+ * Handlers that pick a node and open its radial menu: a click, a right-click,
+ * or period (or the menu key) from the keyboard.
  */
-export function menuTrigger(ctx: MapCtx, target: MenuTarget, picked: boolean, select: () => void) {
+export function menuTrigger(ctx: MapCtx, target: MenuTarget, select: () => void) {
   return {
     onClick: (event: MouseEvent<HTMLElement>) => {
-      if (picked) ctx.menu(target, menuAnchor(target, event.currentTarget, event), event.detail === 0);
-      else select();
+      select();
+      // A click from Enter or Space has no pointer: focus goes into the ring.
+      ctx.menu(target, menuAnchor(target, event.currentTarget, event), event.detail === 0);
     },
     onContextMenu: (event: MouseEvent<HTMLElement>) => {
       event.preventDefault();

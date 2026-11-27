@@ -1,7 +1,26 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { CircleCheck, FilePen, FilePlus, Laptop, Monitor, Moon, RotateCcw, Sun, TriangleAlert } from "lucide-react";
-import { type ReactNode, useState } from "react";
-import { PaneHeader } from "@/components/app-shell";
+import {
+  BrushCleaning,
+  CircleCheck,
+  Clock,
+  FileCog,
+  FilePen,
+  FilePlus,
+  Laptop,
+  List,
+  ListChecks,
+  Monitor,
+  Moon,
+  RotateCcw,
+  Settings as SettingsIcon,
+  Sun,
+  TriangleAlert,
+} from "lucide-react";
+import { type ComponentType, type ReactNode, useRef, useState } from "react";
+import { PageTitle, PaneHeader } from "@/components/app-shell";
+import { CloveMark } from "@/components/glyph";
+import { SectionNav, tocProps } from "@/components/section-nav";
+import { Segmented } from "@/components/segmented";
 import { Shortcut } from "@/components/shortcut";
 import { RepoMark } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
@@ -34,49 +53,70 @@ export function SettingsPage() {
   const { data: repos = [] } = useRepos();
   const repo = repos.find((r) => r.id === repoId) ?? repos[0];
   const cfg = useRepoConfig(repo?.root);
+  const scroller = useRef<HTMLDivElement>(null);
 
   return (
     <>
       <PaneHeader>
-        <h1 className="text-[14px] font-semibold tracking-tight">Settings</h1>
+        <PageTitle icon={<SettingsIcon />}>Settings</PageTitle>
         <span className="text-[12.5px] text-muted-foreground">Resolved config, later files win</span>
         <div data-tauri-drag-region className="h-full flex-1" />
       </PaneHeader>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex max-w-[860px] flex-col gap-6 px-6 pt-5 pb-16">
-          <MachineSection stateHome={cfg.data?.state_home} />
-
-          {repos.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              {repos.map((r) => (
-                <button
-                  key={r.id}
-                  type="button"
-                  onClick={() => void navigate({ to: "/settings", search: { repo: r.id } })}
-                  className={cn(
-                    "flex h-7 items-center gap-2 rounded-md border px-2.5 text-[12.5px] transition-colors",
-                    r.id === repo?.id
-                      ? "border-bottle/40 bg-bottle-soft font-medium text-foreground"
-                      : "text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground",
-                  )}
-                >
-                  <RepoMark name={r.name} className="size-4 text-[9.5px]" />
-                  {r.name}
-                </button>
-              ))}
+      <div ref={scroller} className="@container min-h-0 flex-1 overflow-y-auto">
+        {/* Wide pane: a sticky list of sections in the left margin, the
+            content centred as before. */}
+        <div className="mx-auto flex max-w-[860px] justify-center gap-8 px-6 pt-5 pb-16 @min-[1240px]:max-w-[1120px]">
+          <aside className="hidden w-[180px] shrink-0 @min-[1240px]:block">
+            <div className="sticky top-5">
+              <SectionNav
+                scroller={scroller}
+                iconOf={(key) => <SectionIcon name={key} />}
+                groupLabel={() =>
+                  repo && (
+                    <span className="flex items-center gap-1.5">
+                      <RepoMark name={repo.name} className="size-3.5 text-[8.5px]" />
+                      {repo.name}
+                    </span>
+                  )
+                }
+              />
             </div>
-          )}
+          </aside>
+          <div className="flex min-w-0 max-w-[860px] flex-1 flex-col gap-6">
+            <MachineSection stateHome={cfg.data?.state_home} />
 
-          {repo &&
-            (cfg.error ? (
-              <Card>
-                <div className="px-4 py-3 font-mono text-[12px] text-destructive">{String(cfg.error)}</div>
-              </Card>
-            ) : !cfg.data ? (
-              <Skeleton className="h-64 rounded-xl" />
-            ) : (
-              <RepoSections cfg={cfg.data} root={repo.root} />
-            ))}
+            {repos.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {repos.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    onClick={() => void navigate({ to: "/settings", search: { repo: r.id } })}
+                    className={cn(
+                      "flex h-7 items-center gap-2 rounded-md border px-2.5 text-[12.5px] transition-colors",
+                      r.id === repo?.id
+                        ? "border-bottle/40 bg-bottle-soft font-medium text-foreground"
+                        : "text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground",
+                    )}
+                  >
+                    <RepoMark name={r.name} className="size-4 text-[9.5px]" />
+                    {r.name}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {repo &&
+              (cfg.error ? (
+                <Card>
+                  <div className="px-4 py-3 font-mono text-[12px] text-destructive">{String(cfg.error)}</div>
+                </Card>
+              ) : !cfg.data ? (
+                <Skeleton className="h-64 rounded-xl" />
+              ) : (
+                <RepoSections cfg={cfg.data} root={repo.root} />
+              ))}
+          </div>
         </div>
       </div>
     </>
@@ -88,7 +128,7 @@ function MachineSection({ stateHome }: { stateHome?: string }) {
   const toggle = useServiceToggle();
   const on = toggle.isPending ? toggle.variables : service.data;
   return (
-    <Section icon={<Laptop className="size-4 text-muted-foreground" />} title={THIS_MACHINE}>
+    <Section icon="machine" title={THIS_MACHINE}>
       <Row label="Background service">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-3">
@@ -130,25 +170,12 @@ function AppearanceRow() {
   return (
     <Row label="Appearance">
       <div className="flex items-center gap-3">
-        <div className="flex h-7 items-center rounded-md border bg-muted/50 p-0.5 text-[12.5px]">
-          {options.map(([v, label, icon]) => (
-            <button
-              key={v}
-              type="button"
-              aria-pressed={v === appearance}
-              onClick={() => setPrefs({ appearance: v })}
-              className={cn(
-                "flex h-full items-center gap-1.5 rounded-[5px] px-2.5 transition-colors [&_svg]:size-3.5",
-                v === appearance
-                  ? "bg-background text-foreground shadow-xs"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {icon}
-              {label}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          label="Appearance"
+          value={appearance}
+          onChange={(v) => setPrefs({ appearance: v })}
+          options={options.map(([value, label, icon]) => ({ value, label, icon }))}
+        />
         <span className="flex items-center gap-1.5 text-[12px] text-faint">
           <Shortcut keys="mod+shift+l" /> cycles it from anywhere
         </span>
@@ -259,7 +286,7 @@ function RepoSections({ cfg, root }: { cfg: RepoConfig; root: string }) {
   const labelOf = (l: Layer) => cfg.layers[LAYERS.indexOf(l)]?.label ?? l;
   return (
     <>
-      <Section title="Config files" subtitle="later ones win">
+      <Section icon="files" title="Config files" subtitle="later ones win" group="repo">
         {cfg.layers.map((l) => (
           <div
             key={l.path}
@@ -306,6 +333,8 @@ function RepoSections({ cfg, root }: { cfg: RepoConfig; root: string }) {
       {sections.map((sec) => (
         <Section
           key={sec}
+          icon={sec}
+          group="repo"
           title={sec[0].toUpperCase() + sec.slice(1)}
           subtitle={sec === "steps" ? (c.steps_detected ? "detected from the repo" : "from config") : undefined}
         >
@@ -509,21 +538,39 @@ function StepList({ steps }: { steps: RepoConfig["config"]["steps"] }) {
   );
 }
 
+/** Each section's icon, by key: the page's sections, then clove-core's config sections. */
+const SECTION_ICONS: Record<string, ComponentType<{ className?: string }>> = {
+  machine: Laptop,
+  files: FileCog,
+  clones: CloveMark,
+  steps: ListChecks,
+  freshness: Clock,
+  cleanup: BrushCleaning,
+};
+const SectionIcon = ({ name, className }: { name: string; className?: string }) => {
+  const Icon = SECTION_ICONS[name] ?? List;
+  return <Icon className={className} />;
+};
+
 function Section({
   icon,
   title,
   subtitle,
+  group,
   children,
 }: {
-  icon?: ReactNode;
+  /** A key of SECTION_ICONS (unknown keys get a generic icon). */
+  icon: string;
   title: string;
   subtitle?: string;
+  /** "repo" for a repo's own sections, listed under its name in the side nav. */
+  group?: string;
   children: ReactNode;
 }) {
   return (
-    <section>
+    <section {...tocProps(title, group, icon)} className="scroll-mt-5">
       <div className="mb-2 flex items-center gap-2">
-        {icon}
+        <SectionIcon name={icon} className="size-4 text-muted-foreground" />
         <h2 className="text-[13px] font-medium">{title}</h2>
         {subtitle && <span className="text-[12px] text-faint">{subtitle}</span>}
       </div>

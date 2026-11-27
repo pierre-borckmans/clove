@@ -43,3 +43,12 @@ export function CloveGlyph({ className, angle = 0 }: { className?: string; angle
     </svg>
   );
 }
+
+/** The clove alone, filled: a small symbol for clones (at icon sizes, where the outline would vanish). */
+export function CloveMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="24 4 52 88" className={cn("size-4", className)} aria-hidden="true">
+      <path d={CLOVE_PATH} fill="currentColor" />
+    </svg>
+  );
+}

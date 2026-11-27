@@ -1,10 +1,12 @@
 import type { FocusEvent, KeyboardEvent, MouseEvent, PointerEvent } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 type Point = { x: number; y: number };
 type Camera = Point & { scale: number };
 type GestureEvent = Event & { scale: number; clientX: number; clientY: number };
 const MAX_SCALE = 4;
+/** A small map fits up to this zoom, so it fills a big pane instead of floating in it. */
+const MAX_FIT = 1.5;
 
 /** A local canvas camera: gestures change the map, never the webview's zoom. */
 /** `bottomInset` is viewport height kept clear (an overlay at the bottom); fitting centres above it. */
@@ -25,15 +27,16 @@ export function useMapCamera(worldWidth: number, worldHeight: number, bottomInse
   const inset = useRef(bottomInset);
   inset.current = bottomInset;
 
-  /** The scale that fits the whole map; zooming out stops there. */
+  /** The scale that fits the whole map, enlarging a small one up to MAX_FIT. */
   const fitScale = useCallback(() => {
     const el = viewport.current;
     if (!el) return 1;
     const { width, height } = world.current;
-    return Math.min(1, (el.clientWidth - 48) / width, (el.clientHeight - 40 - inset.current) / height);
+    return Math.min(MAX_FIT, (el.clientWidth - 48) / width, (el.clientHeight - 40 - inset.current) / height);
   }, []);
+  // Zooming out stops at the fit, or at 100% for a map the fit enlarged.
   const clampScale = useCallback(
-    (scale: number) => Math.max(Math.max(0.05, fitScale()), Math.min(MAX_SCALE, scale)),
+    (scale: number) => Math.max(Math.max(0.05, Math.min(1, fitScale())), Math.min(MAX_SCALE, scale)),
     [fitScale],
   );
 
@@ -86,6 +89,13 @@ export function useMapCamera(worldWidth: number, worldHeight: number, bottomInse
     const scale = Math.max(0.05, fitScale());
     update({ x: (width - worldWidth * scale) / 2, y: (height - bottomInset - worldHeight * scale) / 2, scale });
   }, [update, fitScale, worldHeight, worldWidth, bottomInset]);
+
+  // Fit before the first paint, so the map never shows a frame at 100% in a
+  // corner before the resize observer below catches up.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once, on mount.
+  useLayoutEffect(() => {
+    fit();
+  }, []);
 
   useEffect(() => {
     const element = viewport.current;
