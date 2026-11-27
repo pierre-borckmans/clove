@@ -14,8 +14,8 @@ expression: s
 │                    ││ ● pi│  – fetch                  fetched 3m ago (--fetch to force)  │4d     14M  …ding-flow/app │
 │                    ││ ● de│  – setup pnpm                        unchanged since golden  │3h     14M  …/detached/app │
 │                    ││     │                                                              │                           │
-│                    ││     │  pierre-test ready in 0ms                                    │                           │
-│                    ││     │  ⏎ cd into it                                                │                           │
+│                    ││     │  pierre-test ready in 1.0s                                   │                           │
+│                    ││     │  ⏎ close (⏎ again cds into it)                               │                           │
 │                    ││     │                                                              │                           │
 │                    ││     │                                                              │                           │
 │                    ││     │                                                              │                           │
@@ -25,4 +25,4 @@ expression: s
 │ D doctor           ││                                                                                                │
 │ S service          ││                                                                                                │
 ╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────────────╯
- ⏎ cd into it  ↑↓ scroll  end follow  esc hide
+ ↑↓ scroll  end follow  esc hide

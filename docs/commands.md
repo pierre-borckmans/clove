@@ -21,7 +21,7 @@ clove update                     # in a clone: rebase onto the latest base, reru
 clove setup                      # in a clone, after a pull: rerun the setup steps that changed
 
 # clean up
-clove rm feat-login -D           # unmount, delete, and delete the branch
+clove rm feat-login              # unmount, delete, and delete the branch unless it has unpushed work (--keep-branch keeps it)
 clove prune                      # remove clones whose PR is merged, and their branches
 clove log                        # what clove removed, when, why, and how to get the branch back
 clove stats                      # how fast clones come: median, p90, where the time goes, reruns

@@ -1,5 +1,6 @@
 import { TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
+import { BRANCH_RULE, startEach } from "@/components/remove-clone-dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,6 +14,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { tildify } from "@/lib/format";
 import { startOp } from "@/lib/ops";
+import type { OtherWorktree } from "@/lib/types";
 import { setUi, useUi } from "@/lib/ui";
 
 function Blocker({ text }: { text: string }) {
@@ -41,22 +43,29 @@ function Changes({ lines, total }: { lines: string[]; total: number }) {
 }
 
 /**
- * Removes a plain git worktree with `git worktree remove`. One whose only
+ * Removes plain git worktrees with `git worktree remove`. One whose only
  * problem is uncommitted changes can go with force, after they're listed.
+ * Several at once: the toggles apply to each one they fit; ones that can't
+ * go fail on their own without stopping the rest.
  */
 export function RemoveWorktreeDialog() {
   const { removeWorktree } = useUi();
-  const [deleteBranch, setDeleteBranch] = useState(false);
+  const [deleteBranch, setDeleteBranch] = useState(true);
   const [force, setForce] = useState(false);
   const [unlock, setUnlock] = useState(false);
-  const w = removeWorktree?.worktree;
-  const needsDiscard = !!w?.can_force && w.dirty === true;
-  const needsUnlock = !!w?.can_force && w.locked;
-  const blocked = !!w?.blocker && !(w.can_force && (!w.locked || unlock) && (w.dirty !== true || force));
+  const all = removeWorktree?.worktrees ?? [];
+  const many = all.length > 1;
+  const w = all[0];
+  const discardable = (x: OtherWorktree) => !!x.can_force && x.dirty === true;
+  const unlockable = (x: OtherWorktree) => !!x.can_force && x.locked;
+  const stuck = (x: OtherWorktree) => !!x.blocker && !x.can_force;
+  const needsDiscard = all.some(discardable);
+  const needsUnlock = all.some(unlockable);
+  const blocked = !many && !!w?.blocker && !(w.can_force && (!w.locked || unlock) && (w.dirty !== true || force));
 
   useEffect(() => {
     if (removeWorktree) {
-      setDeleteBranch(false);
+      setDeleteBranch(true);
       setForce(false);
       setUnlock(false);
     }
@@ -67,32 +76,63 @@ export function RemoveWorktreeDialog() {
       <AlertDialogContent className="max-w-[440px] gap-5 rounded-xl sm:max-w-[440px]">
         <AlertDialogHeader>
           <AlertDialogTitle className="text-[15px]">
-            Remove worktree <span className="font-mono">{w?.name}</span>?
+            {many ? (
+              `Remove ${all.length} worktrees?`
+            ) : (
+              <>
+                Remove worktree <span className="font-mono">{w?.name}</span>?
+              </>
+            )}
           </AlertDialogTitle>
           <AlertDialogDescription className="text-[13px] leading-relaxed">
-            A plain git worktree at <span className="font-mono text-[12px]">{w ? tildify(w.path) : ""}</span>. clove
-            runs <span className="font-mono text-[12px]">git worktree remove</span>. Locked worktrees and commits on no
-            branch always stay; uncommitted changes go only if you choose to discard them. Commits on the branch stay in
-            the repository.
+            {many ? (
+              "Plain git worktrees. "
+            ) : (
+              <>
+                A plain git worktree at <span className="font-mono text-[12px]">{w ? tildify(w.path) : ""}</span>.{" "}
+              </>
+            )}
+            clove runs <span className="font-mono text-[12px]">git worktree remove</span>. Locked worktrees and commits
+            on no branch always stay; uncommitted changes go only if you choose to discard them.
           </AlertDialogDescription>
         </AlertDialogHeader>
 
-        {w?.blocker && !w.can_force && <Blocker text={w.blocker} />}
+        {many && (
+          <ul className="selectable max-h-44 overflow-auto rounded-lg border px-3 py-2 text-[12.5px] leading-relaxed">
+            {all.map((x) => (
+              <li key={x.path} className="flex min-w-0 items-center gap-2">
+                <span className="truncate font-mono">{x.name}</span>
+                {x.branch && <span className="truncate font-mono text-[11.5px] text-muted-foreground">{x.branch}</span>}
+                {stuck(x) ? (
+                  <span className="shrink-0 text-[11.5px] text-amber" title={x.blocker ?? undefined}>
+                    can't go
+                  </span>
+                ) : x.locked ? (
+                  <span className="shrink-0 text-[11.5px] text-amber">locked</span>
+                ) : x.dirty ? (
+                  <span className="shrink-0 text-[11.5px] text-amber">modified</span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {!many && w?.blocker && !w.can_force && <Blocker text={w.blocker} />}
 
         {needsUnlock && (
           <label className="flex items-center justify-between gap-4 rounded-lg border border-amber/30 px-3 py-2.5">
             <span className="text-[13px]">
-              Unlock it
+              {many ? "Unlock the locked ones" : "Unlock it"}
               <span className="block text-[12px] text-muted-foreground">
-                Locked: {w?.lock_reason ?? "no reason given"}. Runs{" "}
-                <span className="font-mono">git worktree unlock</span>; the lock goes back if removal fails.
+                {!many && <>Locked: {w?.lock_reason ?? "no reason given"}. </>}
+                Runs <span className="font-mono">git worktree unlock</span>; the lock goes back if removal fails.
               </span>
             </span>
             <Switch checked={unlock} onCheckedChange={setUnlock} />
           </label>
         )}
 
-        {w?.missing && (
+        {!many && w?.missing && (
           <div className="text-[12.5px] text-muted-foreground">
             Its folder is gone: removing drops git's record of it.
           </div>
@@ -100,10 +140,10 @@ export function RemoveWorktreeDialog() {
 
         {needsDiscard && (
           <>
-            <Changes lines={w.changes ?? []} total={w.changes_total ?? w.changes?.length ?? 0} />
+            {!many && <Changes lines={w.changes ?? []} total={w.changes_total ?? w.changes?.length ?? 0} />}
             <label className="flex items-center justify-between gap-4 rounded-lg border border-amber/30 px-3 py-2.5">
               <span className="text-[13px]">
-                Discard these changes
+                {many ? "Discard their uncommitted changes" : "Discard these changes"}
                 <span className="block text-[12px] text-muted-foreground">
                   Runs <span className="font-mono">git worktree remove --force</span>. They can't be recovered.
                 </span>
@@ -113,13 +153,17 @@ export function RemoveWorktreeDialog() {
           </>
         )}
 
-        {w?.branch && !blocked && (
+        {all.some((x) => x.branch) && !blocked && (
           <label className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5">
             <span className="text-[13px]">
-              Also delete branch <span className="font-mono text-[12.5px]">{w.branch}</span>
-              <span className="block text-[12px] text-muted-foreground">
-                Only if it is merged; otherwise clove keeps it.
-              </span>
+              {many ? (
+                "Also delete their branches"
+              ) : (
+                <>
+                  Also delete branch <span className="font-mono text-[12.5px]">{w?.branch}</span>
+                </>
+              )}
+              <span className="block text-[12px] text-muted-foreground">{BRANCH_RULE}</span>
             </span>
             <Switch checked={deleteBranch} onCheckedChange={setDeleteBranch} />
           </label>
@@ -132,17 +176,21 @@ export function RemoveWorktreeDialog() {
             className="h-8 bg-destructive text-[13px] text-white hover:bg-destructive/90"
             onClick={() => {
               if (!removeWorktree) return;
-              void startOp({
-                kind: "remove_worktree",
-                root: removeWorktree.root,
-                path: removeWorktree.worktree.path,
-                delete_branch: deleteBranch,
-                force: force && needsDiscard,
-                unlock: unlock && needsUnlock,
-              });
+              const root = removeWorktree.root;
+              void startEach(
+                all.map((x) => ({
+                  kind: "remove_worktree",
+                  root,
+                  path: x.path,
+                  delete_branch: deleteBranch,
+                  force: force && discardable(x),
+                  unlock: unlock && unlockable(x),
+                })),
+                (r) => (r.kind === "remove_worktree" ? tildify(r.path) : ""),
+              );
             }}
           >
-            {force && needsDiscard ? "Discard & remove" : "Remove worktree"}
+            {many ? `Remove ${all.length} worktrees` : force && needsDiscard ? "Discard & remove" : "Remove worktree"}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

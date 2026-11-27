@@ -430,7 +430,7 @@ impl Clove {
             match git::run_ok(&self.root, &["branch", flag, b]) {
                 Ok(_) => branch_deleted = true,
                 Err(e) => r.event(Event::Warn {
-                    message: format!("kept branch {b}: {e:#}"),
+                    message: crate::ops::kept_branch(b, &self.config.base, &e),
                 }),
             }
         }

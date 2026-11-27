@@ -537,7 +537,14 @@ impl NewForm {
     }
 }
 
-#[derive(Debug, Clone)]
+/// A row marked for removal in the list (space).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Mark {
+    Clone(String),
+    Worktree(PathBuf),
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct RemoveForm {
     pub name: String,
     pub branch: Option<String>,
@@ -567,6 +574,9 @@ pub struct RemoveForm {
     /// Its `git status --short` lines (at most a dozen) and how many there are.
     pub changes: Vec<String>,
     pub changes_total: usize,
+    /// Marked rows removed together, one form each; empty for a single one.
+    /// The toggles here then apply to all of them.
+    pub batch: Vec<RemoveForm>,
 }
 
 /// The focusable rows of the remove dialog, top to bottom.
@@ -583,6 +593,10 @@ impl RemoveForm {
     /// The remove button can't act: a plain worktree with a blocker that
     /// force doesn't lift (or force not ticked).
     pub fn blocked(&self) -> bool {
+        // Several: each one that can't go fails on its own.
+        if !self.batch.is_empty() {
+            return false;
+        }
         let overridden =
             self.forceable && (!self.locked || self.unlock) && (self.dirty != Some(true) || self.force);
         self.worktree && self.blocker.is_some() && !overridden
@@ -590,6 +604,22 @@ impl RemoveForm {
 
     pub fn items(&self) -> Vec<RemoveItem> {
         let mut v = vec![];
+        if !self.batch.is_empty() {
+            let b = &self.batch;
+            if b.iter().any(|f| f.branch.is_some()) {
+                v.push(RemoveItem::DeleteBranch);
+            }
+            if b.iter().any(|f| f.worktree && f.forceable && f.locked) {
+                v.push(RemoveItem::Unlock);
+            }
+            if b.iter()
+                .any(|f| !f.worktree || (f.forceable && f.dirty == Some(true)))
+            {
+                v.push(RemoveItem::Force);
+            }
+            v.extend([RemoveItem::Remove, RemoveItem::Cancel]);
+            return v;
+        }
         if self.branch.is_some() {
             v.push(RemoveItem::DeleteBranch);
         }

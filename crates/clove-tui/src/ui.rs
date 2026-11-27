@@ -795,6 +795,9 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect, inline_wts: bool) {
             ));
         }
     }
+    if !app.marks.is_empty() {
+        t.push(Span::styled(format!(" · {} marked", app.marks.len()), fg(AMBER)));
+    }
     if app.filtering || !app.filter.is_empty() {
         t.push(Span::styled("  /", key()));
         t.push(Span::styled(app.filter.clone(), bold()));
@@ -987,6 +990,9 @@ fn draw_worktrees(f: &mut Frame, app: &mut App, area: Rect) {
         let r = row(inner, 1 + (i - off) as u16);
         put(f, r, worktree_row(app, w, &cols));
         worktree_tips(app, w, &cols, r);
+        if app.marked(&Mark::Worktree(w.path.clone())) {
+            mark_gutter(f, r);
+        }
         if n + i == app.selected {
             f.buffer_mut().set_style(r, selected());
         }
@@ -1138,11 +1144,17 @@ fn draw_table(
             ListLine::Clone(vi, c) => {
                 put(f, r, clone_row(app, c, &cols));
                 row_tips(app, c, &cols, r);
+                if app.marked(&Mark::Clone(c.name.clone())) {
+                    mark_gutter(f, r);
+                }
                 *vi
             }
             ListLine::Worktree(vi, w) => {
                 put(f, r, worktree_row(app, w, &cols));
                 worktree_tips(app, w, &cols, r);
+                if app.marked(&Mark::Worktree(w.path.clone())) {
+                    mark_gutter(f, r);
+                }
                 *vi
             }
         };
@@ -1153,6 +1165,14 @@ fn draw_table(
     }
     let track = Rect::new(area.right() - 1, inner.y + 1, 1, h as u16);
     scrollbar(f, track, off, h, len);
+}
+
+/// A row marked for removal: a check in the padding left of it.
+fn mark_gutter(f: &mut Frame, r: Rect) {
+    if r.x > 0 {
+        f.buffer_mut()
+            .set_string(r.x - 1, r.y, "✓", fg(AMBER).add_modifier(Modifier::BOLD));
+    }
 }
 
 fn clone_row<'a>(app: &App, c: &CloneInfo, cols: &Cols) -> Line<'a> {
@@ -1830,14 +1850,8 @@ fn hints(app: &App) -> Vec<Hint> {
             v.push(("esc", "cancel", Esc));
             v
         }
-        Some(Modal::Job(id)) => {
+        Some(Modal::Job(_)) => {
             let mut v = vec![];
-            if let Some(j) = app.job(*id)
-                && matches!(j.result, Some(Ok(_)))
-                && j.path.is_some()
-            {
-                v.push(("⏎", "cd into it", Enter));
-            }
             v.extend([
                 ("↑↓", "scroll", Down),
                 ("end", "follow", End),
@@ -1913,6 +1927,13 @@ fn hints(app: &App) -> Vec<Hint> {
             let mut v: Vec<Hint> = vec![];
             if app.current().is_some() && !app.has_golden() {
                 v.push(("i", "init", Char('i')));
+            } else if !app.marks.is_empty() && app.rows() > 0 {
+                v.extend([
+                    ("d", "remove marked", Char('d')),
+                    ("space", "mark", Char(' ')),
+                    ("esc", "unmark all", Esc),
+                    ("/", "filter", Char('/')),
+                ]);
             } else if app.selected_worktree().is_some() {
                 v.extend([
                     ("⏎", "cd", Enter),
@@ -1921,6 +1942,7 @@ fn hints(app: &App) -> Vec<Hint> {
                     ("n", "new", Char('n')),
                     ("o", "open", Char('o')),
                     ("/", "filter", Char('/')),
+                    ("space", "mark", Char(' ')),
                 ]);
             } else if let Some(c) = app.selected_clone() {
                 v.push(("⏎", "cd", Enter));
@@ -1947,6 +1969,7 @@ fn hints(app: &App) -> Vec<Hint> {
                     ("r", "refresh", Char('r')),
                     ("o", "open", Char('o')),
                     ("/", "filter", Char('/')),
+                    ("space", "mark", Char(' ')),
                 ]);
             } else if app.current().is_some() {
                 v.extend([("n", "new", Char('n')), ("r", "refresh", Char('r'))]);
@@ -2402,6 +2425,7 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
                 ("⏎", "cd into it and quit"),
                 ("n", "new clone on a branch"),
                 ("d", "remove (asks first)"),
+                ("space", "mark; d removes marked, esc unmarks"),
                 ("m / u", "mount / unmount"),
                 ("U / X", "update to latest base / abort"),
                 ("o", "open in $EDITOR"),
@@ -2472,6 +2496,9 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
+    if !r.batch.is_empty() {
+        return draw_remove_many(f, app, area, r);
+    }
     let w: u16 = 62;
     let iw = (w - 6) as usize;
     let mut lines = vec![];
@@ -2582,18 +2609,21 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
         }
     }
     if let Some(a) = r.ahead.filter(|a| *a > 0) {
+        // `-d` keeps a branch holding commits that are neither in the base
+        // nor pushed, so deleting it never loses them.
         let s = format!(
-            "{} {a} commit{} not on {}",
-            if r.delete_branch { "!" } else { "·" },
+            "· {a} commit{} not on {}{}",
             if a == 1 { "" } else { "s" },
-            r.base
+            r.base,
+            if r.delete_branch {
+                ": branch kept if unpushed"
+            } else {
+                ""
+            }
         );
         let (s, t) = cut(&s, iw);
         tips.add(lines.len(), 0, t);
-        lines.push(Line::from(Span::styled(
-            s,
-            if r.delete_branch { fg(AMBER) } else { muted() },
-        )));
+        lines.push(Line::from(Span::styled(s, muted())));
     }
     if r.inside {
         let what = if r.worktree { "worktree" } else { "clone" };
@@ -2685,6 +2715,157 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
             bold(),
         ),
     ]);
+    let inner = block.inner(rect);
+    tips.place(&lines, inner, 0, &mut app.tips);
+    f.render_widget(Paragraph::new(lines).block(block), rect);
+    for (i, item) in toggles {
+        app.hits.push((row(inner, i as u16), Hit::RemoveRow(item)));
+    }
+    let bx = inner.x + (iw.saturating_sub(bw)) as u16;
+    let by = inner.y + btn_line;
+    if by < inner.bottom() {
+        app.hits.push((Rect::new(bx, by, b1w, 1), key_hit('y')));
+        app.hits.push((
+            Rect::new(bx + b1w + 2, by, b2w, 1),
+            Hit::Key(KeyCode::Esc, KeyModifiers::NONE),
+        ));
+    }
+}
+
+/// The remove dialog for marked rows: their names, then toggles for all.
+fn draw_remove_many(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
+    const SHOWN: usize = 8;
+    let w: u16 = 62;
+    let iw = (w - 6) as usize;
+    let b = &r.batch;
+    let mut lines = vec![];
+    let mut tips = SpanTips::default();
+    for t in b.iter().take(SHOWN) {
+        let mut flag = vec![];
+        if t.worktree {
+            flag.push(Span::styled("  worktree", muted()));
+        }
+        if t.dirty == Some(true) {
+            flag.push(Span::styled("  dirty", fg(AMBER)));
+        }
+        if t.worktree && !t.forceable && t.blocker.is_some() {
+            flag.push(Span::styled("  ✗ can't go", fg(AMBER)));
+        }
+        let fw: usize = flag.iter().map(|s| width(&s.content)).sum();
+        let room = iw.saturating_sub(2 + fw);
+        let bw = t.branch.as_deref().map(width).unwrap_or(0);
+        let name_room = if bw > 0 {
+            room.saturating_sub(5 + bw.min(room / 2))
+        } else {
+            room
+        };
+        let (name, name_tip) = cut(&t.name, name_room);
+        tips.add(lines.len(), 1, name_tip);
+        let name_w = width(&name);
+        let mut l = vec![Span::styled("· ", muted()), Span::styled(name, bold())];
+        if let Some(br) = &t.branch {
+            let (br, tip) = cut(br, room.saturating_sub(name_w + 5));
+            tips.add(lines.len(), 3, tip);
+            l.push(Span::styled("  on ", muted()));
+            l.push(Span::styled(br, fg(PLUM)));
+        }
+        l.extend(flag);
+        lines.push(Line::from(l));
+    }
+    if b.len() > SHOWN {
+        lines.push(Line::from(Span::styled(
+            format!("  and {} more", b.len() - SHOWN),
+            muted(),
+        )));
+    }
+    lines.push(Line::from(""));
+    let dirty = b.iter().filter(|t| t.dirty == Some(true)).count();
+    if dirty > 0 {
+        let what = if r.force {
+            "discarded on remove"
+        } else {
+            "kept unless force"
+        };
+        let has = if dirty == 1 { "has" } else { "have" };
+        for l in fmt::wrap(&format!("! {dirty} {has} uncommitted changes: {what}"), iw) {
+            lines.push(Line::from(Span::styled(
+                l,
+                fg(AMBER).add_modifier(Modifier::BOLD),
+            )));
+        }
+    }
+    if r.delete_branch {
+        for l in fmt::wrap(
+            &format!("· branches with unpushed work not on {} stay", r.base),
+            iw,
+        ) {
+            lines.push(Line::from(Span::styled(l, muted())));
+        }
+    }
+    if b.iter().any(|t| t.inside) {
+        for l in fmt::wrap(
+            "you're in one of them: clove quits, moves your shell to the main checkout, then removes them",
+            iw,
+        ) {
+            lines.push(Line::from(Span::styled(l, muted())));
+        }
+    }
+    lines.push(Line::from(""));
+    let focused = r.focused();
+    let check = |item: RemoveItem, on: bool| {
+        let cursor = if focused == item {
+            Span::styled("› ", fg(BOTTLE).add_modifier(Modifier::BOLD))
+        } else {
+            Span::raw("  ")
+        };
+        let mark = if on {
+            Span::styled("[x] ", key())
+        } else {
+            Span::styled("[ ] ", muted())
+        };
+        (cursor, mark, if focused == item { bold() } else { Style::new() })
+    };
+    let mut toggles = vec![];
+    for item in r.items() {
+        let (on, label) = match item {
+            RemoveItem::DeleteBranch => (r.delete_branch, "also delete their branches"),
+            RemoveItem::Unlock => (r.unlock, "unlock locked worktrees"),
+            RemoveItem::Force => (r.force, "force: discard changes, eject if busy"),
+            _ => continue,
+        };
+        toggles.push((lines.len(), item));
+        let (cursor, mark, st) = check(item, on);
+        lines.push(Line::from(vec![cursor, mark, Span::styled(label, st)]));
+    }
+    lines.push(Line::from(""));
+    let danger = r.force && dirty > 0;
+    let confirm = format!(
+        "{} {}",
+        if danger { "discard & remove" } else { "remove" },
+        b.len()
+    );
+    let b1 = button(&confirm, focused == RemoveItem::Remove, danger);
+    let b2 = button("cancel", focused == RemoveItem::Cancel, false);
+    let (b1w, b2w) = (width(&b1.content) as u16, width(&b2.content) as u16);
+    let bw = (b1w + 2 + b2w) as usize;
+    let btn_line = lines.len() as u16;
+    lines.push(Line::from(vec![
+        Span::raw(" ".repeat(iw.saturating_sub(bw))),
+        b1,
+        Span::raw("  "),
+        b2,
+    ]));
+    let h = lines.len() as u16 + 4;
+    let rect = centered(area, w, h);
+    open_modal(f, &mut app.hits, area, rect);
+    let wts = b.iter().filter(|t| t.worktree).count();
+    let n = |k: usize, one: &str| format!("{k} {one}{}", if k == 1 { "" } else { "s" });
+    let what = match (b.len() - wts, wts) {
+        (c, 0) => n(c, "clone"),
+        (0, w) => n(w, "worktree"),
+        (c, w) => format!("{}, {}", n(c, "clone"), n(w, "worktree")),
+    };
+    let block = modal_block(vec![Span::styled("remove ", title()), Span::styled(what, bold())]);
     let inner = block.inner(rect);
     tips.place(&lines, inner, 0, &mut app.tips);
     f.render_widget(Paragraph::new(lines).block(block), rect);
@@ -3897,7 +4078,7 @@ fn draw_job(f: &mut Frame, app: &mut App, area: Rect, id: u64) {
             if job.path.is_some() {
                 summary.push(Line::from(vec![
                     Span::styled("⏎", key()),
-                    Span::styled(" cd into it", muted()),
+                    Span::styled(" close (⏎ again cds into it)", muted()),
                 ]));
             }
         }

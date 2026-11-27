@@ -85,33 +85,83 @@ pub fn fs_type(path: &Path) -> Option<String> {
     statfs(path).map(|st| c_chars(&st.f_fstypename))
 }
 
-/// Processes using the filesystem mounted at `mount_point`.
+/// Processes using the filesystem mounted at `mount_point`. clove's own UIs
+/// holding only directory fds don't count: those are FSEvents watch roots,
+/// opened `O_EVTONLY`, which never keep a volume from unmounting.
 pub fn users(mount_point: &Path) -> Vec<VolumeUser> {
     let Ok(out) = Command::new("lsof")
-        .args(["-n", "-P", "-F", "pc", "+f", "--"])
+        .args(["-n", "-P", "-F", "pcft", "+f", "--"])
         .arg(mount_point)
         .output()
     else {
         return vec![];
     };
-    let me = std::process::id() as i32;
-    let mut users: Vec<VolumeUser> = vec![];
-    let mut pid = 0;
-    for line in String::from_utf8_lossy(&out.stdout).lines() {
-        if let Some(p) = line.strip_prefix('p') {
-            pid = p.parse().unwrap_or(0);
-        } else if let Some(c) = line.strip_prefix('c')
-            && pid != 0
-            && pid != me
-            // lsof inherits our cwd, which may be inside the volume.
-            && c != "lsof"
-            && !users.iter().any(|u| u.pid == pid)
-        {
-            users.push(VolumeUser {
-                pid,
-                command: c.to_string(),
-            });
+    parse_users(&String::from_utf8_lossy(&out.stdout), std::process::id() as i32)
+}
+
+fn parse_users(lsof: &str, me: i32) -> Vec<VolumeUser> {
+    // pid → (command, holds only numbered directory fds)
+    let mut seen: Vec<(i32, String, bool)> = vec![];
+    let mut fd = String::new();
+    for line in lsof.lines() {
+        let Some((tag, v)) = line.split_at_checked(1) else {
+            continue;
+        };
+        match tag {
+            "p" => seen.push((v.parse().unwrap_or(0), String::new(), true)),
+            "c" => {
+                if let Some(cur) = seen.last_mut() {
+                    cur.1 = v.to_string();
+                }
+            }
+            "f" => fd = v.to_string(),
+            "t" => {
+                if let Some(cur) = seen.last_mut() {
+                    let watch = v == "DIR" && fd.bytes().all(|b| b.is_ascii_digit());
+                    cur.2 &= watch;
+                }
+            }
+            _ => {}
         }
     }
-    users
+    seen.into_iter()
+        .filter(|(pid, c, only_dirs)| {
+            *pid != 0
+                && *pid != me
+                // lsof inherits our cwd, which may be inside the volume.
+                && c != "lsof"
+                && !(*only_dirs && matches!(c.as_str(), "clove" | "clove-desktop"))
+        })
+        .map(|(pid, command, _)| VolumeUser { pid, command })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clove_watchers_dont_count_as_users() {
+        let lsof = "p1\ncclove-desktop\nf512\ntDIR\nf513\ntDIR\n\
+                    p2\ncclove\nfcwd\ntDIR\n\
+                    p3\nczsh\nfcwd\ntDIR\n\
+                    p4\ncnode\nf20\ntDIR\n\
+                    p5\nclsof\nfcwd\ntDIR\n\
+                    p6\ncclove\nf7\ntREG\n";
+        let got: Vec<(i32, String)> = parse_users(lsof, 99)
+            .into_iter()
+            .map(|u| (u.pid, u.command))
+            .collect();
+        // The app's watch roots go; a clove with its cwd inside, any other
+        // process, and a clove with an open file stay.
+        assert_eq!(
+            got,
+            vec![
+                (2, "clove".into()),
+                (3, "zsh".into()),
+                (4, "node".into()),
+                (6, "clove".into())
+            ]
+        );
+    }
 }

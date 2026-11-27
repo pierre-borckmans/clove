@@ -18,7 +18,7 @@ Getting started:
   clove init                 build the golden image for this repo (once, slow)
   clove new feat/login       a ready worktree in ~1s, deps and env included
   clove ls                   list clones
-  clove rm feat/login        unmount and delete it
+  clove rm feat/login        unmount and delete it, and its branch unless unpushed
   clove prune                remove clones (and plain git worktrees) whose PR is merged
   clove adopt ../old-wt      turn a plain git worktree into a clone on its branch
   clove repos                every repo clove manages
@@ -89,7 +89,9 @@ enum Cmd {
     /// Remove clones: unmount, delete the image and the git registration.
     /// A plain git worktree (path or folder name) goes with `git worktree
     /// remove`; with uncommitted changes only when --force (they're listed).
-    /// Locked ones and commits on no branch always stay.
+    /// Locked ones and commits on no branch always stay. The branch goes
+    /// too unless --keep-branch; one holding unpushed commits the base
+    /// lacks stays, with a warning.
     #[command(visible_alias = "rm")]
     Remove(RemoveArgs),
     /// Change directory to a clone (needs shell integration). No argument: the main checkout.
@@ -431,8 +433,12 @@ struct RemoveArgs {
     /// Discard uncommitted changes and force-unmount busy volumes.
     #[arg(short, long)]
     force: bool,
-    /// Also delete the branch.
-    #[arg(short = 'D', long)]
+    /// Keep the branch. By default it goes, unless it holds commits that
+    /// are neither in the base nor pushed: then it stays, with a warning.
+    #[arg(long)]
+    keep_branch: bool,
+    /// Delete the branch: the default now, accepted for old scripts.
+    #[arg(short = 'D', long, hide = true, conflicts_with = "keep_branch")]
     delete_branch: bool,
     /// Plain git worktrees: lift a `git worktree lock` to remove it (the
     /// lock goes back if removal fails).
@@ -735,7 +741,7 @@ fn run(cli: Cli) -> Result<()> {
                 }
                 let opts = RemoveOptions {
                     force: a.force,
-                    delete_branch: a.delete_branch,
+                    delete_branch: !a.keep_branch,
                     branch_merged: false,
                     unlock: a.unlock,
                     ..Default::default()
@@ -772,8 +778,8 @@ fn run(cli: Cli) -> Result<()> {
             for n in &names {
                 if inside(n) && !a.force {
                     let mut args = vec!["rm".to_string()];
-                    if a.delete_branch {
-                        args.push("-D".into());
+                    if a.keep_branch {
+                        args.push("--keep-branch".into());
                     }
                     args.push(n.clone());
                     if shell::request_cd_then(&c.root, &args) {
@@ -795,7 +801,7 @@ fn run(cli: Cli) -> Result<()> {
                     n,
                     &RemoveOptions {
                         force: a.force,
-                        delete_branch: a.delete_branch,
+                        delete_branch: !a.keep_branch,
                         branch_merged: false,
                         unlock: false,
                         ..Default::default()

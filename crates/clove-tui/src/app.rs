@@ -96,6 +96,8 @@ pub struct App {
     /// Watch targets from the last load of the current repo, for the runtime to apply.
     pub watch: Option<Vec<clove_core::watch::Target>>,
     pub selected: usize,
+    /// Rows marked with space in the current repo; `d` removes them together.
+    pub marks: Vec<Mark>,
     pub list_scroll: Smooth,
     /// Scroll of the plain-worktrees panel.
     pub wt_scroll: Smooth,
@@ -177,6 +179,7 @@ impl App {
             watching: false,
             watch: None,
             selected: 0,
+            marks: vec![],
             list_scroll: Smooth::default(),
             wt_scroll: Smooth::default(),
             panels: vec![],
@@ -741,7 +744,8 @@ impl App {
             }
             Ok(Outcome::Clone(info)) => {
                 job.path = Some(info.path.clone());
-                let s = format!("{} ready in {elapsed}", info.name);
+                // The core's own timing: the TUI clock can miss a clone faster than a tick.
+                let s = format!("{} ready in {}", info.name, fmt::secs(info.total_ms));
                 toasts.push((ToastKind::Ok, s.clone()));
                 if !info.failed_steps.is_empty() {
                     toasts.push((
@@ -1106,6 +1110,15 @@ impl App {
         }
         let n = self.rows();
         self.selected = self.selected.min(n.saturating_sub(1));
+        // Marks on rows that went away go too.
+        if let Some(d) = self.current() {
+            let live = |m: &Mark| match m {
+                Mark::Clone(n) => d.clones.iter().any(|c| &c.name == n),
+                Mark::Worktree(p) => d.worktrees.iter().any(|w| &w.path == p),
+            };
+            let marks: Vec<Mark> = self.marks.iter().filter(|m| live(m)).cloned().collect();
+            self.marks = marks;
+        }
     }
 
     /// Adds repos clove learned about (e.g. after an init) without reordering,
@@ -1229,6 +1242,7 @@ impl App {
         }
         self.repo_idx = idx;
         self.selected = 0;
+        self.marks.clear();
         self.filter.clear();
         self.filtering = false;
         self.list_scroll = Smooth::default();
@@ -1245,6 +1259,7 @@ impl App {
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         let page = self.list_height.max(1) as isize;
         match k.code {
+            KeyCode::Esc if !self.marks.is_empty() => self.marks.clear(),
             KeyCode::Char('q') | KeyCode::Esc => {
                 if !self.filter.is_empty() {
                     self.filter.clear();
@@ -1276,6 +1291,7 @@ impl App {
             }
             KeyCode::Char('n') | KeyCode::Char('a') => return self.open_new(),
             KeyCode::Char('d') | KeyCode::Delete => self.open_remove(),
+            KeyCode::Char(' ') => self.toggle_mark(),
             KeyCode::Char('m') => return self.mount_selected(After::Nothing),
             KeyCode::Char('u') => return self.unmount_selected(),
             KeyCode::Char('U') => return self.update_selected(false),
@@ -1459,37 +1475,115 @@ impl App {
         vec![Effect::LoadRefs]
     }
 
+    /// The selected row's mark, if it can have one.
+    pub fn selected_mark(&self) -> Option<Mark> {
+        if let Some(w) = self.selected_worktree() {
+            return Some(Mark::Worktree(w.path.clone()));
+        }
+        self.selected_clone().map(|c| Mark::Clone(c.name.clone()))
+    }
+
+    pub fn marked(&self, m: &Mark) -> bool {
+        self.marks.contains(m)
+    }
+
+    fn toggle_mark(&mut self) {
+        let Some(m) = self.selected_mark() else {
+            return;
+        };
+        if let Some(i) = self.marks.iter().position(|x| *x == m) {
+            self.marks.remove(i);
+        } else {
+            self.marks.push(m);
+        }
+    }
+
+    fn worktree_form(&self, w: &OtherWorktree) -> RemoveForm {
+        let base = self.current().map(|d| d.status.base.clone()).unwrap_or_default();
+        RemoveForm {
+            inside: self.start_dir.starts_with(&w.path),
+            name: w.name.clone(),
+            branch: w.branch.clone(),
+            path: w.path.clone(),
+            mounted: !w.missing,
+            dirty: w.dirty,
+            ahead: None,
+            base,
+            delete_branch: true,
+            force: false,
+            focus: 0,
+            worktree: true,
+            forceable: w.forceable(),
+            locked: w.locked,
+            lock_reason: w.lock_reason.clone(),
+            unlock: false,
+            blocker: w.blocker.clone(),
+            changes: w.changes.clone(),
+            changes_total: w.changes_total,
+            batch: vec![],
+        }
+    }
+
+    fn clone_form(&self, c: &CloneInfo) -> RemoveForm {
+        let base = self.current().map(|d| d.status.base.clone()).unwrap_or_default();
+        RemoveForm {
+            name: c.name.clone(),
+            branch: c.branch.clone(),
+            path: c.path.clone(),
+            mounted: c.mounted,
+            dirty: c.dirty,
+            ahead: c.ahead,
+            base,
+            delete_branch: true,
+            force: c.dirty == Some(true),
+            inside: c.path.parent().is_some_and(|m| self.start_dir.starts_with(m)),
+            ..Default::default()
+        }
+    }
+
+    /// Forms for the marked rows that still exist and aren't busy, in list order.
+    fn marked_forms(&self) -> Vec<RemoveForm> {
+        let mut v = vec![];
+        let Some(d) = self.current() else {
+            return v;
+        };
+        for c in &d.clones {
+            if self.marked(&Mark::Clone(c.name.clone())) && self.busy(&c.name).is_none() {
+                v.push(self.clone_form(c));
+            }
+        }
+        for w in &d.worktrees {
+            if self.marked(&Mark::Worktree(w.path.clone())) && self.busy_worktree(&w.path).is_none() {
+                v.push(self.worktree_form(w));
+            }
+        }
+        v
+    }
+
     fn open_remove(&mut self) {
+        if !self.marks.is_empty() {
+            let batch = self.marked_forms();
+            if batch.is_empty() {
+                return;
+            }
+            let base = batch[0].base.clone();
+            let mut f = RemoveForm {
+                base,
+                delete_branch: true,
+                batch,
+                ..Default::default()
+            };
+            f.focus_on(RemoveItem::Remove);
+            self.modal = Some(Modal::Remove(f));
+            return;
+        }
         if let Some(w) = self.selected_worktree().cloned() {
             if self.busy_worktree(&w.path).is_some() {
                 return;
             }
-            let base = self.current().map(|d| d.status.base.clone()).unwrap_or_default();
-            let forceable = w.forceable();
-            self.modal = Some(Modal::Remove(RemoveForm {
-                inside: self.start_dir.starts_with(&w.path),
-                name: w.name,
-                branch: w.branch,
-                path: w.path,
-                mounted: !w.missing,
-                dirty: w.dirty,
-                ahead: None,
-                base,
-                delete_branch: false,
-                force: false,
-                focus: 0,
-                worktree: true,
-                forceable,
-                locked: w.locked,
-                lock_reason: w.lock_reason,
-                unlock: false,
-                blocker: w.blocker,
-                changes: w.changes,
-                changes_total: w.changes_total,
-            }));
-            if let Some(Modal::Remove(f)) = &mut self.modal {
-                f.focus_on(RemoveItem::Remove);
-            }
+            let mut f = self.worktree_form(&w);
+            f.focus_on(RemoveItem::Remove);
+            self.modal = Some(Modal::Remove(f));
             return;
         }
         let Some(c) = self.selected_clone().cloned() else {
@@ -1498,35 +1592,11 @@ impl App {
         if self.busy(&c.name).is_some() {
             return;
         }
-        let base = self.current().map(|d| d.status.base.clone()).unwrap_or_default();
-        let inside = c.path.parent().is_some_and(|m| self.start_dir.starts_with(m));
-        self.modal = Some(Modal::Remove(RemoveForm {
-            name: c.name,
-            branch: c.branch,
-            path: c.path,
-            mounted: c.mounted,
-            dirty: c.dirty,
-            ahead: c.ahead,
-            base,
-            delete_branch: false,
-            force: c.dirty == Some(true),
-            focus: 0,
-            inside,
-            worktree: false,
-            blocker: None,
-            forceable: false,
-            locked: false,
-            lock_reason: None,
-            unlock: false,
-            changes: vec![],
-            changes_total: 0,
-        }));
-        if let Some(Modal::Remove(f)) = &mut self.modal {
-            f.focus_on(RemoveItem::Remove);
-        }
+        let mut f = self.clone_form(&c);
+        f.focus_on(RemoveItem::Remove);
+        self.modal = Some(Modal::Remove(f));
     }
 
-    /// Asks before turning the selected plain worktree into a clone.
     fn open_adopt(&mut self) {
         let Some(w) = self.selected_worktree().cloned() else {
             if self.selected_clone().is_some() {
@@ -1917,22 +1987,44 @@ impl App {
                     self.toast(ToastKind::Err, format!("{b}{hint}"));
                     return (Some(Modal::Remove(f)), vec![]);
                 }
-                if f.inside {
-                    // The shell sits in this clone and holds its volume: quit,
-                    // move the shell to the main checkout, remove it from there.
+                let targets: Vec<RemoveForm> = if f.batch.is_empty() {
+                    vec![f.clone()]
+                } else {
+                    // Without force, dirty clones stay (the dialog says so).
+                    f.batch
+                        .iter()
+                        .filter(|t| f.force || t.worktree || t.dirty != Some(true))
+                        .cloned()
+                        .collect()
+                };
+                if targets.is_empty() {
+                    self.toast(
+                        ToastKind::Info,
+                        "nothing to remove without force: all have uncommitted changes",
+                    );
+                    return (Some(Modal::Remove(f)), vec![]);
+                }
+                if targets.iter().any(|t| t.inside) {
+                    // The shell sits in one of them and holds its volume: quit,
+                    // move the shell to the main checkout, remove from there.
                     let Some(root) = self.root() else {
                         return (None, vec![]);
                     };
                     if !self.integrated {
+                        let what = if f.batch.is_empty() {
+                            "this clone"
+                        } else {
+                            "one of them"
+                        };
                         self.toast(
                             ToastKind::Err,
-                            "your shell is inside this clone: quit, cd out, then remove it (or `clove shell-init --install` so clove can do it)",
+                            format!("your shell is inside {what}: quit, cd out, then remove it (or `clove shell-init --install` so clove can do it)"),
                         );
                         return (Some(Modal::Remove(f)), vec![]);
                     }
                     let mut args = vec!["rm".to_string()];
-                    if f.delete_branch {
-                        args.push("-D".into());
+                    if !f.delete_branch {
+                        args.push("--keep-branch".into());
                     }
                     if f.force {
                         args.push("--force".into());
@@ -1940,35 +2032,44 @@ impl App {
                     if f.unlock {
                         args.push("--unlock".into());
                     }
-                    args.push(if f.worktree {
-                        f.path.to_string_lossy().to_string()
-                    } else {
-                        f.name.clone()
-                    });
+                    args.extend(targets.iter().map(|t| {
+                        if t.worktree {
+                            t.path.to_string_lossy().to_string()
+                        } else {
+                            t.name.clone()
+                        }
+                    }));
+                    self.marks.clear();
                     self.exit = Some(Exit::CdThen(root, args));
                     return (None, vec![]);
                 }
-                if f.worktree {
-                    let task = Task::RemoveWorktree {
-                        path: f.path.clone(),
-                        name: f.name.clone(),
-                        delete_branch: f.delete_branch,
-                        force: f.force && f.forceable,
-                        unlock: f.unlock && f.forceable,
+                // One job each: a failure is reported and the rest go on.
+                let mut fx = vec![];
+                for t in &targets {
+                    let task = if t.worktree {
+                        Task::RemoveWorktree {
+                            path: t.path.clone(),
+                            name: t.name.clone(),
+                            delete_branch: f.delete_branch,
+                            force: f.force && t.forceable,
+                            unlock: f.unlock && t.forceable,
+                        }
+                    } else {
+                        Task::Remove {
+                            name: t.name.clone(),
+                            opts: RemoveOptions {
+                                force: f.force,
+                                delete_branch: f.delete_branch,
+                                branch_merged: false,
+                                unlock: false,
+                                ..Default::default()
+                            },
+                        }
                     };
-                    return (None, self.spawn(task, After::Nothing));
+                    fx.extend(self.spawn(task, After::Nothing));
                 }
-                let task = Task::Remove {
-                    name: f.name.clone(),
-                    opts: RemoveOptions {
-                        force: f.force,
-                        delete_branch: f.delete_branch,
-                        branch_merged: false,
-                        unlock: false,
-                        ..Default::default()
-                    },
-                };
-                return (None, self.spawn(task, After::Nothing));
+                self.marks.clear();
+                return (None, fx);
             }
             _ => {}
         }
@@ -2291,13 +2392,8 @@ impl App {
             return (None, vec![]);
         };
         match k.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('l') => return (None, vec![]),
-            KeyCode::Enter => {
-                if let (Some(Ok(_)), Some(p)) = (&job.result, &job.path) {
-                    self.exit = Some(Exit::Cd(p.clone()));
-                }
-                return (None, vec![]);
-            }
+            // Enter just closes; the new clone is selected, so Enter on the list cds.
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') | KeyCode::Char('l') => return (None, vec![]),
             KeyCode::Up | KeyCode::Char('k') => scroll_job(job, -1, page),
             KeyCode::Down | KeyCode::Char('j') => scroll_job(job, 1, page),
             KeyCode::PageUp => scroll_job(job, -(page as isize), page),

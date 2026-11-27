@@ -27,4 +27,4 @@ expression: s
 │ D doctor           ││                                                                                        ││                                              │
 │ S service     ● on ││                                                                                        ││                                              │
 ╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────╯╰──────────────────────────────────────────────╯
- ⏎ cd  v changes  n new  d remove  u unmount  U update  r refresh  o open  / filter  tab repo  s settings  g cleanup  L log  t timings  ? help  q quit
+ ⏎ cd  v changes  n new  d remove  u unmount  U update  r refresh  o open  / filter  space mark  tab repo  s settings  g cleanup  L log  ? help  q quit
