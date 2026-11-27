@@ -172,8 +172,9 @@ export function RemoveWorktreeDialog() {
         <AlertDialogFooter>
           <AlertDialogCancel className="h-8 text-[13px]">Cancel</AlertDialogCancel>
           <AlertDialogAction
+            variant="destructive"
             disabled={blocked}
-            className="h-8 bg-destructive text-[13px] text-white hover:bg-destructive/90"
+            className="h-8 text-[13px]"
             onClick={() => {
               if (!removeWorktree) return;
               const root = removeWorktree.root;

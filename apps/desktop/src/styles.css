@@ -30,9 +30,17 @@
   --sage: #2f6b4c;
   --sage-soft: color-mix(in oklab, #2f6b4c 13%, transparent);
   --peel: #d9b945;
+  /* Garlic: cream is a peeled clove's flesh, skin its papery wrapper. */
+  --cream: #f3efd6;
+  --skin: oklch(0.74 0.035 85);
+  --skin-fill: oklch(0.975 0.008 90);
   --amber: oklch(0.7 0.13 70);
   /* Removed lines: softer than --destructive, which stays for danger. */
   --rose: oklch(0.58 0.14 18);
+  /* Extra hues for action colours (the radial menus). */
+  --tone-blue: oklch(0.58 0.13 250);
+  --tone-violet: oklch(0.56 0.13 295);
+  --tone-teal: oklch(0.58 0.09 195);
   --sidebar: oklch(0.972 0.009 158 / 0.94);
   --sidebar-line: oklch(0.2 0 0 / 0.07);
   --pane-shadow: 0 0 0 1px oklch(0.2 0 0 / 0.06), 0 1px 3px oklch(0.2 0 0 / 0.04);
@@ -63,8 +71,14 @@
   --bottle-soft: color-mix(in oklab, #7cc49b 16%, transparent);
   --sage: #7cc49b;
   --rose: oklch(0.72 0.11 18);
+  --tone-blue: oklch(0.74 0.11 250);
+  --tone-violet: oklch(0.74 0.11 295);
+  --tone-teal: oklch(0.76 0.08 195);
   --sage-soft: color-mix(in oklab, #7cc49b 15%, transparent);
   --peel: #e3c95e;
+  --cream: #ddd3a6;
+  --skin: oklch(0.56 0.03 85);
+  --skin-fill: oklch(0.255 0.008 85);
   --amber: oklch(0.78 0.12 75);
   --sidebar: oklch(0.165 0.004 160 / 0.94);
   --sidebar-line: oklch(1 0 0 / 0.06);
@@ -118,6 +132,8 @@ html[data-shell="native"].dark {
   --color-sage: var(--sage);
   --color-sage-soft: var(--sage-soft);
   --color-peel: var(--peel);
+  --color-cream: var(--cream);
+  --color-skin: var(--skin);
   --color-amber: var(--amber);
   --color-rose: var(--rose);
   --color-sidebar: var(--sidebar);
@@ -175,7 +191,25 @@ html[data-shell="native"].dark {
     user-select: text;
     -webkit-user-select: text;
   }
-  button {
+  /* Everything clickable shows the hand; disabled controls keep the arrow. */
+  button:not(:disabled),
+  a[href],
+  summary,
+  select,
+  label[for],
+  input[type="checkbox"],
+  input[type="radio"],
+  [role="button"]:not([aria-disabled="true"]),
+  [role="option"]:not([aria-disabled="true"]),
+  [role="tab"],
+  [role="switch"],
+  [role="checkbox"],
+  [role="menuitem"]:not([data-disabled]),
+  [role="menuitemcheckbox"]:not([data-disabled]),
+  [role="menuitemradio"]:not([data-disabled]) {
+    cursor: pointer;
+  }
+  button:disabled {
     cursor: default;
   }
   ::selection {
@@ -231,4 +265,535 @@ html[data-shell="native"].dark {
 .dark .diff-pane {
   --diffs-bg-addition-override: var(--sage);
   --diffs-bg-buffer-override: color-mix(in oklab, var(--foreground) 3%, var(--card));
+}
+
+/* The repository map uses the same surfaces and palette as the native shell. */
+.map-viewport {
+  background-image: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--foreground) 12%, transparent) 0.7px,
+    transparent 0.8px
+  );
+  background-size: 18px 18px;
+}
+.map-edge,
+.map-leader {
+  opacity: var(--appear, 1);
+}
+.map-edge {
+  stroke: color-mix(in oklab, var(--bottle) 28%, var(--border));
+  stroke-width: 1.4;
+  transition:
+    stroke 180ms,
+    stroke-width 180ms,
+    opacity 200ms;
+}
+.map-edge-active {
+  stroke: var(--bottle);
+  stroke-width: 2;
+}
+.map-image-symbol {
+  color: var(--bottle);
+  background: var(--card);
+  border: 1.5px solid var(--bottle);
+  box-shadow:
+    0 0 0 6px var(--background),
+    0 0 0 7px var(--bottle-soft);
+}
+.map-image-old .map-image-symbol {
+  color: var(--muted-foreground);
+  border-color: var(--border);
+  border-style: dashed;
+  box-shadow: 0 0 0 5px var(--background);
+}
+/* --appear (0 to 1) is set while a clone animates in or out of the map. */
+.map-clone {
+  opacity: var(--appear, 1);
+  transition: opacity 200ms;
+}
+.map-clone-symbol {
+  color: var(--bottle);
+  background: transparent;
+  transition:
+    background-color 150ms,
+    color 150ms,
+    box-shadow 150ms;
+}
+.map-clone-unmounted .map-clone-symbol {
+  border-style: dashed;
+  border-color: var(--faint-foreground);
+  color: var(--faint-foreground);
+}
+.map-clone-warning .map-clone-symbol {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+.map-clone:hover .map-clone-symbol,
+.map-clone.map-node-selected .map-clone-symbol {
+  background: var(--bottle-soft);
+  color: var(--bottle);
+  box-shadow: 0 0 0 4px var(--bottle-soft);
+}
+.map-clone-name,
+.map-clone-state {
+  background: var(--background);
+}
+.map-clone-state {
+  padding-inline: 3px;
+}
+/* A label rises above its clove's open menu and drops back (see .map-menu-open). */
+.map-clone .map-leaf-label {
+  transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.map-clone .map-clone-name {
+  transition:
+    background-color 300ms,
+    color 300ms,
+    box-shadow 300ms;
+}
+/* Back from a menu, the state line waits for its label to land, then fades in. */
+.map-clone .map-clone-state {
+  transition: opacity 180ms ease-out 140ms;
+}
+.map-clone.map-node-selected .map-clone-name {
+  background: var(--bottle-soft);
+  color: var(--bottle);
+}
+.map-image:focus-visible,
+.map-clone:focus-visible {
+  outline: none;
+}
+.map-image:focus-visible .map-image-symbol,
+.map-clone:focus-visible .map-clone-symbol {
+  outline: 3px solid var(--ring);
+  outline-offset: 5px;
+}
+.map-node-selected.map-image .map-image-symbol {
+  background: var(--bottle-soft);
+}
+
+/* Radial image families: the current image is the core; earlier images are
+   numbered seeds on the inner orbit, with their own independent branches. */
+.map-orbit {
+  fill: none;
+  stroke: color-mix(in oklab, var(--bottle) 10%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 2 7;
+}
+.map-orbit {
+  stroke: color-mix(in oklab, var(--bottle) 18%, transparent);
+  stroke-dasharray: none;
+}
+.map-orbit-old {
+  stroke: color-mix(in oklab, var(--foreground) 15%, transparent);
+  stroke-dasharray: 2 5;
+}
+.map-edge-old {
+  stroke: color-mix(in oklab, var(--foreground) 24%, transparent);
+  stroke-dasharray: 3 4;
+}
+.map-orbit.map-orbit-focus {
+  stroke: color-mix(in oklab, var(--bottle) 45%, transparent);
+  stroke-dasharray: none;
+}
+.map-dim {
+  opacity: calc(0.28 * var(--appear, 1));
+}
+.map-edge-old.map-edge-active {
+  stroke: var(--muted-foreground);
+}
+.map-clone-old:not(.map-clone-warning):not(.map-clone-unmounted) .map-clone-symbol {
+  color: color-mix(in oklab, var(--bottle) 55%, var(--muted-foreground));
+}
+.map-ring-label {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  transition:
+    border-color 150ms,
+    color 150ms;
+}
+.map-ring-label:hover,
+.map-ring-label.map-node-selected {
+  border-color: color-mix(in oklab, var(--bottle) 40%, var(--border));
+  color: var(--foreground);
+}
+.map-image-current {
+  background: var(--card);
+  border: 1px solid color-mix(in oklab, var(--bottle) 38%, var(--border));
+  box-shadow:
+    0 0 0 9px var(--background),
+    0 0 0 10px var(--bottle-soft),
+    0 10px 35px color-mix(in oklab, var(--bottle) 10%, transparent);
+}
+.map-image.map-image-current .map-image-symbol,
+.map-image-current.map-node-selected .map-image-symbol {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.map-image-current.map-node-selected {
+  background: radial-gradient(circle at 50% 25%, var(--bottle-soft), var(--card) 80%);
+}
+
+/* The map fades in when it opens (its camera is already fitted by then). */
+.map-world {
+  animation: map-world-in 420ms ease-out both;
+}
+@keyframes map-world-in {
+  from {
+    opacity: 0;
+  }
+}
+.map-viewport {
+  cursor: grab;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+.map-viewport button {
+  cursor: pointer;
+}
+.map-viewport[data-hand] button {
+  cursor: grab;
+}
+.map-viewport[data-panning],
+.map-viewport[data-panning] button {
+  cursor: grabbing;
+}
+.map-clone-unmounted .clove-petal-body {
+  fill-opacity: 0.04;
+  stroke-dasharray: 4 3;
+}
+.map-node-selected .clove-petal-body {
+  fill-opacity: 0.45;
+}
+
+/* Clones as cloves. Skin states: papery when unmounted, peeled
+   (cream) when mounted, an amber cut when modified, bruised when something
+   failed, faded with a check once merged. */
+.map-piece .clove-skin {
+  fill: var(--skin-fill);
+  stroke: var(--skin);
+  stroke-width: 4;
+  transition:
+    stroke 150ms,
+    fill 150ms;
+}
+.map-piece .clove-vein {
+  stroke: var(--skin);
+  stroke-width: 2;
+  opacity: 0.6;
+}
+.map-skin-peeled .clove-skin {
+  fill: var(--cream);
+  stroke: var(--peel);
+}
+.map-skin-peeled .clove-vein {
+  stroke: var(--peel);
+}
+.map-skin-unmounted .clove-skin {
+  fill: color-mix(in oklab, var(--skin-fill) 70%, transparent);
+  stroke-dasharray: 7 5;
+}
+.map-skin-bruised .clove-skin {
+  fill: color-mix(in oklab, var(--rose) 28%, var(--cream));
+  stroke: var(--rose);
+}
+.map-skin-bruised .clove-vein {
+  stroke: var(--rose);
+}
+.map-piece .clove-cut {
+  stroke: var(--amber);
+  stroke-width: 7;
+}
+.map-skin-merged .map-piece-svg {
+  opacity: 0.45;
+}
+.map-merged-badge {
+  background: var(--bottle);
+  color: var(--background);
+  box-shadow: 0 0 0 1.5px var(--background);
+}
+.map-piece:hover .clove-skin {
+  stroke: color-mix(in oklab, var(--bottle) 60%, var(--peel));
+}
+.map-piece.map-node-selected .clove-skin {
+  stroke: var(--bottle);
+  stroke-width: 6;
+}
+.map-piece.map-node-selected .map-piece-svg {
+  filter: drop-shadow(0 0 5px color-mix(in oklab, var(--bottle) 45%, transparent));
+}
+.map-piece:focus-visible {
+  outline: none;
+}
+.map-piece:focus-visible .clove-skin {
+  stroke: var(--ring);
+  stroke-width: 7;
+}
+
+.map-leader {
+  stroke: color-mix(in oklab, var(--foreground) 22%, transparent);
+  stroke-width: 1;
+  transition: stroke 150ms;
+}
+.map-leader-active {
+  stroke: var(--bottle);
+}
+/* The shelf of plain worktrees, pinned under the map. */
+.map-shelf {
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--card) 92%, transparent);
+  box-shadow: var(--pane-shadow);
+  backdrop-filter: blur(8px);
+}
+.map-shelf-item {
+  transition:
+    background-color 150ms,
+    color 150ms,
+    opacity 200ms;
+}
+.map-shelf-item:hover {
+  background: var(--muted);
+}
+.map-shelf-item.map-node-selected {
+  background: var(--bottle-soft);
+  color: var(--bottle);
+}
+.map-shelf-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+/* A clove's radial menu: actions fan out from the clove, over the map. */
+.map-radial {
+  width: 0;
+  height: 0;
+}
+.map-radial-disc {
+  position: absolute;
+  /* Click-through: only the action buttons take the pointer, so a node under
+     the ring can still be clicked. */
+  pointer-events: none;
+  left: 0;
+  top: 0;
+  width: calc(var(--outer) * 2);
+  height: calc(var(--outer) * 2);
+  border-radius: 999px;
+  translate: -50% -50%;
+  /* A donut: the mask cuts the middle out of the blur too, so the node
+     inside stays sharp. The gradient draws the inner edge. */
+  background: radial-gradient(
+    circle,
+    var(--border) calc(var(--hole) + 1px),
+    color-mix(in oklab, var(--card) 45%, transparent) calc(var(--hole) + 2px)
+  );
+  box-shadow: inset 0 0 0 1px var(--border);
+  backdrop-filter: blur(10px) saturate(1.3);
+  mask: radial-gradient(circle, transparent var(--hole), #000 calc(var(--hole) + 1px));
+  animation: map-radial-disc 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.map-radial-item {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 36px;
+  height: 36px;
+  translate: calc(-50% + var(--dx)) calc(-50% + var(--dy));
+  /* Each action has its colour: tinted at rest, filled when pointed at. */
+  color: var(--tone);
+  background: color-mix(in oklab, var(--tone) 14%, var(--card));
+  border: 1px solid color-mix(in oklab, var(--tone) 40%, var(--border));
+  box-shadow: 0 1px 2px oklch(0 0 0 / 0.08);
+  animation: map-radial-item 240ms cubic-bezier(0.2, 0.9, 0.25, 1.15) both;
+  animation-delay: calc(var(--i) * 16ms);
+  transition:
+    background-color 120ms,
+    color 120ms,
+    border-color 120ms,
+    scale 120ms;
+}
+.map-radial .map-radial-item:disabled {
+  color: var(--faint-foreground);
+  background: var(--card);
+  border-color: var(--border);
+  opacity: 0.55;
+}
+.map-radial .map-radial-item:enabled:hover,
+.map-radial .map-radial-item:enabled:focus-visible {
+  background: var(--tone);
+  border-color: var(--tone);
+  color: var(--card);
+  scale: 1.08;
+  outline: none;
+}
+.map-radial-hint {
+  pointer-events: none;
+  left: 0;
+  translate: -50% 0;
+  /* Solid: the popover surface is see-through in the native shell. */
+  background: var(--popover);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  box-shadow: var(--pane-shadow);
+  animation: map-radial-disc 200ms ease-out both;
+}
+/* The clone's name above the ring; the action under the pointer below it. */
+.map-radial-name {
+  bottom: calc(var(--outer) + 8px);
+  color: var(--bottle);
+}
+.map-radial-action {
+  top: calc(var(--outer) + 8px);
+}
+@keyframes map-radial-disc {
+  from {
+    opacity: 0;
+    scale: 0.6;
+  }
+}
+/* Items start on the clove and fan out to their place. */
+@keyframes map-radial-item {
+  from {
+    opacity: 0;
+    translate: -50% -50%;
+    scale: 0.4;
+  }
+}
+/* A clove flying off leaves its label behind, hidden. */
+.map-clone.map-leaving .map-leaf-label {
+  /* Hidden, not just transparent: it must not catch the pointer either. */
+  visibility: hidden;
+}
+/* While its menu is open, a clone's own label rises above the ring (an inline
+   transform) and wears the title's pill; its state line steps aside. */
+.map-clone.map-menu-open {
+  z-index: 5;
+}
+.map-clone.map-menu-open .map-clone-name {
+  background: var(--popover);
+  color: var(--bottle);
+  box-shadow:
+    0 0 0 1px var(--border),
+    0 4px 14px oklch(0 0 0 / 0.14);
+}
+.map-clone.map-menu-open .map-clone-state {
+  opacity: 0;
+  transition: opacity 120ms;
+}
+
+/* Screen changes (router view transitions): only the main pane is captured,
+   so the sidebar and title bar stay still. The diff slides over its repo and
+   back; other changes crossfade. */
+:root {
+  view-transition-name: none;
+}
+.route-view {
+  view-transition-name: page;
+}
+/* The page header doesn't take part: it is captured on its own and swaps
+   instantly, so only the content below it fades or slides. */
+.pane-header {
+  view-transition-name: pane-header;
+}
+::view-transition-group(pane-header),
+::view-transition-new(pane-header) {
+  animation: none;
+}
+::view-transition-old(pane-header) {
+  display: none;
+}
+::view-transition-group(page) {
+  overflow: clip;
+  border-radius: 10px;
+  animation-duration: 280ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+::view-transition-old(page),
+::view-transition-new(page) {
+  animation-duration: 280ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+html:active-view-transition-type(fade)::view-transition-old(page),
+html:active-view-transition-type(fade)::view-transition-new(page) {
+  animation-duration: 240ms;
+}
+@media (prefers-reduced-motion: no-preference) {
+  html:active-view-transition-type(push)::view-transition-old(page) {
+    animation-name: page-out-left;
+  }
+  html:active-view-transition-type(push)::view-transition-new(page) {
+    animation-name: page-in-right;
+  }
+  html:active-view-transition-type(pop)::view-transition-old(page) {
+    animation-name: page-out-right;
+  }
+  html:active-view-transition-type(pop)::view-transition-new(page) {
+    animation-name: page-in-left;
+  }
+  /* Other screens: the old one fades, the new one rises into place. */
+  html:active-view-transition-type(fade)::view-transition-old(page) {
+    animation-name: page-fade-out;
+    animation-duration: 160ms;
+  }
+  html:active-view-transition-type(fade)::view-transition-new(page) {
+    animation-name: page-rise-in;
+  }
+}
+@keyframes page-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+@keyframes page-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes page-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(48px);
+  }
+}
+@keyframes page-out-left {
+  to {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+@keyframes page-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+@keyframes page-out-right {
+  to {
+    opacity: 0;
+    transform: translateX(48px);
+  }
+}
+
+/* Segmented controls: the highlight slides to the picked option. Inside a view
+   transition the browser moves it instead (it has its own name there). */
+.segmented-highlight {
+  transition:
+    transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+::view-transition-group(repo-view-tabs) {
+  animation-duration: 260ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .segmented-highlight {
+    transition: none;
+  }
 }

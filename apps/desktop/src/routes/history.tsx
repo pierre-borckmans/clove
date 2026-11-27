@@ -1,5 +1,5 @@
-import { Copy, Gauge, History } from "lucide-react";
-import { PaneHeader } from "@/components/app-shell";
+import { Copy, Gauge, History, History as HistoryIcon } from "lucide-react";
+import { PageTitle, PaneHeader } from "@/components/app-shell";
 import { Empty } from "@/components/empty";
 import { RepoMark } from "@/components/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -22,7 +22,7 @@ export function HistoryPage() {
   return (
     <>
       <PaneHeader>
-        <h1 className="text-[14px] font-semibold tracking-tight">History</h1>
+        <PageTitle icon={<HistoryIcon />}>History</PageTitle>
         <span className="text-[12.5px] text-muted-foreground">
           How fast clones come, and what clove removed, in every repository
         </span>

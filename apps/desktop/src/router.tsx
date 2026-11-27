@@ -50,6 +50,17 @@ export const router = createRouter({
   history: createHashHistory(),
   defaultPreload: false,
   defaultErrorComponent: Crash,
+  // The diff slides over its repo and back; other screen changes crossfade.
+  // Only the main pane animates (see .route-view in styles.css).
+  defaultViewTransition: {
+    types: ({ fromLocation, toLocation, pathChanged }) => {
+      if (!fromLocation || !pathChanged || toLocation.pathname.startsWith("/popover")) return false;
+      const diff = (path: string) => path.includes("/diff/");
+      if (diff(toLocation.pathname) && !diff(fromLocation.pathname)) return ["push"];
+      if (diff(fromLocation.pathname) && !diff(toLocation.pathname)) return ["pop"];
+      return ["fade"];
+    },
+  },
 });
 
 declare module "@tanstack/react-router" {

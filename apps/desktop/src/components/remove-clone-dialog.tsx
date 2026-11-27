@@ -121,8 +121,9 @@ export function RemoveCloneDialog() {
         <AlertDialogFooter>
           <AlertDialogCancel className="h-8 text-[13px]">Cancel</AlertDialogCancel>
           <AlertDialogAction
+            variant="destructive"
             disabled={!many && dirty > 0 && !force}
-            className="h-8 bg-destructive text-[13px] text-white hover:bg-destructive/90"
+            className="h-8 text-[13px]"
             onClick={() => {
               if (!remove) return;
               const root = remove.root;

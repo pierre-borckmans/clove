@@ -1,9 +1,11 @@
 import { useParams } from "@tanstack/react-router";
-import { Copy, Plus } from "lucide-react";
-import { type ReactNode, useEffect } from "react";
+import { Copy, List, Network, Plus } from "lucide-react";
+import { type ReactNode, useEffect, useState } from "react";
 import { PaneHeader } from "@/components/app-shell";
 import { CloneList, CloneListSkeleton } from "@/components/clone-list";
 import { GoldenCard, GoldenCardSkeleton } from "@/components/golden-card";
+import { RepoGraph } from "@/components/repo-graph";
+import { Segmented } from "@/components/segmented";
 import { Shortcut } from "@/components/shortcut";
 import { RepoMark } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
@@ -12,9 +14,11 @@ import { WorktreeList } from "@/components/worktree-list";
 import { api } from "@/lib/api";
 import { tildify } from "@/lib/format";
 import { copyPath, useClones, useRepo, useStatus, useWorktrees } from "@/lib/queries";
+import { withTransition } from "@/lib/transition";
 import { setUi } from "@/lib/ui";
 
 export function RepoPage() {
+  const [view, setView] = useState<"map" | "list">("map");
   const { repoId } = useParams({ from: "/shell/repo/$repoId" });
   const { repo, isLoading, data: summaries } = useRepo(repoId);
   // As many placeholder rows as the repo has clones, once `repos` knows.
@@ -73,6 +77,18 @@ export function RepoPage() {
           <Copy className="size-3 opacity-0 group-hover:opacity-70" />
         </button>
         <div data-tauri-drag-region className="h-full flex-1" />
+        <Segmented
+          label="Repository view"
+          value={view}
+          transitionName="repo-view-tabs"
+          options={[
+            { value: "list", label: "List", icon: <List /> },
+            { value: "map", label: "Map", icon: <Network /> },
+          ]}
+          // To the map: the map fades itself in, so skip the crossfade (it would
+          // freeze that fade on a blank snapshot). Back to the list: crossfade.
+          onChange={(next) => (next === "map" ? setView(next) : withTransition(() => setView(next)))}
+        />
         <Button
           size="sm"
           className="h-7 gap-1.5 pr-1.5 pl-2.5 text-[12.5px]"
@@ -83,29 +99,34 @@ export function RepoPage() {
           <Shortcut keys="mod+n" className="ml-0.5 [&_kbd]:border-white/20 [&_kbd]:bg-white/15 [&_kbd]:text-white/90" />
         </Button>
       </PaneHeader>
-      <Body
-        golden={status.data ? <GoldenCard status={status.data} /> : <GoldenCardSkeleton />}
-        clones={
-          clones.data ? (
-            <CloneList
-              root={repo.root}
-              clones={clones.data}
-              goldenGeneration={status.data?.golden?.generation ?? null}
-            />
-          ) : (
-            <CloneListSkeleton rows={rows} />
-          )
-        }
-        worktrees={worktrees.data && <WorktreeList root={repo.root} worktrees={worktrees.data} />}
-      />
+      {view === "map" && status.data && clones.data ? (
+        <RepoGraph key={repo.id} status={status.data} clones={clones.data} worktrees={worktrees.data ?? []} />
+      ) : (
+        <Body
+          golden={status.data ? <GoldenCard status={status.data} /> : <GoldenCardSkeleton />}
+          clones={
+            clones.data ? (
+              <CloneList
+                root={repo.root}
+                clones={clones.data}
+                goldenGeneration={status.data?.golden?.generation ?? null}
+              />
+            ) : (
+              <CloneListSkeleton rows={rows} />
+            )
+          }
+          worktrees={worktrees.data && <WorktreeList root={repo.root} worktrees={worktrees.data} />}
+        />
+      )}
     </>
   );
 }
 
 function Body({ golden, clones, worktrees }: { golden: ReactNode; clones: ReactNode; worktrees?: ReactNode }) {
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex max-w-[1080px] flex-col gap-6 px-6 pt-5 pb-24">
+    // A container, so the list can use a wide pane (sidebar collapsed or not).
+    <div className="@container min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex max-w-[1080px] flex-col gap-6 px-6 pt-5 pb-24 @min-[1500px]:max-w-[1440px]">
         {golden}
         {clones}
         {worktrees}

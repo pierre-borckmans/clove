@@ -2,7 +2,7 @@ import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { BrushCleaning, CircleCheck, GitMerge, Loader, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
-import { PaneHeader } from "@/components/app-shell";
+import { PageTitle, PaneHeader } from "@/components/app-shell";
 import { Empty } from "@/components/empty";
 import { RepoMark } from "@/components/sidebar";
 import { Button } from "@/components/ui/button";
@@ -49,7 +49,7 @@ export function CleanupPage() {
   return (
     <>
       <PaneHeader>
-        <h1 className="text-[14px] font-semibold tracking-tight">Cleanup</h1>
+        <PageTitle icon={<BrushCleaning />}>Cleanup</PageTitle>
         <span className="text-[12.5px] text-muted-foreground">
           Clones and git worktrees whose pull request is merged, and leftovers from interrupted runs
         </span>
@@ -162,6 +162,7 @@ function RepoCleanup({ repo, data }: { repo: RepoSummary; data: Cleanup }) {
         <div className="flex-1" />
         {work && (
           <Button
+            variant="destructive"
             size="sm"
             className="h-7 gap-1.5 text-[12.5px]"
             disabled={apply.isPending}

@@ -14,17 +14,20 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   Code,
+  Columns2,
   FileDiff as FileDiffIcon,
   Folder,
   GitBranch,
   LoaderCircle,
   Package as PackageIcon,
+  Rows2,
   TriangleAlert,
   WrapText,
 } from "lucide-react";
 import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PaneHeader } from "@/components/app-shell";
 import { Empty } from "@/components/empty";
+import { Segmented } from "@/components/segmented";
 import { Shortcut } from "@/components/shortcut";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -181,11 +184,12 @@ export function DiffPage() {
           </span>
         )}
         <Segmented
+          label="Diff layout"
           value={prefs.diffStyle}
           onChange={(v) => setPrefs({ diffStyle: v })}
           options={[
-            ["split", "Split"],
-            ["unified", "Unified"],
+            { value: "split", label: "Split", icon: <Columns2 /> },
+            { value: "unified", label: "Unified", icon: <Rows2 /> },
           ]}
         />
         <Tooltip>
@@ -782,34 +786,6 @@ function ListToggle({
         {label} {keys && <Shortcut keys={keys} className="ml-1" />}
       </TooltipContent>
     </Tooltip>
-  );
-}
-
-function Segmented<T extends string>({
-  value,
-  onChange,
-  options,
-}: {
-  value: T;
-  onChange: (v: T) => void;
-  options: [T, string][];
-}) {
-  return (
-    <div className="flex h-7 items-center rounded-md border bg-muted/50 p-0.5 text-[12px]">
-      {options.map(([v, label]) => (
-        <button
-          key={v}
-          type="button"
-          onClick={() => onChange(v)}
-          className={cn(
-            "h-full rounded-[5px] px-2.5 transition-colors",
-            v === value ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
   );
 }
 

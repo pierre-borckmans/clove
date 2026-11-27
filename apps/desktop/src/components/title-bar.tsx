@@ -33,12 +33,16 @@ const PAGES: Record<string, string> = {
  * The window's title bar, always there: where you are on the left, search in
  * the middle, what clove is doing on the right. All of it drags the window.
  */
+/** Words beside a title-bar icon: shown only when the bar has room for them. */
+const WIDE = "hidden @min-[1100px]:inline";
+
 export function TitleBar() {
   const collapsed = usePrefs().sidebarCollapsed;
   return (
     <div
       data-tauri-drag-region
-      className="relative grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-3 pr-3"
+      // A container: in a narrow window the status items fall back to their icons.
+      className="@container relative grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-3 pr-3"
       style={{ height: BAR, paddingLeft: LIGHTS }}
     >
       {/* Stand-ins for the traffic lights when the UI runs in a browser. */}
@@ -68,7 +72,7 @@ export function TitleBar() {
         <span className="flex-1 truncate text-left">Search or run a command</span>
         <Shortcut keys="mod+k" className="[&_kbd]:h-4 [&_kbd]:min-w-4 [&_kbd]:text-[10px]" />
       </button>
-      <div data-tauri-drag-region className="flex items-center justify-end gap-3">
+      <div data-tauri-drag-region className="flex min-w-0 items-center justify-end gap-3 whitespace-nowrap">
         <Upgrade />
         <Running />
         <Service />
@@ -131,11 +135,13 @@ function Running() {
   return (
     <button
       type="button"
+      aria-label={`${running.length} running`}
       onClick={() => setUi({ activity: !getUi().activity })}
-      className="flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-bottle transition-colors hover:bg-bottle-soft"
+      className="flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] text-bottle transition-colors hover:bg-bottle-soft"
     >
       <Loader className="size-3 animate-spin [animation-duration:1.4s]" />
-      {running.length} running
+      {running.length}
+      <span className={WIDE}>running</span>
     </button>
   );
 }
@@ -158,14 +164,15 @@ function Upgrade() {
       <TooltipTrigger asChild>
         <button
           type="button"
+          aria-label={label}
           onClick={() => setUi({ upgrade: true })}
           className={cn(
-            "flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] transition-colors",
+            "flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] transition-colors",
             warn ? "text-amber hover:bg-amber/10" : "text-bottle hover:bg-bottle-soft",
           )}
         >
           <ArrowUpCircle className="size-3.5" />
-          {label}
+          <span className={WIDE}>{label}</span>
         </button>
       </TooltipTrigger>
       <TooltipContent side="bottom">{tip}</TooltipContent>
@@ -181,13 +188,14 @@ function Service() {
       <TooltipTrigger asChild>
         <Link
           to="/settings"
+          aria-label={on ? "Service on" : "Service off"}
           className={cn(
-            "flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] transition-colors hover:bg-foreground/[0.06]",
+            "flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[12px] transition-colors hover:bg-foreground/[0.06]",
             on ? "text-muted-foreground" : "text-amber",
           )}
         >
           <span className={cn("size-1.5 rounded-full", on ? "bg-sage" : "bg-amber")} />
-          {on ? "service on" : "service off"}
+          <span className={WIDE}>{on ? "service on" : "service off"}</span>
         </Link>
       </TooltipTrigger>
       <TooltipContent side="bottom">
@@ -221,7 +229,7 @@ function Version() {
     queryFn: async () => (isTauri ? (await import("@tauri-apps/api/app")).getVersion() : "dev"),
     staleTime: Number.POSITIVE_INFINITY,
   });
-  return data ? <span className="font-mono text-[11px] text-faint">v{data}</span> : null;
+  return data ? <span className="hidden font-mono text-[11px] text-faint @min-[960px]:inline">v{data}</span> : null;
 }
 
 function BarButton({

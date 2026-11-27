@@ -82,7 +82,9 @@ export function AppShell() {
           <Sidebar compact={collapsed} />
         </div>
         <main className="relative mr-2 mb-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[10px] bg-background shadow-[var(--pane-shadow)]">
-          <Outlet />
+          <div className="route-view flex min-h-0 flex-1 flex-col">
+            <Outlet />
+          </div>
           <OpsPanel />
         </main>
       </div>
@@ -127,9 +129,22 @@ function useUpgradeWatch() {
 }
 
 /** A pane header that doubles as the window's drag region. */
+/** A page's title in its header, with the icon its sidebar entry uses. */
+export function PageTitle({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <h1 className="flex items-center gap-2 text-[14px] font-semibold tracking-tight">
+      <span className="flex text-muted-foreground [&_svg]:size-4" aria-hidden="true">
+        {icon}
+      </span>
+      {children}
+    </h1>
+  );
+}
+
 export function PaneHeader({ children }: { children: React.ReactNode }) {
   return (
-    <header data-tauri-drag-region className="flex h-[52px] shrink-0 items-center gap-3 border-b px-5">
+    // .pane-header keeps the header out of screen transitions (styles.css).
+    <header data-tauri-drag-region className="pane-header flex h-[52px] shrink-0 items-center gap-3 border-b px-5">
       {children}
     </header>
   );
