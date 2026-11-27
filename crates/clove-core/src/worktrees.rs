@@ -1033,6 +1033,7 @@ mod tests {
                     issue: None,
                     removing_when_free: false,
                     operation: None,
+                    status_pending: false,
                 })
             })
             .unwrap();
@@ -1072,6 +1073,7 @@ mod tests {
             issue: None,
             removing_when_free: false,
             operation: None,
+            status_pending: false,
         }
     }
 

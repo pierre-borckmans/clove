@@ -1,6 +1,7 @@
 import { ArrowDown, Loader, RefreshCw, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ago, bytes, ms, shortSha } from "@/lib/format";
 import { startOp, useOps } from "@/lib/ops";
@@ -168,6 +169,40 @@ export function GoldenCard({ status }: { status: RepoStatus }) {
               <code className="font-mono">.clove.toml</code>.
             </span>
           )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** The card's frame while the repo's status loads. */
+export function GoldenCardSkeleton() {
+  return (
+    <section aria-busy className="overflow-hidden rounded-xl border bg-card shadow-[0_1px_2px_0_rgb(0_0_0/0.03)]">
+      <div className="flex items-center gap-2.5 border-b px-4 py-2.5">
+        <span className="flex size-6 items-center justify-center rounded-md bg-bottle-soft text-bottle">
+          <Glyph className="size-3.5" mono />
+        </span>
+        <span className="text-[13px] font-medium">Golden image</span>
+        <Skeleton className="h-[18px] w-11 rounded-full" />
+        <div className="flex-1" />
+        <Skeleton className="h-7 w-[84px]" />
+      </div>
+      <div className="grid grid-cols-5 divide-x">
+        {["Commit", "Base", "Behind base", "Built", "Image"].map((label) => (
+          <Stat key={label} label={label}>
+            <Skeleton className="my-[3px] h-3.5 w-20" />
+          </Stat>
+        ))}
+      </div>
+      <div className="border-t px-4 py-3">
+        <div className="mb-2 flex items-baseline justify-between">
+          <span className="text-[12px] text-muted-foreground">Steps</span>
+        </div>
+        <Skeleton className="mb-3 h-1.5 rounded-full" />
+        <div className="flex gap-1.5">
+          <Skeleton className="h-6 w-24" />
+          <Skeleton className="h-6 w-20" />
         </div>
       </div>
     </section>

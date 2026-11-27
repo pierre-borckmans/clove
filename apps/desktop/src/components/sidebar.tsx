@@ -13,11 +13,12 @@ import {
 import { useOps } from "@/lib/ops";
 import { MOD } from "@/lib/platform";
 import { APP_LABELS, EDITORS, setPrefs, TERMINALS, usePrefs } from "@/lib/prefs";
-import { useHistory, useInstalledApps, useRepos, useService } from "@/lib/queries";
-import type { RepoSummary } from "@/lib/types";
+import { useHistory, useInstalledApps, useRepoList, useRepos, useService } from "@/lib/queries";
+import type { RepoRef, RepoSummary } from "@/lib/types";
 import { getUi, setUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 import { Shortcut } from "./shortcut";
+import { Skeleton } from "./ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 /** Widths of the sidebar, open and collapsed to a rail of icons. */
@@ -31,6 +32,9 @@ export const RAIL = 56;
  */
 export function Sidebar({ compact = false }: { compact?: boolean }) {
   const { data: repos } = useRepos();
+  // Names from the quick list until `repos` has each one's state.
+  const { data: list } = useRepoList();
+  const rows: (RepoRef & Partial<RepoSummary>)[] = repos ?? list ?? [];
   const ops = useOps();
   const params = useParams({ strict: false }) as { repoId?: string };
   const path = useRouterState({ select: (s) => s.location.pathname });
@@ -65,7 +69,7 @@ export function Sidebar({ compact = false }: { compact?: boolean }) {
           </button>
         </div>
         <div className="flex flex-col transition-[gap] duration-200 ease-out" style={{ gap: compact ? 4 : 1 }}>
-          {repos?.map((r, i) => {
+          {rows.map((r, i) => {
             const busy = running.some((o) => o.req.root === r.root) || r.refreshing;
             const active = params.repoId === r.id;
             return (
@@ -76,7 +80,7 @@ export function Sidebar({ compact = false }: { compact?: boolean }) {
                 link={{ to: "/repo/$repoId", params: { repoId: r.id } }}
                 icon={<RepoMark name={r.name} active={active} />}
                 dot={
-                  busy
+                  busy || r.generation === undefined
                     ? null
                     : r.generation === null
                       ? undefined
@@ -92,7 +96,7 @@ export function Sidebar({ compact = false }: { compact?: boolean }) {
                 tip={
                   <>
                     {r.name}
-                    {r.clones > 0 && <span className="ml-1.5 text-faint">{r.clones} clones</span>}
+                    {!!r.clones && <span className="ml-1.5 text-faint">{r.clones} clones</span>}
                     {i < 9 && <Shortcut keys={`mod+${i + 1}`} className="ml-1.5" />}
                   </>
                 }
@@ -100,8 +104,10 @@ export function Sidebar({ compact = false }: { compact?: boolean }) {
                   <>
                     {busy ? (
                       <Loader className="size-3 animate-spin text-bottle [animation-duration:1.4s]" />
+                    ) : r.generation === undefined ? (
+                      <Skeleton className="h-2 w-5 group-hover:hidden" />
                     ) : (
-                      <RepoState repo={r} />
+                      <RepoState repo={r as RepoSummary} />
                     )}
                     {!busy && i < 9 && (
                       <span className="hidden font-mono text-[11px] text-faint group-hover:inline">

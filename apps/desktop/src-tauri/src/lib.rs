@@ -160,6 +160,8 @@ fn adopt_login_path() {
 
 pub fn run() {
     adopt_login_path();
+    // Last known clone statuses at once; git is asked in the background.
+    clove_core::memo::serve_saved(true);
     let builder = tauri::Builder::default();
     // macOS keeps one instance itself; on Linux, launching the app again
     // brings the running one forward (its window may be hidden in the tray).
@@ -173,6 +175,7 @@ pub fn run() {
         .manage(PopoverState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::repos,
+            commands::repo_list,
             commands::repo_status,
             commands::forget_cache,
             commands::clones,

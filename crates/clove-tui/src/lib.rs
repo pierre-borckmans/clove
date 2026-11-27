@@ -42,6 +42,8 @@ pub fn run(start_dir: &Path) -> Result<()> {
     if !std::io::stderr().is_terminal() {
         anyhow::bail!("clove's terminal UI needs a terminal");
     }
+    // Last known clone statuses at once; git is asked in the background.
+    clove_core::memo::serve_saved(true);
     let (repos, idx, notice) = worker::discover(start_dir);
     let mut app = App::new(repos, idx);
     app.start_dir = start_dir.to_path_buf();

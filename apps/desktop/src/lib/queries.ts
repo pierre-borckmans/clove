@@ -4,10 +4,12 @@ import { toast } from "sonner";
 import { api } from "./api";
 import { listen } from "./bridge";
 import { APP_LABELS } from "./prefs";
-import type { AppId, Layer, Removed } from "./types";
+import type { AppId, Layer, Removed, RepoRef } from "./types";
 
 export const keys = {
   repos: ["repos"] as const,
+  /** Under `repos`, so whatever refreshes the repos refreshes this too. */
+  repoList: ["repos", "list"] as const,
   status: (root: string) => ["status", root] as const,
   clones: (root: string) => ["clones", root] as const,
   worktrees: (root: string) => ["worktrees", root] as const,
@@ -35,6 +37,7 @@ export const keys = {
  * catches the rest, like a clone's working tree getting dirty.
  */
 export const POLL_MS = 15_000;
+const PENDING_POLL_MS = 500;
 
 /** Refetches repo data as soon as the backend sees it change on disk. */
 export function useRepoChanges() {
@@ -75,10 +78,20 @@ export function useRepos() {
   return useQuery({ queryKey: keys.repos, queryFn: api.repos, refetchInterval: POLL_MS });
 }
 
-/** The repo for a route id, from the repos list. */
+/**
+ * Known repos without their status. It answers in a millisecond where
+ * `useRepos` runs git in every repo, so pages and the sidebar draw from it first.
+ */
+export function useRepoList() {
+  return useQuery({ queryKey: keys.repoList, queryFn: api.repoList, refetchInterval: POLL_MS });
+}
+
+/** The repo for a route id: from the repos list, or the quick list until that loads. */
 export function useRepo(id: string | undefined) {
   const q = useRepos();
-  return { ...q, repo: q.data?.find((r) => r.id === id) };
+  const list = useRepoList();
+  const repo: RepoRef | undefined = q.data?.find((r) => r.id === id) ?? list.data?.find((r) => r.id === id);
+  return { ...q, isLoading: q.isLoading || list.isLoading, repo };
 }
 
 export function useStatus(root: string | undefined) {
@@ -95,7 +108,8 @@ export function useClones(root: string | undefined) {
     queryKey: keys.clones(root ?? ""),
     queryFn: () => api.clones(root as string, true),
     enabled: !!root,
-    refetchInterval: POLL_MS,
+    // Statuses shown from the saved copy: pick up git's answers soon.
+    refetchInterval: (q) => (q.state.data?.some((c) => c.status_pending) ? PENDING_POLL_MS : POLL_MS),
   });
 }
 

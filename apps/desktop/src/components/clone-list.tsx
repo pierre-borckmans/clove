@@ -29,13 +29,23 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useHotkey } from "@/hooks/use-hotkey";
 import { bytes, since } from "@/lib/format";
 import { resolveInTerminal, resolverName, startOp, useOps } from "@/lib/ops";
 import { FILE_MANAGER, isMac } from "@/lib/platform";
 import { APP_LABELS, usePrefs } from "@/lib/prefs";
-import { copyPath, copyText, openIn, useMountToggle, usePrCheck, usePrs, useRepoConfig, useRepos } from "@/lib/queries";
+import {
+  copyPath,
+  copyText,
+  openIn,
+  useMountToggle,
+  usePrCheck,
+  usePrs,
+  useRepoConfig,
+  useRepoList,
+} from "@/lib/queries";
 import type { CloneInfo, MergeCheck } from "@/lib/types";
 import { setUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
@@ -221,6 +231,46 @@ export function CloneList({
         <Hint keys="c" label="copy path" />
         <Hint keys="m" label="mount" />
         <Hint keys="mod+backspace" label="remove" />
+      </div>
+    </section>
+  );
+}
+
+/** The list's frame while clones load: their status runs git in every clone. */
+export function CloneListSkeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <section aria-busy>
+      <div className="mb-2 flex h-7 items-center gap-3">
+        <h2 className="text-[13px] font-medium">Clones</h2>
+        <Skeleton className="h-3 w-20" />
+      </div>
+      <div className="overflow-hidden rounded-xl border bg-card">
+        <div
+          className={cn(
+            "grid items-center gap-x-4 border-b bg-muted/40 px-4 py-1.5 text-[11.5px] text-muted-foreground",
+            COLS,
+          )}
+        >
+          <span />
+          <span>Name</span>
+          <span>Changes</span>
+          <span>Created</span>
+          <span className="text-right">Size</span>
+          <span />
+        </div>
+        {Array.from({ length: rows }, (_, i) => (
+          <div key={i} className={cn("grid h-[52px] items-center gap-x-4 border-b px-4 last:border-b-0", COLS)}>
+            <Skeleton className="size-2 rounded-full" />
+            <div className="flex flex-col gap-1.5">
+              <Skeleton className="h-3.5 w-40" />
+              <Skeleton className="h-3 w-28" />
+            </div>
+            <Skeleton className="h-3 w-24" />
+            <Skeleton className="h-3 w-14" />
+            <Skeleton className="ml-auto h-3 w-12" />
+            <span />
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -576,7 +626,7 @@ export function CloneMenu({ clone: c, root, children }: { clone: CloneInfo; root
 /** Opens a clone's changes in the diff view. */
 export function useOpenDiff(root: string) {
   const navigate = useNavigate();
-  const repoId = useRepos().data?.find((r) => r.root === root)?.id;
+  const repoId = useRepoList().data?.find((r) => r.root === root)?.id;
   return (c: CloneInfo) => {
     if (repoId && c.mounted) void navigate({ to: "/repo/$repoId/diff/$clone", params: { repoId, clone: c.name } });
   };

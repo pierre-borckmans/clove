@@ -56,6 +56,7 @@ fn clone(name: &str, branch: Option<&str>, mounted: bool) -> CloneInfo {
         issue: None,
         removing_when_free: false,
         operation: None,
+        status_pending: false,
     }
 }
 
