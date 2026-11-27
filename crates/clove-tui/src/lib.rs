@@ -6,6 +6,7 @@
 
 mod add_repo;
 mod app;
+mod diffview;
 mod fmt;
 mod model;
 mod panes;
@@ -49,6 +50,8 @@ pub fn run(start_dir: &Path) -> Result<()> {
     app.now_unix = clove_core::util::now_unix();
 
     let (tx, rx) = mpsc::channel::<Msg>();
+    // Before the screen is taken over: diff tints follow the terminal's background.
+    theme::detect_background();
     let mut term = Term::enter()?;
     let start = Instant::now();
     let mut effects = vec![];
@@ -201,6 +204,7 @@ fn perform(e: Effect, app: &mut App, tx: &mpsc::Sender<Msg>, term: &mut Term) {
             }
             app.loaded_ms = None;
         }
+        Effect::LoadDiff { root, name } => worker::load_diff(tx.clone(), root, name),
         Effect::FindRepos => add_repo::find(tx.clone()),
         Effect::PreviewInit(path) => add_repo::preview(tx.clone(), path),
         Effect::SetConfig(w) => match worker::write_config(&w) {

@@ -21,6 +21,7 @@ pub mod history;
 pub mod memo;
 pub mod names;
 pub mod ops;
+pub mod patch;
 pub mod preview;
 pub mod prune;
 pub mod repo;

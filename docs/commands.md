@@ -15,6 +15,8 @@ clove adopt ../old-worktree      # turn a plain git worktree into a clone on its
 clove ls                         # clones, branch, dirty/ahead/behind, own disk
 clove cd feat-login              # jump to a clone; `clove cd` alone goes back to the main checkout
 clove run feat-login -- pnpm test   # run inside the clone's dev environment
+clove diff                       # in a clone: its changes against the base, committed or not
+clove diff feat-login --packages # changed lines per package (--stat: per file)
 clove update                     # in a clone: rebase onto the latest base, rerun changed setup steps
 clove setup                      # in a clone, after a pull: rerun the setup steps that changed
 
@@ -43,7 +45,8 @@ Every feature is in three places:
 - **The terminal UI:** `clove` on its own (or `clove tui`), with mouse support.
   - A sidebar lists every repo, its clones, and whether its golden image is fresh.
   - `s` settings (Enter edits or toggles, ←/→ picks the file it saves to, `x` resets) · `g` clean up · `L` removal history · `A` add a repo · Enter quits into the selected clone.
-- **The desktop app** (macOS and Linux): the same sidebar, settings, cleanup and history, plus a popover listing every clone. On macOS it opens from the menu bar; on Linux from the tray icon's menu ("Quick open…").
+  - `v` shows a clone's changes: a file list (`g` groups it by package) beside a split or unified diff (`s`), syntax-highlighted, with changed words marked. Lockfiles, generated and large files start folded (`z` opens one); `e` opens a file in `$EDITOR`.
+- **The desktop app** (macOS and Linux): the same sidebar, settings, cleanup and history, plus a popover listing every clone. `D` on a clone opens the same diff view, built on [@pierre/diffs](https://diffs.com). On macOS it opens from the menu bar; on Linux from the tray icon's menu ("Quick open…").
 
 ## Updating a clone
 
