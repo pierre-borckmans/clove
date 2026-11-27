@@ -443,6 +443,10 @@ pub struct Upgraded {
     pub to: Option<String>,
     /// The app was upgraded too.
     pub app: bool,
+    /// The newer release whose app the tap doesn't have yet (Apple still
+    /// notarizing it), when that left the app behind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_pending: Option<String>,
 }
 
 /// Upgrades the Homebrew installs: refreshes our tap only (not every tap,
@@ -458,7 +462,14 @@ pub fn upgrade(r: &dyn Reporter, opts: &UpgradeOptions) -> Result<Upgraded> {
     let res = upgrade_inner(r, app_quit);
     let path = cache_path();
     let mut c = load_cache(&path);
-    c.upgrade_error = res.as_ref().err().map(|e| format!("{e:#}"));
+    c.upgrade_error = match &res {
+        Err(e) => Some(format!("{e:#}")),
+        // Shown by the relaunched app, which is still the old one.
+        Ok(u) => u
+            .app_pending
+            .as_ref()
+            .map(|v| format!("the CLI is upgraded; the app's v{v} isn't in the tap yet (Apple is still notarizing it): update again later")),
+    };
     let _ = save_cache(&path, &c);
     if app_quit.is_some() {
         // Even after a failure: the old app opens and shows what went wrong.
@@ -553,10 +564,29 @@ fn upgrade_inner(r: &dyn Reporter, app_quit: Option<bool>) -> Result<Upgraded> {
             app = true;
         }
     }
+    // The formula lands minutes after a release, the cask only once Apple
+    // has notarized the app: say so rather than claim it's up to date.
+    let app_pending = cask
+        .then(|| {
+            let have = crate::util::run(&mut brew_cmd(&["list", "--cask", "--versions", CASK])).ok()?;
+            let have = have.split_whitespace().nth(1)?.to_string();
+            let want = latest.latest.as_ref()?.version.clone();
+            newer(&want, &have).then_some(want)
+        })
+        .flatten();
+    if let Some(v) = &app_pending {
+        app = false;
+        r.event(Event::Warn {
+            message: format!(
+                "the app's v{v} isn't in the tap yet (Apple is still notarizing it): update again later"
+            ),
+        });
+    }
     Ok(Upgraded {
         from: VERSION.to_string(),
         to: cli_version(),
         app,
+        app_pending,
     })
 }
 

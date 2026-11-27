@@ -2568,6 +2568,7 @@ fn a_newer_clove_shows_in_the_footer_and_k_upgrades() {
             from: "0.1.0".into(),
             to: Some("0.9.0".into()),
             app: false,
+            app_pending: None,
         })),
     ));
     a.modal = None;

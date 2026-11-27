@@ -1168,7 +1168,7 @@ fn cmd_upgrade(
         Some(to) if upgrade::newer(to, &up.from) => {
             eprintln!("{} clove {} → {to}", paint(GREEN, "✓"), up.from);
         }
-        Some(to) => eprintln!("{} clove {to} is the latest in the tap", paint(GREEN, "✓")),
+        Some(to) => eprintln!("{} clove {to}: no newer CLI in the tap", paint(GREEN, "✓")),
         None => eprintln!("{} upgraded", paint(GREEN, "✓")),
     }
     if up.app && relaunch_app.is_none() {
