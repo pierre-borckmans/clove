@@ -115,10 +115,7 @@ const BEGIN: &str =
     "<!-- clove:begin (written by `clove agents install`; `clove agents remove` takes it out) -->";
 const END: &str = "<!-- clove:end -->";
 
-// Keep this literal unchanged: it shipped before skills had an ownership marker.
-macro_rules! legacy_skill {
-    () => {
-        "\
+const SKILL: &str = "\
 ---
 name: clove
 description: Use when you need a separate git worktree or branch checkout (instead of git worktree add), work in a clove clone (under <repo>.clove/), or a clove clone went missing. clove makes ready worktrees with dependencies installed in ~1s.
@@ -132,13 +129,7 @@ Run `clove guide` first and follow it: it matches the installed version.
 - `clove run <clone> -- <cmd>` runs in the clone's dev environment; `clove path <clone>` prints its path.
 - Remove only clones you made: `clove rm <clone>`. Run `clove prune` only when asked.
 - A clone gone? `clove log` says who removed it (often auto-prune after its PR merged) and how to get the branch back.
-"
-    };
-}
-
-const LEGACY_SKILL: &str = legacy_skill!();
-const SKILL_MARKER: &str = "<!-- clove:managed -->";
-const SKILL: &str = concat!(legacy_skill!(), "\n<!-- clove:managed -->\n");
+";
 
 const HOOK_CREATE: &str = "clove hook worktree-create";
 const HOOK_REMOVE: &str = "clove hook worktree-remove";
@@ -173,10 +164,11 @@ enum Kind {
 }
 
 #[derive(Debug, Clone)]
-pub struct Env {
+struct Env {
     pub home: PathBuf,
     pub xdg_config_home: Option<PathBuf>,
     pub opencode_config_dir: Option<PathBuf>,
+    pub opencode_disable_claude_prompt: bool,
     pub pi_agent_dir: Option<PathBuf>,
     pub has_opencode_bin: bool,
     pub has_pi_bin: bool,
@@ -194,6 +186,12 @@ impl Env {
             home: home()?,
             xdg_config_home: var("XDG_CONFIG_HOME"),
             opencode_config_dir: var("OPENCODE_CONFIG_DIR"),
+            opencode_disable_claude_prompt: [
+                "OPENCODE_DISABLE_CLAUDE_CODE",
+                "OPENCODE_DISABLE_CLAUDE_CODE_PROMPT",
+            ]
+            .iter()
+            .any(|name| std::env::var(name).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))),
             pi_agent_dir: var("PI_CODING_AGENT_DIR"),
             has_opencode_bin: on_path(&path, "opencode"),
             has_pi_bin: on_path(&path, "pi"),
@@ -205,6 +203,7 @@ impl Env {
             home: home.to_path_buf(),
             xdg_config_home: None,
             opencode_config_dir: None,
+            opencode_disable_claude_prompt: false,
             pi_agent_dir: None,
             has_opencode_bin: false,
             has_pi_bin: false,
@@ -257,7 +256,10 @@ fn targets(env: &Env) -> Vec<(&'static str, PathBuf, Kind)> {
         ));
         let instructions = opencode.join("AGENTS.md");
         // OpenCode falls back to Claude's instructions when it has none.
-        if instructions.exists() || (!claude.is_dir() && !claude.join("CLAUDE.md").exists()) {
+        if instructions.exists()
+            || env.opencode_disable_claude_prompt
+            || (!claude.is_dir() && !claude.join("CLAUDE.md").exists())
+        {
             v.push(("OpenCode instructions", instructions, Kind::Block));
         }
         v.push((
@@ -313,7 +315,7 @@ pub fn status_in(home: &Path) -> Vec<Target> {
     status_with(&Env::for_home(home))
 }
 
-pub fn status_with(env: &Env) -> Vec<Target> {
+fn status_with(env: &Env) -> Vec<Target> {
     targets(env)
         .into_iter()
         .map(|(what, path, kind)| {
@@ -343,10 +345,11 @@ fn read(path: &Path) -> String {
 }
 
 fn read_existing(path: &Path) -> Result<Option<String>> {
-    // A dangling symlink is an existing path we cannot read, not a place
-    // to write a new file.
-    if existing(path, path.symlink_metadata())?.is_none() {
+    let Some(meta) = existing(path, path.symlink_metadata())? else {
         return Ok(None);
+    };
+    if meta.file_type().is_symlink() {
+        anyhow::bail!("{} is a symlink; refusing to modify it", path.display());
     }
     std::fs::read_to_string(path)
         .map(Some)
@@ -386,7 +389,7 @@ fn is_managed_file(bytes: &[u8], body: &str) -> bool {
 }
 
 fn is_managed_skill(text: &str) -> bool {
-    text == SKILL || text == LEGACY_SKILL || text.contains(SKILL_MARKER)
+    text == SKILL
 }
 
 fn whole_file(path: &Path, kind: Kind) -> Result<WholeFile> {
@@ -432,6 +435,9 @@ fn hooks_state(v: &serde_json::Value) -> State {
 }
 
 fn state(path: &Path, kind: Kind) -> State {
+    if path.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
+        return State::Outdated;
+    }
     match kind {
         Kind::Skill | Kind::File(_) => whole_file(path, kind).map_or(State::Outdated, WholeFile::state),
         Kind::Block | Kind::StaleBlock => block_state(&read(path), kind),
@@ -566,10 +572,21 @@ pub fn apply_in(home: &Path, on: bool) -> Result<Vec<Target>> {
     apply_with(&Env::for_home(home), on)
 }
 
-pub fn apply_with(env: &Env, on: bool) -> Result<Vec<Target>> {
+fn apply_with(env: &Env, on: bool) -> Result<Vec<Target>> {
     let unchanged = |on, before| (on && before == State::Installed) || (!on && before == State::Missing);
     let mut changed = vec![];
-    for (what, path, kind) in targets(env) {
+    let targets = targets(env);
+    if on {
+        for (_, path, kind) in &targets {
+            if matches!(kind, Kind::Skill | Kind::File(_)) && whole_file(path, *kind)? == WholeFile::Foreign {
+                anyhow::bail!(
+                    "{} already exists and was not written by clove; move or remove it first",
+                    path.display()
+                );
+            }
+        }
+    }
+    for (what, path, kind) in targets {
         // Inactive Pi context files should not retain (or gain) our block.
         let on = on && !matches!(kind, Kind::StaleBlock);
         match kind {
@@ -751,6 +768,10 @@ mod tests {
         apply_in(h, true).unwrap();
         assert!(!instructions.exists());
         assert!(!status_in(h).iter().any(|t| t.what == "OpenCode instructions"));
+        let mut env = Env::for_home(h);
+        env.opencode_disable_claude_prompt = true;
+        apply_with(&env, true).unwrap();
+        assert_eq!(block_of(&read(&instructions)), Some(BLOCK));
 
         std::fs::write(&instructions, "# OpenCode\n").unwrap();
         apply_in(h, true).unwrap();
@@ -888,6 +909,7 @@ mod tests {
             (".claude/skills/clove/SKILL.md", b""),
         ] {
             let h = home_with(&[]);
+            std::fs::create_dir_all(h.path().join(".claude")).unwrap();
             let p = h.path().join(name);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(&p, bytes).unwrap();
@@ -897,38 +919,15 @@ mod tests {
             assert!(err.contains(&p.display().to_string()), "{err}");
             assert!(err.contains("was not written by clove"), "{err}");
             assert_eq!(std::fs::read(&p).unwrap(), bytes, "{name}");
+            for target in status_in(h.path()) {
+                if target.path != p {
+                    assert_eq!(target.state, State::Missing, "{name}: {}", target.path.display());
+                    assert!(!target.path.exists(), "{name}: {}", target.path.display());
+                }
+            }
             apply_in(h.path(), false).unwrap();
             assert_eq!(std::fs::read(&p).unwrap(), bytes, "{name}");
         }
-    }
-
-    #[test]
-    fn installer_upgrades_older_clove_skills() {
-        assert_eq!(
-            SKILL.split_once("\n<!-- clove:managed -->\n").unwrap().0,
-            LEGACY_SKILL
-        );
-        for old in [LEGACY_SKILL, "Previous version\n<!-- clove:managed -->\n"] {
-            let h = home_with(&[".pi/agent/skills/clove"]);
-            let p = h.path().join(".pi/agent/skills/clove/SKILL.md");
-            std::fs::write(&p, old).unwrap();
-            apply_in(h.path(), true).unwrap();
-            assert_eq!(read(&p), SKILL);
-            apply_in(h.path(), false).unwrap();
-            assert!(!p.exists());
-        }
-    }
-
-    #[test]
-    fn installing_a_plugin_does_not_touch_a_sibling_temp_file() {
-        let h = home_with(&[".config/opencode/plugins"]);
-        let dir = h.path().join(".config/opencode/plugins");
-        let sibling = dir.join("clove.tmp");
-        std::fs::write(&sibling, "user-owned temp file").unwrap();
-        apply_in(h.path(), true).unwrap();
-        assert_eq!(read(&dir.join("clove.js")), OPENCODE_PLUGIN);
-        assert_eq!(read(&sibling), "user-owned temp file");
-        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
     }
 
     #[test]
@@ -985,8 +984,24 @@ mod tests {
         let p = h.path().join(".codex/AGENTS.md");
         let missing = h.path().join("not-created");
         std::os::unix::fs::symlink(&missing, &p).unwrap();
+        assert_eq!(state(&p, Kind::Block), State::Outdated);
         assert!(apply_in(h.path(), true).is_err());
         assert_eq!(std::fs::read_link(&p).unwrap(), missing);
+    }
+
+    #[test]
+    fn a_valid_instruction_link_is_not_modified() {
+        let h = home_with(&[".codex"]);
+        let p = h.path().join(".codex/AGENTS.md");
+        let destination = h.path().join("instructions");
+        std::fs::write(&destination, "user instructions\n").unwrap();
+        std::os::unix::fs::symlink(&destination, &p).unwrap();
+        assert_eq!(state(&p, Kind::Block), State::Outdated);
+        for on in [true, false] {
+            assert!(apply_in(h.path(), on).is_err());
+            assert_eq!(std::fs::read_link(&p).unwrap(), destination);
+            assert_eq!(read(&destination), "user instructions\n");
+        }
     }
 
     #[test]

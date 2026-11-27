@@ -3266,11 +3266,11 @@ fn settings_lines(app: &App, iw: usize) -> SettingsLayout {
             match state {
                 State::Installed => vec![
                     Span::styled("● on   ", fg(SAGE)),
-                    Span::styled("Claude Code, Codex, OpenCode and Pi use clove", muted()),
+                    Span::styled("installed coding agents use clove for worktrees", muted()),
                 ],
                 State::Outdated => vec![
                     Span::styled("◐ old  ", fg(AMBER)),
-                    Span::styled("instructions from an older clove; Enter updates them", muted()),
+                    Span::styled("agent setup needs attention; Enter updates it", muted()),
                 ],
                 State::Missing => vec![
                     Span::styled("○ off  ", muted()),

@@ -4,6 +4,7 @@
 
 #![cfg(target_os = "macos")]
 
+use clove_core::opencode::{WorktreeEntry, list_worktrees};
 use clove_core::{Clove, Event, NewOptions, RefreshOptions, RemoveOptions, Silent, Verdict};
 use std::path::Path;
 use std::process::Command;
@@ -84,9 +85,10 @@ fn full_lifecycle() {
     // SAFETY: single-threaded at this point; the only test in this binary.
     unsafe {
         std::env::set_var("CLOVE_HOME", t.join("state"));
-        std::env::set_var("CLOVE_CLONE_ROOT", t.join("clones"));
+        std::env::set_var("CLOVE_CLONE_ROOT", t.join("app/clones"));
         std::env::set_var("CLOVE_CONFIG", t.join("no-user-config.toml"));
         std::env::set_var("GIT_CONFIG_GLOBAL", "/dev/null");
+        std::env::set_var("GIT_DISCOVERY_ACROSS_FILESYSTEM", "1");
         std::env::set_var("GIT_AUTHOR_NAME", "t");
         std::env::set_var("GIT_AUTHOR_EMAIL", "t@t");
         std::env::set_var("GIT_COMMITTER_NAME", "t");
@@ -99,7 +101,7 @@ fn full_lifecycle() {
     let seed = t.join("seed");
     sh(&t, &format!("git clone -q {} seed", remote.display()));
     std::fs::write(seed.join(".clove.toml"), CONFIG).unwrap();
-    std::fs::write(seed.join(".gitignore"), "deps/\n.env\n").unwrap();
+    std::fs::write(seed.join(".gitignore"), "deps/\n.env\nclones/\n").unwrap();
     std::fs::write(seed.join("lock.txt"), "v1\n").unwrap();
     std::fs::write(seed.join("app.txt"), "hello\n").unwrap();
     sh(
@@ -154,24 +156,32 @@ fn full_lifecycle() {
     assert_eq!(g.copied, vec![".env".to_string()]);
     assert!(!c.freshness().unwrap().unwrap().stale, "fresh right after init");
 
+    // A broken snapshot fails after reserving the clone and copying its image.
+    let snapshot_head = c.golden_gen_dir(g.generation).join("HEAD");
+    let saved_head = snapshot_head.with_extension("saved");
+    std::fs::rename(&snapshot_head, &saved_head).unwrap();
+    let result = c.new_clone_with_request(
+        &NewOptions {
+            name: Some("broken-snapshot".into()),
+            ..Default::default()
+        },
+        Some("broken-snapshot-request"),
+        &Silent,
+    );
+    std::fs::rename(&saved_head, &snapshot_head).unwrap();
+    assert!(result.unwrap_err().to_string().contains("copy HEAD from"));
+    assert!(!c.clone_dir("broken-snapshot").exists());
+    assert!(!c.clone_mount("broken-snapshot").exists());
+
     // new: O(1) clone, setup skipped because lock.txt is unchanged
     let start = Instant::now();
     let a = c
-        .new_clone_with_start(
+        .new_clone(
             &NewOptions {
                 branch: Some("feat/a".into()),
                 ..Default::default()
             },
             &Silent,
-            Some("first-worktree-request"),
-            |name| {
-                assert_eq!(name, "feat-a");
-                assert_eq!(std::fs::read_dir(c.clone_dir(name)).unwrap().count(), 1);
-                assert_eq!(
-                    std::fs::read_to_string(c.clone_dir(name).join(".request")).unwrap(),
-                    "first-worktree-request"
-                );
-            },
         )
         .expect("new a");
     let took = start.elapsed();
@@ -179,19 +189,13 @@ fn full_lifecycle() {
     assert_eq!(a.name, "feat-a");
     assert!(a.mounted);
     assert_eq!(a.branch.as_deref(), Some("feat/a"));
-    assert_eq!(
-        std::fs::read_to_string(c.clone_dir(&a.name).join(".request")).unwrap(),
-        "first-worktree-request"
-    );
     assert!(
-        c.new_clone_with_start(
+        c.new_clone(
             &NewOptions {
                 branch: Some("feat/a".into()),
                 ..Default::default()
             },
             &Silent,
-            None,
-            |_| panic!("must not announce a name reserved by another clone"),
         )
         .is_err()
     );
@@ -201,14 +205,41 @@ fn full_lifecycle() {
     );
     assert!(!a.path.join("deps/setup-ran").exists(), "setup should be skipped");
     assert_eq!(git(&a.path, &["status", "--porcelain"]), "", "clone starts clean");
+    let root_entry = WorktreeEntry {
+        directory: root.clone(),
+        kind: "root",
+    };
+    assert_eq!(
+        list_worktrees(&root).unwrap(),
+        [
+            root_entry.clone(),
+            WorktreeEntry {
+                directory: a.path.clone(),
+                kind: "worktree",
+            },
+        ]
+    );
     c.require_clean_clone(&a.name).unwrap();
     let link = a.path.join(".git");
     let gitfile = std::fs::read(&link).unwrap();
+    std::fs::remove_file(&link).unwrap();
+    // Git finds the clean parent repo, even though this is a different checkout.
+    assert_eq!(
+        git(&a.path, &["rev-parse", "--show-toplevel"]),
+        root.to_str().unwrap()
+    );
+    assert_eq!(git(&a.path, &["status", "--porcelain"]), "");
+    let err = c.require_clean_clone(&a.name).unwrap_err();
+    assert!(err.to_string().contains("cannot safely inspect"));
+    assert!(!format!("{err:#}").contains("uncommitted changes"));
     std::fs::write(&link, "gitdir: missing\n").unwrap();
     let err = c.require_clean_clone(&a.name).unwrap_err();
-    assert!(err.to_string().contains("inspect git status in `feat-a`"));
+    assert!(err.to_string().contains("cannot safely inspect"));
     assert!(!format!("{err:#}").contains("uncommitted changes"));
     std::fs::write(&link, gitfile).unwrap();
+    c.unmount(&a.name, false).unwrap();
+    assert_eq!(list_worktrees(&root).unwrap(), [root_entry]);
+    c.mount(&a.name).unwrap();
     assert!(git(&root, &["worktree", "list"]).contains(&a.path.display().to_string()));
     let clone_ms = a.timings.iter().find(|t| t.step == "clone image").unwrap().ms;
     assert!(clone_ms < 1000.0, "clone image took {clone_ms}ms");

@@ -136,9 +136,9 @@ function AgentsRow() {
           />
           <span className="text-[13px] text-muted-foreground">
             {state === "installed"
-              ? "Claude Code, Codex, OpenCode and Pi use clove for worktrees."
+              ? "Installed coding agents use clove for worktrees."
               : state === "outdated"
-                ? "Instructions from an older clove. Switch on to update them."
+                ? "Agent setup is outdated or needs attention. Switch on to update."
                 : "Off. Agents use git worktree add and don't know clove."}
           </span>
           {state === "outdated" && (
@@ -154,11 +154,8 @@ function AgentsRow() {
           )}
         </div>
         <span className="text-[12px] text-faint">
-          Adds skills and edits global instructions in <Mono className="text-faint">~/.claude/CLAUDE.md</Mono>,{" "}
-          <Mono className="text-faint">~/.codex/AGENTS.md</Mono>,{" "}
-          <Mono className="text-faint">~/.config/opencode/AGENTS.md</Mono> and{" "}
-          <Mono className="text-faint">~/.pi/agent/AGENTS.md</Mono>, plus Claude Code's worktree hooks, the OpenCode
-          plugin and the Pi extension. Same as <Mono className="text-faint">clove agents install</Mono>.
+          Configures installed coding agents (Claude Code, Codex, OpenCode, Pi) with skills, global instructions, and
+          hooks where supported. Same as <Mono className="text-faint">clove agents install</Mono>.
         </span>
       </div>
     </Row>

@@ -19,6 +19,7 @@ pub mod git;
 pub mod history;
 pub mod memo;
 pub mod names;
+pub mod opencode;
 pub mod ops;
 pub mod preview;
 pub mod prune;

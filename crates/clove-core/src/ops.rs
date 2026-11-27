@@ -429,12 +429,7 @@ impl Clove {
                 store,
                 armed: true,
             };
-            self.write_admin(
-                &record.golden_admin,
-                &wt,
-                &cur_dir,
-                "clove golden image (detached between refreshes)",
-            )?;
+            self.restore_golden_admin(&record.golden_admin, &wt, &cur_dir)?;
             self.fetch_base(r, &mut timings, &self.config.base, Some(self.config.fetch))?;
             timed(r, &mut timings, "checkout", || {
                 git::run_ok(
@@ -460,12 +455,7 @@ impl Clove {
             Err(e) => {
                 let _ = store.golden_drop(self, next);
                 let _ = std::fs::remove_dir_all(&next_dir);
-                let _ = self.write_admin(
-                    &record.golden_admin,
-                    &wt,
-                    &cur_dir,
-                    "clove golden image (detached between refreshes)",
-                );
+                let _ = self.restore_golden_admin(&record.golden_admin, &wt, &cur_dir);
                 Err(e)
             }
         }
@@ -652,18 +642,15 @@ impl Clove {
     /// Creates a clone: O(1) image copy, mount, git registration, branch checkout,
     /// then only the setup steps whose inputs changed since the golden commit.
     pub fn new_clone(&self, opts: &NewOptions, r: &dyn Reporter) -> Result<CloneInfo> {
-        self.new_clone_with_start(opts, r, None, |_| {})
+        self.new_clone_with_request(opts, None, r)
     }
 
-    /// Like `new_clone`, with a notification after reserving the name but
-    /// before creating its image. A request ID can identify the reservation
-    /// even if the caller never receives the notification or output.
-    pub fn new_clone_with_start(
+    /// Like `new_clone`, with an optional request ID for cancellation and rollback.
+    pub fn new_clone_with_request(
         &self,
         opts: &NewOptions,
-        r: &dyn Reporter,
         request_id: Option<&str>,
-        on_start: impl FnOnce(&str),
+        r: &dyn Reporter,
     ) -> Result<CloneInfo> {
         let started = std::time::Instant::now();
         let record = self.require_record()?;
@@ -705,6 +692,10 @@ impl Clove {
         if self.clone_meta(&name)?.is_some() || self.clone_dir(&name).exists() {
             bail!("clone `{name}` already exists (`clove rm {name}` to replace it)");
         }
+        let admin = format!("clove-{name}");
+        if self.admin_dir(&admin).exists() {
+            bail!("Git worktree registration `{admin}` already exists");
+        }
         let mount = self.clone_mount(&name);
         if mount.exists() && std::fs::read_dir(&mount)?.next().is_some() {
             bail!("{} exists and is not empty", mount.display());
@@ -712,9 +703,16 @@ impl Clove {
         let base = opts.base.clone().unwrap_or_else(|| self.config.base.clone());
         let wt = self.clone_worktree(&name);
         let dir = self.clone_dir(&name);
-        let admin = format!("clove-{name}");
         let mut timings = vec![];
         let store = record.backend.store()?;
+        let cleanup = |e: anyhow::Error| -> anyhow::Error {
+            let _ = store.clone_detach(self, &name, &mount, true);
+            let _ = store.clone_delete(self, &name, &mount);
+            let _ = drop_admin_registration(&self.admin_dir(&admin), &wt);
+            let _ = std::fs::remove_dir(&mount);
+            let _ = std::fs::remove_dir_all(&dir);
+            e
+        };
 
         // Copy the image and the matching index snapshot under the short lock so a
         // concurrent refresh cannot swap generations in between.
@@ -725,25 +723,22 @@ impl Clove {
                 .context("golden image missing; run `clove init`")?;
             let gen_dir = self.golden_gen_dir(generation);
             let meta: GoldenMeta = read_json(&gen_dir.join("meta.json"))?.context("golden meta missing")?;
+            // Only clean up after taking ownership of the slot.
             self.reserve_clone(&name, request_id)
                 .with_context(|| format!("reserve clone `{name}`"))?;
-            on_start(&name);
             timed(r, &mut timings, "clone image", || {
                 store.clone_create(self, generation, &name, &mount)
+            })
+            .inspect_err(|_| {
+                // A failed create can leave someone else's subvolume at the mount path.
+                let _ = std::fs::remove_dir_all(&dir);
             })?;
             for f in ["HEAD", "index"] {
-                std::fs::copy(gen_dir.join(f), dir.join(f))?;
+                std::fs::copy(gen_dir.join(f), dir.join(f))
+                    .with_context(|| format!("copy {f} from {}", gen_dir.display()))
+                    .map_err(cleanup)?;
             }
             meta
-        };
-
-        let cleanup = |e: anyhow::Error| -> anyhow::Error {
-            let _ = store.clone_detach(self, &name, &mount, true);
-            let _ = store.clone_delete(self, &name, &mount);
-            let _ = std::fs::remove_dir_all(&dir);
-            let _ = std::fs::remove_dir_all(self.admin_dir(&admin));
-            let _ = std::fs::remove_dir(&mount);
-            e
         };
 
         // Fetch runs while the image mounts; both take ~1s.
@@ -785,7 +780,8 @@ impl Clove {
             let files = golden.copied.clone();
             timed(r, &mut timings, "copy files", || {
                 self.copy_into(&wt, &files).map(|_| ())
-            })?;
+            })
+            .map_err(cleanup)?;
         }
         let mut failed = vec![];
         let mut setup_commit = None;
@@ -808,8 +804,8 @@ impl Clove {
             failed_steps: failed,
             setup_commit,
         };
-        write_json(&dir.join("meta.json"), &meta)?;
-        self.info(&name, false)
+        write_json(&dir.join("meta.json"), &meta).map_err(cleanup)?;
+        self.info(&name, false).map_err(cleanup)
     }
 
     fn request_staging(&self, id: &str) -> Result<PathBuf> {
@@ -991,13 +987,18 @@ impl Clove {
     /// minus the checkout we already have.
     fn write_admin(&self, admin: &str, wt: &Path, snapshot: &Path, reason: &str) -> Result<()> {
         let dir = self.admin_dir(admin);
-        std::fs::create_dir_all(&dir)?;
+        std::fs::create_dir_all(self.common_dir.join("worktrees"))?;
+        std::fs::create_dir(&dir).with_context(|| format!("create Git registration {}", dir.display()))?;
+        Self::write_admin_snapshot(&dir, wt, snapshot, reason)
+    }
+
+    fn write_admin_snapshot(dir: &Path, wt: &Path, snapshot: &Path, reason: &str) -> Result<()> {
+        std::fs::write(dir.join("gitdir"), format!("{}\n", wt.join(".git").display()))?;
         for f in ["HEAD", "index"] {
             std::fs::copy(snapshot.join(f), dir.join(f))
                 .with_context(|| format!("copy {f} into {}", dir.display()))?;
         }
         std::fs::write(dir.join("commondir"), "../..\n")?;
-        std::fs::write(dir.join("gitdir"), format!("{}\n", wt.join(".git").display()))?;
         std::fs::write(dir.join("locked"), reason)?;
         write_atomic(
             &wt.join(".git"),
@@ -1006,16 +1007,22 @@ impl Clove {
         Ok(())
     }
 
+    fn restore_golden_admin(&self, admin: &str, wt: &Path, snapshot: &Path) -> Result<()> {
+        let dir = self.admin_dir(admin);
+        let reason = "clove golden image (detached between refreshes)";
+        // Refresh reuses its own registration, including Git's other state in it.
+        if admin_registration_matches(&dir, wt) {
+            Self::write_admin_snapshot(&dir, wt, snapshot, reason)
+        } else {
+            self.write_admin(admin, wt, snapshot, reason)
+        }
+    }
+
     /// Removes any existing worktree registration pointing at `wt`.
     fn drop_registration(&self, wt: &Path) -> Result<()> {
-        let want = wt.join(".git");
         if let Ok(rd) = std::fs::read_dir(self.common_dir.join("worktrees")) {
             for e in rd.flatten() {
-                if let Ok(g) = std::fs::read_to_string(e.path().join("gitdir"))
-                    && Path::new(g.trim()) == want
-                {
-                    std::fs::remove_dir_all(e.path())?;
-                }
+                drop_admin_registration(&e.path(), wt)?;
             }
         }
         Ok(())
@@ -1064,7 +1071,7 @@ impl Clove {
             None => self.lock()?,
         };
         timed(r, &mut timings, "delete image", || {
-            let _ = std::fs::remove_dir_all(self.clone_admin(name));
+            drop_admin_registration(&self.clone_admin(name), &meta.path)?;
             store.clone_delete(self, name, &meta.mount)?;
             std::fs::remove_dir_all(self.clone_dir(name))?;
             let _ = std::fs::remove_dir(&meta.mount);
@@ -1106,27 +1113,31 @@ impl Clove {
     /// Remounts if necessary and requires a successful, clean Git inspection.
     pub fn require_clean_clone(&self, name: &str) -> Result<()> {
         let meta = self.clone_meta(name)?.ok_or_else(|| self.no_clone(name))?;
-        if !self.store()?.clone_attached(self, name, &meta.mount) {
-            self.mount(name)?;
-        }
-        if git::is_dirty(&meta.path).with_context(|| format!("inspect git status in `{name}`"))? {
+        let dirty = (|| -> Result<bool> {
+            if !self.store()?.clone_attached(self, name, &meta.mount) {
+                self.mount(name)?;
+            }
+            meta.path.join(".git").symlink_metadata()?;
+            let git_dir = git::out(&meta.path, &["rev-parse", "--git-dir"])?;
+            if meta.path.join(git_dir).canonicalize()? != self.clone_admin(name).canonicalize()? {
+                bail!("Git admin directory does not match the clone registration");
+            }
+            let top = git::out(&meta.path, &["rev-parse", "--show-toplevel"])?;
+            if Path::new(&top).canonicalize()? != meta.path.canonicalize()? {
+                bail!("Git checkout root does not match the clone path");
+            }
+            git::is_dirty(&meta.path)
+        })()
+        .with_context(|| format!("cannot safely inspect the Git checkout for clone `{name}`"))?;
+        if dirty {
             bail!("`{name}` has uncommitted changes; commit them, or `clove rm --force {name}` to discard");
         }
         Ok(())
     }
 
-    /// Rolls back one interrupted OpenCode creation, leaving all branches and
-    /// all other clones alone. The caller must have stopped the creator first.
-    pub fn abort_opencode_clone(&self, name: &str, r: &dyn Reporter) -> Result<()> {
-        if name.is_empty() || sanitize_name(name) != name {
-            bail!("invalid clone name `{name}`");
-        }
-        self.abort_opencode_clone_locked(name, r, self.lock()?)
-    }
-
     /// Looks up and rolls back a canceled request without trusting a possibly
-    /// reused clone name. The creator must have stopped before calling this.
-    pub fn abort_opencode_clone_by_request(&self, id: &str, r: &dyn Reporter) -> Result<()> {
+    /// reused clone name or dropping its branch. The creator must have stopped first.
+    pub fn abort_clone_by_request(&self, id: &str, by: crate::history::By, r: &dyn Reporter) -> Result<()> {
         let staging = self.request_staging(id)?;
         let lock = self.lock()?;
         // The process may have stopped before writing or publishing the marker.
@@ -1158,18 +1169,24 @@ impl Clove {
             }
         }
         if let Some(name) = found {
-            self.abort_opencode_clone_locked(&name, r, lock)?;
+            self.abort_clone_locked(&name, by, r, lock)?;
         }
         Ok(())
     }
 
-    fn abort_opencode_clone_locked(&self, name: &str, r: &dyn Reporter, lock: FileLock) -> Result<()> {
+    fn abort_clone_locked(
+        &self,
+        name: &str,
+        by: crate::history::By,
+        r: &dyn Reporter,
+        lock: FileLock,
+    ) -> Result<()> {
         if self.clone_meta(name)?.is_some() {
             return self.remove_with_lock(
                 name,
                 &RemoveOptions {
                     force: true,
-                    by: crate::history::By::OpencodeHook,
+                    by,
                     ..Default::default()
                 },
                 r,
@@ -1182,9 +1199,8 @@ impl Clove {
         let store = self.store()?;
         store.clone_detach(self, name, &mount, true)?;
         store.clone_delete(self, name, &mount)?;
-        for path in [self.clone_admin(name), self.clone_dir(name)] {
-            remove_reservation_dir(&path)?;
-        }
+        drop_admin_registration(&self.clone_admin(name), &self.clone_worktree(name))?;
+        remove_reservation_dir(&self.clone_dir(name))?;
         // A mount directory with unexpected contents must not be removed recursively.
         let _ = std::fs::remove_dir(&mount);
         Ok(())
@@ -1755,8 +1771,19 @@ impl Clove {
 /// Inside a clone's state dir: removal asked while the clone was in use.
 pub const PENDING_FILE: &str = "remove-when-free.json";
 
-/// The lock reason git prints when something tries `git worktree remove` on a
-/// clone: it names the command that works.
+fn admin_registration_matches(dir: &Path, wt: &Path) -> bool {
+    dir.symlink_metadata().is_ok_and(|meta| meta.is_dir())
+        && std::fs::read_to_string(dir.join("gitdir"))
+            .is_ok_and(|gitdir| Path::new(gitdir.trim()) == wt.join(".git"))
+}
+
+fn drop_admin_registration(dir: &Path, wt: &Path) -> Result<()> {
+    if admin_registration_matches(dir, wt) {
+        remove_reservation_dir(dir)?;
+    }
+    Ok(())
+}
+
 fn remove_reservation_dir(path: &Path) -> Result<()> {
     match std::fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
@@ -1765,6 +1792,8 @@ fn remove_reservation_dir(path: &Path) -> Result<()> {
     }
 }
 
+/// The lock reason git prints when something tries `git worktree remove` on a
+/// clone: it names the command that works.
 fn lock_reason(name: &str) -> String {
     format!("clove clone: remove it with `clove rm {name}` (git can't unmount or delete its disk image)")
 }
@@ -1934,7 +1963,9 @@ mod stray_tests {
     use super::*;
 
     #[test]
-    fn opencode_abort_by_request_only_rolls_back_its_own_reservation() {
+    fn abort_clone_by_request_only_rolls_back_its_own_reservation() {
+        use crate::{events::Silent, history::By};
+
         let temp = tempfile::tempdir().unwrap();
         let mut c = Clove::open(temp.path()).unwrap();
         c.state = temp.path().join("state");
@@ -1942,26 +1973,54 @@ mod stray_tests {
         {
             let _lock = c.lock().unwrap();
             c.reserve_clone("interrupted", Some("cancel-me")).unwrap();
+            c.reserve_clone("conflict", Some("conflicting-admin")).unwrap();
             c.reserve_clone("other", Some("leave-me")).unwrap();
             c.reserve_clone("legacy", None).unwrap();
             assert!(c.reserve_clone("other", Some("collision")).is_err());
             std::fs::create_dir(c.request_staging("pre-publish").unwrap()).unwrap();
         }
-        for name in ["interrupted", "other", "legacy"] {
+        for name in ["interrupted", "conflict", "other", "legacy"] {
             std::fs::create_dir_all(c.clone_mount(name)).unwrap();
             std::fs::create_dir_all(c.clone_admin(name)).unwrap();
         }
+        std::fs::write(
+            c.clone_admin("interrupted").join("gitdir"),
+            c.clone_worktree("interrupted")
+                .join(".git")
+                .as_os_str()
+                .as_encoded_bytes(),
+        )
+        .unwrap();
+        let unrelated = c.clone_admin("conflict").join("gitdir");
+        let unrelated_gitfile = temp.path().join("plain-worktree/.git");
+        std::fs::write(&unrelated, unrelated_gitfile.as_os_str().as_encoded_bytes()).unwrap();
+        let err = c
+            .write_admin(
+                "clove-conflict",
+                &c.clone_worktree("conflict"),
+                temp.path(),
+                "test",
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("create Git registration"));
 
         assert!(c.clone_meta("interrupted").unwrap().is_none());
-        c.abort_opencode_clone_by_request("cancel-me", &crate::events::Silent)
+        c.abort_clone_by_request("cancel-me", By::OpencodeHook, &Silent)
             .unwrap();
         assert!(!c.clone_dir("interrupted").exists());
         assert!(!c.clone_admin("interrupted").exists());
         assert!(!c.clone_mount("interrupted").exists());
-        c.abort_opencode_clone_by_request("pre-publish", &crate::events::Silent)
+        c.abort_clone_by_request("conflicting-admin", By::OpencodeHook, &Silent)
+            .unwrap();
+        assert!(!c.clone_dir("conflict").exists());
+        assert_eq!(
+            std::fs::read(unrelated).unwrap(),
+            unrelated_gitfile.as_os_str().as_encoded_bytes()
+        );
+        c.abort_clone_by_request("pre-publish", By::OpencodeHook, &Silent)
             .unwrap();
         assert!(!c.request_staging("pre-publish").unwrap().exists());
-        c.abort_opencode_clone_by_request("collision", &crate::events::Silent)
+        c.abort_clone_by_request("collision", By::OpencodeHook, &Silent)
             .unwrap();
         assert_eq!(
             std::fs::read(c.clone_dir("other").join(".request")).unwrap(),
