@@ -98,11 +98,11 @@ function RecentlyRemoved() {
   const { data = [] } = useHistory();
   if (data.length === 0) return null;
   return (
-    <section className="overflow-hidden rounded-xl border bg-card">
-      <div className="flex items-center gap-2.5 border-b px-4 py-2.5">
-        <span className="text-[13px] font-medium">Recently removed</span>
+    <section className="clove-card overflow-hidden">
+      <div className="flex items-center gap-2.5 border-b border-border/75 bg-muted/25 px-4 py-2.5">
+        <span className="text-[13px] font-semibold tracking-tight">Recently removed</span>
         <div className="flex-1" />
-        <Link to="/history" className="text-[12px] text-muted-foreground hover:text-foreground">
+        <Link to="/history" className="text-[12px] font-medium text-bottle hover:underline">
           All history →
         </Link>
       </div>
@@ -146,10 +146,10 @@ function RepoCleanup({ repo, data }: { repo: RepoSummary; data: Cleanup }) {
   const work = !apply.data && hasWork(result);
 
   return (
-    <section className="overflow-hidden rounded-xl border bg-card">
-      <div className="flex items-center gap-2.5 border-b px-4 py-2.5">
+    <section className="clove-card overflow-hidden">
+      <div className="flex items-center gap-2.5 border-b border-border/75 bg-muted/25 px-4 py-3">
         <RepoMark name={repo.name} />
-        <span className="text-[13px] font-medium">{repo.name}</span>
+        <span className="text-[13.5px] font-semibold tracking-tight">{repo.name}</span>
         <span className="text-[12px] text-muted-foreground">
           {[
             ready.length && `${ready.length} merged`,
@@ -236,11 +236,7 @@ function RepoCleanup({ repo, data }: { repo: RepoSummary; data: Cleanup }) {
 }
 
 function Heading({ children }: { children: string }) {
-  return (
-    <div className="border-b bg-muted/40 px-4 py-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-      {children}
-    </div>
-  );
+  return <div className="clove-label border-b border-border/70 bg-muted/40 px-4 py-1.5">{children}</div>;
 }
 
 function WorktreeRow({ check: m, removed }: { check: WorktreeCheck; removed: boolean }) {

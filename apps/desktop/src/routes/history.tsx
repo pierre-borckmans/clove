@@ -32,14 +32,14 @@ export function HistoryPage() {
           {isLoading ? (
             <Skeleton className="h-40 rounded-xl" />
           ) : !data?.length ? (
-            <div className="rounded-xl border border-dashed">
+            <div className="overflow-hidden rounded-xl border border-dashed border-border/90 bg-card/50">
               <Empty icon={<History />} title="Nothing removed yet">
                 Removals by hand, by cleanup, by auto-prune and by Claude Code show up here, with the command that
                 brings a deleted branch back.
               </Empty>
             </div>
           ) : (
-            <section className="overflow-hidden rounded-xl border bg-card">
+            <section className="clove-card overflow-hidden">
               <RemovalList entries={data} />
             </section>
           )}
@@ -59,14 +59,23 @@ export function RemovalList({ entries }: { entries: Removed[] }) {
       {entries.map((e) => (
         <li
           key={`${e.root}-${e.at}-${e.name}`}
-          className="flex items-center gap-3 border-b px-4 py-2.5 text-[13px] last:border-b-0"
+          className="flex items-center gap-3 border-b border-border/65 px-4 py-3 text-[13px] transition-colors last:border-b-0 hover:bg-foreground/[0.018]"
         >
-          <span className={cn("size-1.5 shrink-0 rounded-full", e.by === "auto-prune" ? "bg-amber" : "bg-faint")} />
-          <span className="w-[72px] shrink-0 text-[12px] text-faint">{since(e.at)}</span>
+          <span
+            className={cn(
+              "size-2 shrink-0 rounded-full",
+              e.by === "auto-prune"
+                ? "bg-amber shadow-[0_0_0_3px_color-mix(in_oklab,var(--amber)_16%,transparent)]"
+                : "bg-faint/70",
+            )}
+          />
+          <span className="w-[72px] shrink-0 text-[12px] text-faint tabular-nums">{since(e.at)}</span>
           <RepoMark name={e.repo} />
           <span className="flex min-w-0 flex-1 flex-col">
             <span className="truncate">
-              <span className={e.by === "auto-prune" ? "text-amber" : "text-muted-foreground"}>{BY[e.by]} </span>
+              <span className={e.by === "auto-prune" ? "font-medium text-amber" : "text-muted-foreground"}>
+                {BY[e.by]}{" "}
+              </span>
               <span className="font-medium">{e.name}</span>
               {e.kind === "worktree" && <span className="text-faint"> (git worktree)</span>}
               <span className="text-faint"> · {e.repo}</span>
@@ -80,13 +89,15 @@ export function RemovalList({ entries }: { entries: Removed[] }) {
               type="button"
               title="Copy the command that brings the branch back"
               onClick={() => void copyText(e.restore as string, "Command copied")}
-              className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[11.5px] text-faint transition-colors hover:bg-foreground/[0.045] hover:text-foreground"
+              className="flex shrink-0 items-center gap-1.5 rounded-md border border-border/75 bg-muted/40 px-2 py-1 font-mono text-[11px] text-muted-foreground transition-colors hover:border-bottle/30 hover:bg-bottle-soft hover:text-bottle"
             >
               {e.restore}
               <Copy className="size-3" />
             </button>
           ) : e.branch && !e.branch_deleted ? (
-            <span className="shrink-0 text-[12px] text-faint">branch kept</span>
+            <span className="shrink-0 rounded-full border border-border/75 px-2 py-0.5 text-[11px] text-faint">
+              branch kept
+            </span>
           ) : null}
         </li>
       ))}

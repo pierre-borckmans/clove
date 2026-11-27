@@ -12,6 +12,7 @@ import {
   GitPullRequestArrow,
   HardDrive,
   Plus,
+  Search,
   Sparkles,
   SquareTerminal,
   Trash2,
@@ -116,14 +117,17 @@ export function CloneList({
 
   if (clones.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed">
+      <div className="overflow-hidden rounded-xl border border-dashed border-border/90 bg-card/50">
         <Empty
           icon={<GitBranch />}
           title="No clones yet"
           action={
             <Button size="sm" onClick={() => setUi({ newClone: { root } })} className="gap-2">
               <Plus className="size-3.5" /> New clone
-              <Shortcut keys="mod+n" className="ml-1 [&_kbd]:border-white/25 [&_kbd]:bg-white/15 [&_kbd]:text-white" />
+              <Shortcut
+                keys="mod+n"
+                className="ml-1 [&_kbd]:border-white/25 [&_kbd]:bg-white/15 [&_kbd]:text-white [&_kbd]:shadow-none"
+              />
             </Button>
           }
         >
@@ -135,13 +139,16 @@ export function CloneList({
 
   return (
     <section>
-      <div className="mb-2 flex items-center gap-3">
-        <h2 className="text-[13px] font-medium">Clones</h2>
-        <span className="text-[12px] text-muted-foreground tabular-nums">
-          {clones.length} · {clones.filter((c) => c.mounted).length} mounted
+      <div className="mb-2.5 flex items-center gap-2.5">
+        <h2 className="text-[13.5px] font-semibold tracking-tight">Clones</h2>
+        <span className="inline-flex h-5 items-center gap-1 rounded-full border border-border/80 bg-card px-2 text-[11px] font-medium text-muted-foreground tabular-nums shadow-2xs">
+          <span className="text-foreground/90">{clones.length}</span>
+          <span className="text-faint">·</span>
+          <span>{clones.filter((c) => c.mounted).length} mounted</span>
         </span>
         <div className="flex-1" />
         <div className="relative">
+          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-faint" />
           <input
             ref={filterRef}
             value={filter}
@@ -159,8 +166,8 @@ export function CloneList({
                 listRef.current?.focus();
               }
             }}
-            placeholder="Filter"
-            className="h-7 w-44 rounded-md border bg-background px-2.5 pr-7 text-[12.5px] outline-none transition-colors placeholder:text-faint focus:border-ring focus:ring-[3px] focus:ring-ring/20"
+            placeholder="Filter clones"
+            className="h-7 w-48 rounded-[7px] border border-border bg-card pr-7 pl-7.5 text-[12.5px] shadow-2xs outline-none transition-all placeholder:text-faint focus:w-56 focus:border-ring focus:ring-[3px] focus:ring-ring/20"
           />
           <span className="pointer-events-none absolute top-1/2 right-1.5 -translate-y-1/2">
             <Shortcut keys="/" />
@@ -168,12 +175,9 @@ export function CloneList({
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-xl border bg-card">
+      <div className="clove-card overflow-hidden">
         <div
-          className={cn(
-            "grid items-center gap-x-4 border-b bg-muted/40 px-4 py-1.5 text-[11.5px] text-muted-foreground",
-            COLS,
-          )}
+          className={cn("clove-label grid items-center gap-x-4 border-b border-border/75 bg-muted/40 px-4 py-2", COLS)}
         >
           <span />
           <span>Name</span>
@@ -265,9 +269,11 @@ function CloneRow({
       onMouseDown={onSelect}
       onDoubleClick={() => void openIn(c.path, prefs.editor)}
       className={cn(
-        "group grid h-[52px] items-center gap-x-4 border-b px-4 transition-colors last:border-b-0",
+        "group relative grid h-[56px] items-center gap-x-4 border-b border-border/65 px-4 transition-colors last:border-b-0",
         COLS,
-        selected ? "bg-foreground/[0.04]" : "hover:bg-foreground/[0.025]",
+        selected
+          ? "bg-bottle/[0.05] before:absolute before:inset-y-1.5 before:left-0 before:w-[3px] before:rounded-r-full before:bg-bottle dark:bg-bottle/[0.085]"
+          : "hover:bg-foreground/[0.024]",
         busy && "opacity-55",
       )}
     >
@@ -368,10 +374,10 @@ function CloneRow({
         {bytes(c.own_bytes ?? c.image_bytes)}
       </span>
 
-      <div className="flex items-center justify-end gap-0.5">
+      <div className="flex items-center justify-end gap-1">
         <div
           className={cn(
-            "flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100",
+            "flex items-center gap-0.5 rounded-lg border border-border/75 bg-background/95 p-0.5 opacity-0 shadow-2xs transition-opacity group-hover:opacity-100",
             selected && "opacity-100",
           )}
         >
@@ -419,7 +425,7 @@ function Changes({ clone: c, check }: { clone: CloneInfo; check?: MergeCheck }) 
     prParts.push(
       <span
         key="m"
-        className="rounded-full bg-sage-soft px-1.5 text-[11px] leading-[17px] text-sage"
+        className="inline-flex h-[19px] items-center rounded-full border border-sage/25 bg-sage-soft px-1.5 text-[10.5px] font-medium text-sage"
         title={check?.reason ?? `PR #${pr.number} merged`}
       >
         merged
@@ -427,20 +433,29 @@ function Changes({ clone: c, check }: { clone: CloneInfo; check?: MergeCheck }) 
     );
   const openPr =
     pr?.state === "open" ? (
-      <span key="o" className="font-mono text-[11.5px] text-muted-foreground" title={`PR #${pr.number} open`}>
+      <span
+        key="o"
+        className="inline-flex h-[19px] items-center rounded-full border border-border/80 bg-muted/60 px-1.5 font-mono text-[10.5px] text-muted-foreground"
+        title={`PR #${pr.number} open`}
+      >
         #{pr.number}
       </span>
     ) : null;
   if (!c.mounted)
     return (
-      <span className="flex items-center gap-2 text-[12px] text-faint">
-        {prParts}unmounted{openPr}
+      <span className="flex items-center gap-1.5 text-[11.5px] text-faint">
+        {prParts}
+        <span className="rounded-full border border-dashed border-border px-1.5 py-px text-[10.5px]">unmounted</span>
+        {openPr}
       </span>
     );
   const parts: ReactNode[] = [...prParts];
   if (c.dirty)
     parts.push(
-      <span key="d" className="flex items-center gap-1 text-amber">
+      <span
+        key="d"
+        className="inline-flex h-[19px] items-center gap-1 rounded-full border border-amber/25 bg-amber/10 px-1.5 text-[10.5px] font-medium text-amber"
+      >
         <span className="size-1.5 rounded-full bg-amber" />
         modified
       </span>,
@@ -449,10 +464,10 @@ function Changes({ clone: c, check }: { clone: CloneInfo; check?: MergeCheck }) 
     parts.push(
       <span
         key="a"
-        className="flex items-center gap-0.5 font-mono text-foreground/80"
+        className="inline-flex items-center gap-0.5 font-mono text-[11.5px] font-medium text-foreground/85"
         title={`${c.ahead} commits ahead of base`}
       >
-        <ArrowUp className="size-3" />
+        <ArrowUp className="size-3 text-sage" />
         {c.ahead}
       </span>,
     );
@@ -460,17 +475,22 @@ function Changes({ clone: c, check }: { clone: CloneInfo; check?: MergeCheck }) 
     parts.push(
       <span
         key="b"
-        className="flex items-center gap-0.5 font-mono text-muted-foreground"
+        className="inline-flex items-center gap-0.5 font-mono text-[11.5px] text-muted-foreground"
         title={`${c.behind} commits behind base`}
       >
-        <ArrowDown className="size-3" />
+        <ArrowDown className="size-3 text-faint" />
         {c.behind}
       </span>,
     );
   if (parts.length === 0)
-    return <span className="flex items-center gap-2.5 text-[12px] text-faint">clean{openPr}</span>;
+    return (
+      <span className="flex items-center gap-2 text-[11.5px] text-faint">
+        <span>clean</span>
+        {openPr}
+      </span>
+    );
   return (
-    <span className="flex min-w-0 items-center gap-2.5 overflow-hidden text-[12px] tabular-nums">
+    <span className="flex min-w-0 items-center gap-1.5 overflow-hidden text-[12px] tabular-nums">
       {parts}
       {openPr}
     </span>
@@ -489,7 +509,7 @@ function RowAction({ label, onClick, children }: { label: string; onClick: () =>
             e.stopPropagation();
             onClick();
           }}
-          className="size-7 text-muted-foreground hover:text-foreground [&_svg]:size-[15px]"
+          className="size-6 rounded-[5px] text-muted-foreground hover:bg-bottle-soft hover:text-bottle [&_svg]:size-[14px]"
         >
           {children}
         </Button>

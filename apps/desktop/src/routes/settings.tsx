@@ -54,13 +54,13 @@ export function SettingsPage() {
                   type="button"
                   onClick={() => void navigate({ to: "/settings", search: { repo: r.id } })}
                   className={cn(
-                    "flex h-7 items-center gap-2 rounded-md border px-2.5 text-[12.5px] transition-colors",
+                    "flex h-7.5 items-center gap-2 rounded-lg border px-2.5 text-[12.5px] transition-all active:scale-[0.98]",
                     r.id === repo?.id
-                      ? "border-bottle/40 bg-bottle-soft font-medium text-foreground"
-                      : "text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground",
+                      ? "border-bottle/35 bg-bottle-soft font-medium text-foreground shadow-2xs"
+                      : "border-border/80 bg-card text-muted-foreground shadow-2xs hover:border-foreground/15 hover:text-foreground",
                   )}
                 >
-                  <RepoMark name={r.name} className="size-4 text-[9.5px]" />
+                  <RepoMark name={r.name} active={r.id === repo?.id} className="size-4 text-[9.5px]" />
                   {r.name}
                 </button>
               ))}
@@ -130,7 +130,7 @@ function AppearanceRow() {
   return (
     <Row label="Appearance">
       <div className="flex items-center gap-3">
-        <div className="flex h-7 items-center rounded-md border bg-muted/50 p-0.5 text-[12.5px]">
+        <div className="flex h-7.5 items-center rounded-lg border border-border/85 bg-muted/60 p-0.5 text-[12.5px]">
           {options.map(([v, label, icon]) => (
             <button
               key={v}
@@ -138,9 +138,9 @@ function AppearanceRow() {
               aria-pressed={v === appearance}
               onClick={() => setPrefs({ appearance: v })}
               className={cn(
-                "flex h-full items-center gap-1.5 rounded-[5px] px-2.5 transition-colors [&_svg]:size-3.5",
+                "flex h-full items-center gap-1.5 rounded-[6px] px-2.5 font-medium transition-all [&_svg]:size-3.5",
                 v === appearance
-                  ? "bg-background text-foreground shadow-xs"
+                  ? "bg-card text-foreground shadow-[var(--btn-outline-shadow)]"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -512,9 +512,9 @@ function Section({
 }) {
   return (
     <section>
-      <div className="mb-2 flex items-center gap-2">
+      <div className="mb-2.5 flex items-center gap-2">
         {icon}
-        <h2 className="text-[13px] font-medium">{title}</h2>
+        <h2 className="text-[13.5px] font-semibold tracking-tight">{title}</h2>
         {subtitle && <span className="text-[12px] text-faint">{subtitle}</span>}
       </div>
       <Card>{children}</Card>
@@ -523,12 +523,12 @@ function Section({
 }
 
 function Card({ children }: { children: ReactNode }) {
-  return <div className="overflow-hidden rounded-xl border bg-card">{children}</div>;
+  return <div className="clove-card overflow-hidden">{children}</div>;
 }
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[132px_minmax(0,1fr)] items-start gap-3 border-b px-4 py-2.5 last:border-b-0">
+    <div className="grid grid-cols-[132px_minmax(0,1fr)] items-start gap-3 border-b border-border/70 px-4 py-3 last:border-b-0">
       <span className="pt-px text-[13px] text-muted-foreground">{label}</span>
       <div className="min-w-0">{children}</div>
     </div>

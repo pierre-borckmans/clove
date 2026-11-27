@@ -21,7 +21,7 @@ export function Shortcut({ keys, className }: { keys: string; className?: string
         <Kbd
           key={k}
           className={cn(
-            "h-[18px] min-w-[18px] rounded-[4px] border border-border/70 bg-background/60 px-1 font-sans text-[11px] text-muted-foreground shadow-none",
+            "h-[18px] min-w-[18px] rounded-[4.5px] border border-border/90 bg-card px-1 font-sans text-[10.5px] font-medium text-muted-foreground shadow-[var(--kbd-shadow)]",
           )}
         >
           {SYMBOLS[k] ?? k.toUpperCase()}
