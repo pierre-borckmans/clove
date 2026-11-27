@@ -108,7 +108,7 @@ export default Plugin.define({
               stdin: JSON.stringify({ directory, force, projectDirectory: projectDir }),
             });
           } catch (error) {
-            if (force || !(error?.code === 2 || /has uncommitted changes|contains modified or untracked files/i.test(error?.stderr ?? ""))) {
+            if (force || !/has uncommitted changes|contains modified or untracked files/i.test(error?.stderr ?? "")) {
               throw error;
             }
             throw new Worktree.OperationError({ message: error.message, forceRequired: true });

@@ -1,13 +1,17 @@
 //! What coding agents need to know about clove, and installing it where they
 //! read it: skills, global instruction blocks, and hooks or extensions.
 
+use std::ffi::{CString, OsStr};
 use std::io::{ErrorKind, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex};
+use std::time::UNIX_EPOCH;
 
 use anyhow::{Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// `clove guide`: everything an agent needs, for this version of clove.
 pub const GUIDE: &str = r#"# clove: copy-on-write git worktrees
@@ -117,7 +121,9 @@ const BEGIN: &str =
     "<!-- clove:begin (written by `clove agents install`; `clove agents remove` takes it out) -->";
 const END: &str = "<!-- clove:end -->";
 
-const SKILL: &str = "\
+macro_rules! legacy_skill {
+    () => {
+        "\
 ---
 name: clove
 description: Use when you need a separate git worktree or branch checkout (instead of git worktree add), work in a clove clone (under <repo>.clove/), or a clove clone went missing. clove makes ready worktrees with dependencies installed in ~1s.
@@ -131,13 +137,20 @@ Run `clove guide` first and follow it: it matches the installed version.
 - `clove run <clone> -- <cmd>` runs in the clone's dev environment; `clove path <clone>` prints its path.
 - Remove only clones you made: `clove rm <clone>`. Run `clove prune` only when asked.
 - A clone gone? `clove log` says who removed it (often auto-prune after its PR merged) and how to get the branch back.
-";
+"
+    };
+}
+
+const LEGACY_SKILL: &str = legacy_skill!();
+const SKILL_MARKER: &str = "<!-- clove:managed -->";
+const SKILL: &str = concat!(legacy_skill!(), "\n<!-- clove:managed -->\n");
 
 const HOOK_CREATE: &str = "clove hook worktree-create";
 const HOOK_REMOVE: &str = "clove hook worktree-remove";
 
 pub const OPENCODE_PLUGIN: &str = include_str!("plugins/opencode.js");
 pub const PI_EXTENSION: &str = include_str!("plugins/pi.js");
+pub const OPENCODE_SKIPPED_NOTICE: &str = "OpenCode skipped: the clove plugin requires OpenCode V2 (stable 2.x) on PATH. Update OpenCode and rerun `clove agents install`.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -174,20 +187,17 @@ struct Env {
     pub pi_agent_dir: Option<PathBuf>,
     pub opencode_on_path: bool,
     pub has_opencode_v2: bool,
-    pub has_pi_bin: bool,
 }
 
 impl Env {
-    pub fn from_env(probe_opencode: bool) -> Result<Self> {
+    pub fn from_env(mode: OpencodeProbeMode) -> Result<Self> {
         let var = |name| {
             std::env::var_os(name)
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from)
         };
         let path = std::env::var_os("PATH").unwrap_or_default();
-        let opencode_on_path = probe_opencode && on_path(&path, "opencode");
-        Ok(Self {
-            home: home()?,
+        let env = Self {
             xdg_config_home: var("XDG_CONFIG_HOME"),
             opencode_config_dir: var("OPENCODE_CONFIG_DIR"),
             opencode_disable_claude_prompt: [
@@ -197,10 +207,25 @@ impl Env {
             .iter()
             .any(|name| std::env::var(name).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))),
             pi_agent_dir: var("PI_CODING_AGENT_DIR"),
-            opencode_on_path,
-            has_opencode_v2: opencode_on_path && opencode_v2(&path),
-            has_pi_bin: on_path(&path, "pi"),
-        })
+            ..Self::for_home(&home()?)
+        };
+        Ok(env.with_opencode_probe(mode, &path))
+    }
+
+    fn with_opencode_probe(mut self, mode: OpencodeProbeMode, path: &OsStr) -> Self {
+        if mode != OpencodeProbeMode::Skip
+            && let Some(bin) = find_on_path(path, "opencode")
+        {
+            self.opencode_on_path = true;
+            self.has_opencode_v2 = opencode_v2_cached(
+                bin,
+                path,
+                &crate::state_home().join("opencode-probe.json"),
+                crate::util::now_unix(),
+                mode,
+            );
+        }
+        self
     }
 
     pub fn for_home(home: &Path) -> Self {
@@ -212,24 +237,128 @@ impl Env {
             pi_agent_dir: None,
             opencode_on_path: false,
             has_opencode_v2: false,
-            has_pi_bin: false,
         }
     }
 }
 
-fn on_path(path: &std::ffi::OsStr, name: &str) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-
-    !path.is_empty()
-        && std::env::split_paths(path).any(|d| {
-            d.join(name)
-                .metadata()
-                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-        })
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpencodeProbeMode {
+    Skip,
+    Cached,
+    Refresh,
 }
 
-fn opencode_v2(path: &std::ffi::OsStr) -> bool {
-    opencode_version(path).is_some_and(|output| {
+fn find_on_path(path: &OsStr, name: &str) -> Option<PathBuf> {
+    if path.is_empty() {
+        return None;
+    }
+    let bin = std::env::split_paths(path)
+        .map(|dir| dir.join(name))
+        .find(|bin| {
+            if !bin.metadata().is_ok_and(|meta| meta.is_file()) {
+                return false;
+            }
+            let Ok(cpath) = CString::new(bin.as_os_str().as_bytes()) else {
+                return false;
+            };
+            // SAFETY: cpath is a live, NUL-terminated CString for the duration of the call.
+            unsafe { libc::access(cpath.as_ptr(), libc::X_OK) == 0 }
+        })?;
+    // A bare name from an empty PATH entry would otherwise trigger a second PATH search.
+    std::path::absolute(bin).ok()
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Eq)]
+struct BinaryStamp {
+    path: PathBuf,
+    mtime_secs: u64,
+    mtime_nanos: u32,
+    len: u64,
+}
+
+impl BinaryStamp {
+    fn read(path: &Path) -> Option<Self> {
+        let meta = std::fs::metadata(path).ok()?;
+        let mtime = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
+        Some(Self {
+            path: path.to_path_buf(),
+            mtime_secs: mtime.as_secs(),
+            mtime_nanos: mtime.subsec_nanos(),
+            len: meta.len(),
+        })
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct OpencodeProbe {
+    stamp: BinaryStamp,
+    checked_at: u64,
+    is_v2: bool,
+}
+
+impl OpencodeProbe {
+    fn is_fresh(&self, stamp: &BinaryStamp, now: u64) -> bool {
+        &self.stamp == stamp
+            && self.checked_at != 0
+            && now >= self.checked_at
+            && now - self.checked_at < OPENCODE_PROBE_TTL_SECS
+    }
+}
+
+const OPENCODE_PROBE_TTL_SECS: u64 = 3600;
+static OPENCODE_PROBE_CACHE: LazyLock<Mutex<Option<(PathBuf, OpencodeProbe)>>> =
+    LazyLock::new(Default::default);
+
+fn opencode_v2_cached(
+    bin: PathBuf,
+    path: &OsStr,
+    cache_path: &Path,
+    now: u64,
+    mode: OpencodeProbeMode,
+) -> bool {
+    let resolved = bin.canonicalize().unwrap_or_else(|_| bin.clone());
+    let Some(stamp) = BinaryStamp::read(&resolved) else {
+        return opencode_v2(&bin, path);
+    };
+    // Serialize cache misses so simultaneous status calls don't start duplicate probes.
+    let mut memory = OPENCODE_PROBE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if mode == OpencodeProbeMode::Cached {
+        let cached = memory
+            .as_ref()
+            .filter(|(key, probe)| key == cache_path && probe.is_fresh(&stamp, now))
+            .map(|(_, probe)| probe);
+        // Another clove process may have refreshed the probe while this one was running.
+        if let Some(probe) = std::fs::read(cache_path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<OpencodeProbe>(&bytes).ok())
+            .filter(|probe| {
+                probe.is_fresh(&stamp, now)
+                    && cached.is_none_or(|cached| probe.checked_at > cached.checked_at)
+            })
+        {
+            let is_v2 = probe.is_v2;
+            *memory = Some((cache_path.to_path_buf(), probe));
+            return is_v2;
+        }
+        if let Some(probe) = cached {
+            return probe.is_v2;
+        }
+    }
+    let is_v2 = opencode_v2(&bin, path);
+    let probe = OpencodeProbe {
+        stamp,
+        checked_at: now,
+        is_v2,
+    };
+    if let Ok(json) = serde_json::to_string(&probe) {
+        let _ = write(cache_path, &json);
+    }
+    *memory = Some((cache_path.to_path_buf(), probe));
+    is_v2
+}
+
+fn opencode_v2(bin: &Path, path: &OsStr) -> bool {
+    opencode_version(bin, path).is_some_and(|output| {
         // Current releases print "opencode v2.x.y"; also accept a bare version.
         let version = output.trim();
         let version = version.strip_prefix("opencode ").unwrap_or(version);
@@ -244,7 +373,7 @@ fn opencode_v2(path: &std::ffi::OsStr) -> bool {
     })
 }
 
-fn opencode_version(path: &std::ffi::OsStr) -> Option<String> {
+fn opencode_version(bin: &Path, path: &OsStr) -> Option<String> {
     use std::fs::File;
     use std::io::Read;
     use std::process::{Command, Stdio};
@@ -254,7 +383,7 @@ fn opencode_version(path: &std::ffi::OsStr) -> Option<String> {
     // probe's files private and bound its wait so other agents can still install.
     let probe = tempfile::tempdir().ok()?;
     let stdout = probe.path().join("version");
-    let mut child = Command::new("opencode")
+    let mut child = Command::new(bin)
         .env("PATH", path)
         .env("XDG_CONFIG_HOME", probe.path())
         .env("XDG_CACHE_HOME", probe.path())
@@ -335,7 +464,7 @@ fn targets(env: &Env, removing: bool) -> Vec<(&'static str, PathBuf, Kind)> {
     }
     let pi_home = env.home.join(".pi");
     let pi = env.pi_agent_dir.clone().unwrap_or_else(|| pi_home.join("agent"));
-    if pi.is_dir() || pi_home.is_dir() || env.has_pi_bin {
+    if pi.is_dir() || pi_home.is_dir() {
         let candidates = [
             "AGENTS.override.md",
             "AGENTS.md",
@@ -391,7 +520,7 @@ fn status_with(env: &Env) -> Vec<Target> {
 }
 
 pub fn status() -> Result<Vec<Target>> {
-    Ok(status_with(&Env::from_env(true)?))
+    Ok(status_with(&Env::from_env(OpencodeProbeMode::Cached)?))
 }
 
 /// Overall: installed only when every target is.
@@ -454,7 +583,7 @@ fn is_managed_file(bytes: &[u8], body: &str) -> bool {
 }
 
 fn is_managed_skill(text: &str) -> bool {
-    text == SKILL
+    text == SKILL || text == LEGACY_SKILL || text.lines().any(|line| line.trim() == SKILL_MARKER)
 }
 
 fn whole_file(path: &Path, kind: Kind) -> Result<WholeFile> {
@@ -465,18 +594,20 @@ fn whole_file(path: &Path, kind: Kind) -> Result<WholeFile> {
     if !meta.is_file() {
         return Ok(WholeFile::Foreign);
     }
-    let contents = match kind {
-        Kind::Skill => read_existing(path)?.map(|s| (s == SKILL, is_managed_skill(&s))),
-        Kind::File(body) => {
-            existing(path, std::fs::read(path))?.map(|b| (b == body.as_bytes(), is_managed_file(&b, body)))
+    let Some(bytes) = existing(path, std::fs::read(path))? else {
+        return Ok(WholeFile::Missing);
+    };
+    let (current, managed) = match kind {
+        Kind::Skill => {
+            std::str::from_utf8(&bytes).map_or((false, false), |s| (s == SKILL, is_managed_skill(s)))
         }
+        Kind::File(body) => (bytes == body.as_bytes(), is_managed_file(&bytes, body)),
         _ => unreachable!(),
     };
-    Ok(match contents {
-        None => WholeFile::Missing,
-        Some((true, _)) => WholeFile::Current,
-        Some((false, true)) => WholeFile::OwnedOld,
-        Some((false, false)) => WholeFile::Foreign,
+    Ok(match (current, managed) {
+        (true, _) => WholeFile::Current,
+        (false, true) => WholeFile::OwnedOld,
+        (false, false) => WholeFile::Foreign,
     })
 }
 
@@ -634,24 +765,19 @@ fn write(path: &Path, body: &str) -> Result<()> {
 
 /// Writes or takes out every target. Returns what changed.
 pub fn apply_in(home: &Path, on: bool) -> Result<Vec<Target>> {
-    apply_with(&Env::for_home(home), on)
+    Ok(apply_with(&Env::for_home(home), on)?.changed)
 }
 
-fn apply_with(env: &Env, on: bool) -> Result<Vec<Target>> {
+#[derive(Debug, Default)]
+struct ApplyOutcome {
+    changed: Vec<Target>,
+    skipped: Vec<Target>,
+}
+
+fn apply_with(env: &Env, on: bool) -> Result<ApplyOutcome> {
     let unchanged = |on, before| (on && before == State::Installed) || (!on && before == State::Missing);
-    let mut changed = vec![];
-    let targets = targets(env, !on);
-    if on {
-        for (_, path, kind) in &targets {
-            if matches!(kind, Kind::Skill | Kind::File(_)) && whole_file(path, *kind)? == WholeFile::Foreign {
-                anyhow::bail!(
-                    "{} already exists and was not written by clove; move or remove it first",
-                    path.display()
-                );
-            }
-        }
-    }
-    for (what, path, kind) in targets {
+    let mut outcome = ApplyOutcome::default();
+    for (what, path, kind) in targets(env, !on) {
         // Inactive Pi context files should not retain (or gain) our block.
         let on = on && !matches!(kind, Kind::StaleBlock);
         match kind {
@@ -659,10 +785,11 @@ fn apply_with(env: &Env, on: bool) -> Result<Vec<Target>> {
                 let file = whole_file(&path, kind)?;
                 if file == WholeFile::Foreign {
                     if on {
-                        anyhow::bail!(
-                            "{} already exists and was not written by clove; move or remove it first",
-                            path.display()
-                        );
+                        outcome.skipped.push(Target {
+                            what,
+                            path,
+                            state: State::Outdated,
+                        });
                     }
                     continue;
                 }
@@ -716,21 +843,24 @@ fn apply_with(env: &Env, on: bool) -> Result<Vec<Target>> {
                 write(&path, &out)?;
             }
         }
-        changed.push(Target {
+        outcome.changed.push(Target {
             what,
             path: path.clone(),
             state: state(&path, kind),
         });
     }
-    Ok(changed)
+    Ok(outcome)
 }
 
 pub fn install() -> Result<Vec<Target>> {
-    apply_with(&Env::from_env(true)?, true)
+    Ok(install_with_report()?.changed)
 }
 
+#[derive(Debug, Clone, Serialize)]
 pub struct InstallReport {
     pub changed: Vec<Target>,
+    /// Existing files left untouched because clove does not own them.
+    pub skipped: Vec<Target>,
     /// There are supported agents even if their integrations were already up to date.
     pub has_targets: bool,
     /// An executable was found, but it did not report a supported version.
@@ -738,26 +868,27 @@ pub struct InstallReport {
 }
 
 pub fn install_with_report() -> Result<InstallReport> {
-    install_report_with(&Env::from_env(true)?)
+    install_report_with(&Env::from_env(OpencodeProbeMode::Refresh)?)
 }
 
 fn install_report_with(env: &Env) -> Result<InstallReport> {
-    let changed = apply_with(env, true)?;
+    let ApplyOutcome { changed, skipped } = apply_with(env, true)?;
     Ok(InstallReport {
-        has_targets: !changed.is_empty() || !targets(env, false).is_empty(),
+        has_targets: !changed.is_empty() || !skipped.is_empty() || !targets(env, false).is_empty(),
         changed,
+        skipped,
         opencode_skipped: env.opencode_on_path && !env.has_opencode_v2,
     })
 }
 
 pub fn remove() -> Result<Vec<Target>> {
-    apply_with(&Env::from_env(false)?, false)
+    Ok(apply_with(&Env::from_env(OpencodeProbeMode::Skip)?, false)?.changed)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     fn home_with(dirs: &[&str]) -> tempfile::TempDir {
         let t = tempfile::tempdir().unwrap();
@@ -765,6 +896,11 @@ mod tests {
             std::fs::create_dir_all(t.path().join(d)).unwrap();
         }
         t
+    }
+
+    fn write_executable(path: &Path, script: &str) {
+        std::fs::write(path, script).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     #[test]
@@ -785,9 +921,82 @@ mod tests {
         let bin = second.join("opencode");
         std::fs::write(&bin, "test").unwrap();
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(!on_path(&path, "opencode"));
+        assert_eq!(find_on_path(&path, "opencode"), None);
+        // The owner cannot use "other" permissions; root is exempt.
+        if bin.metadata().unwrap().uid() != 0 {
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o001)).unwrap();
+            assert_eq!(find_on_path(&path, "opencode"), None);
+        }
         std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(on_path(&path, "opencode"));
+        assert_eq!(find_on_path(&path, "opencode"), Some(bin));
+    }
+
+    #[test]
+    fn opencode_probe_caches_by_binary_stamp_and_expires() {
+        use OpencodeProbeMode::{Cached, Refresh};
+
+        let h = home_with(&["bin", "other-bin"]);
+        let dir = h.path().join("bin");
+        let other_dir = h.path().join("other-bin");
+        let path = std::env::join_paths([&dir, &other_dir]).unwrap();
+        let bin = dir.join("opencode");
+        let calls = dir.join("calls");
+        let cache = h.path().join("state/opencode-probe.json");
+        let now = 100;
+        let script = |version| {
+            format!("#!/bin/sh\nprintf '.\\n' >> \"${{0%/*}}/calls\"\nprintf '%s\\n' '{version}'\n")
+        };
+        let probe = |path: &OsStr, now, mode| {
+            opencode_v2_cached(find_on_path(path, "opencode").unwrap(), path, &cache, now, mode)
+        };
+        let count = || read(&calls).lines().count();
+
+        write_executable(&bin, &script("1.18.29"));
+        assert!(!probe(&path, now, Cached));
+        assert_eq!(count(), 1);
+        let disk = std::fs::read(&cache).unwrap();
+        std::fs::remove_file(&cache).unwrap();
+        assert!(!probe(&path, now, Cached), "memory hit without a disk cache");
+        assert_eq!(count(), 1);
+
+        std::fs::write(&cache, disk).unwrap();
+        *OPENCODE_PROBE_CACHE.lock().unwrap() = None;
+        assert!(!probe(&path, now, Cached), "disk hit with empty memory cache");
+        assert_eq!(count(), 1);
+        assert!(!probe(&path, now + 1, Refresh));
+        assert_eq!(count(), 2);
+        let updated: OpencodeProbe = serde_json::from_slice(&std::fs::read(&cache).unwrap()).unwrap();
+        assert_eq!(updated.checked_at, now + 1);
+        assert!(!probe(&path, now + 1, Cached));
+        assert_eq!(count(), 2);
+
+        let fresher_disk = OpencodeProbe {
+            checked_at: now + 2,
+            is_v2: true,
+            ..updated
+        };
+        write(&cache, &serde_json::to_string(&fresher_disk).unwrap()).unwrap();
+        assert!(probe(&path, now + 2, Cached), "newer disk data wins");
+        assert_eq!(count(), 2);
+        std::fs::remove_file(&cache).unwrap();
+        assert!(probe(&path, now + 2, Cached), "memory kept the newer answer");
+        assert_eq!(count(), 2);
+
+        write_executable(&bin, &script("opencode v2.4.1"));
+        assert!(probe(&path, now + 2, Cached), "replaced binary invalidates cache");
+        assert_eq!(count(), 3);
+        assert!(probe(&path, now + 1 + OPENCODE_PROBE_TTL_SECS, Cached));
+        assert_eq!(count(), 3);
+        assert!(probe(&path, now + 2 + OPENCODE_PROBE_TTL_SECS, Cached));
+        assert_eq!(count(), 4, "TTL boundary triggers a probe");
+        assert!(probe(&path, now, Cached));
+        assert_eq!(count(), 5, "a clock that went backwards triggers a probe");
+
+        write_executable(&other_dir.join("opencode"), &script("1.18.29"));
+        let reordered = std::env::join_paths([&other_dir, &dir]).unwrap();
+        assert!(!probe(&reordered, now, Cached), "PATH order invalidates cache");
+        assert_eq!(read(&other_dir.join("calls")).lines().count(), 1);
+        assert_eq!(count(), 5);
     }
 
     #[test]
@@ -797,8 +1006,7 @@ mod tests {
         let mut env = Env::for_home(h);
         for (dir, version) in [("old-bin", "1.18.29"), ("new-bin", "opencode v2.4.1")] {
             let bin = h.join(dir).join("opencode");
-            std::fs::write(&bin, format!("#!/bin/sh\nprintf '%s\\n' '{version}'\n")).unwrap();
-            std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+            write_executable(&bin, &format!("#!/bin/sh\nprintf '%s\\n' '{version}'\n"));
         }
         let plugin = |e: &Env| {
             status_with(e)
@@ -812,7 +1020,8 @@ mod tests {
         assert!(!absent.opencode_skipped);
 
         env.opencode_on_path = true;
-        env.has_opencode_v2 = opencode_v2(h.join("new-bin").as_os_str());
+        let path = h.join("new-bin");
+        env.has_opencode_v2 = opencode_v2(&path.join("opencode"), path.as_os_str());
         assert_eq!(plugin(&env), Some(h.join(".config/opencode/plugins/clove.js")));
         env.xdg_config_home = Some(h.join("xdg"));
         assert_eq!(plugin(&env), Some(h.join("xdg/opencode/plugins/clove.js")));
@@ -829,9 +1038,9 @@ mod tests {
         assert!(!unchanged.opencode_skipped);
 
         let path = std::env::join_paths([h.join("old-bin"), h.join("new-bin")]).unwrap();
-        env.has_opencode_v2 = opencode_v2(&path);
+        env.has_opencode_v2 = opencode_v2(&find_on_path(&path, "opencode").unwrap(), &path);
         assert_eq!(plugin(&env), None);
-        assert_eq!(apply_with(&env, false).unwrap().len(), 3);
+        assert_eq!(apply_with(&env, false).unwrap().changed.len(), 3);
         let skipped = install_report_with(&env).unwrap();
         assert!(skipped.changed.is_empty());
         assert!(!skipped.has_targets);
@@ -852,8 +1061,8 @@ mod tests {
     }
 
     #[test]
-    fn pi_detects_agent_dir_parent_override_and_path() {
-        let h = home_with(&[".pi/agent", "override"]);
+    fn pi_detects_agent_dir_parent_and_override_but_not_path() {
+        let h = home_with(&[".pi/agent", "override", "bin"]);
         let h = h.path();
         let mut env = Env::for_home(h);
         let extension = |e: &Env| {
@@ -870,9 +1079,14 @@ mod tests {
         assert_eq!(extension(&env), Some(h.join("override/extensions/clove.js")));
         env.pi_agent_dir = Some(h.join("new"));
         assert_eq!(extension(&env), None);
-        env.has_pi_bin = true;
-        assert_eq!(extension(&env), Some(h.join("new/extensions/clove.js")));
-        assert_eq!(apply_with(&env, true).unwrap().len(), 3);
+        let path = h.join("bin");
+        let bin = path.join("pi");
+        write_executable(&bin, "#!/bin/sh\nexit 0\n");
+        assert_eq!(find_on_path(path.as_os_str(), "pi"), Some(bin));
+        let env = env.with_opencode_probe(OpencodeProbeMode::Cached, path.as_os_str());
+        assert_eq!(extension(&env), None);
+        assert!(!install_report_with(&env).unwrap().has_targets);
+        assert!(!h.join("new").exists());
     }
 
     #[test]
@@ -995,9 +1209,9 @@ mod tests {
         let mut env = Env::for_home(h);
         env.has_opencode_v2 = true;
         assert_eq!(summary(&status_with(&env)), State::Missing);
-        assert_eq!(apply_with(&env, true).unwrap().len(), 6);
+        assert_eq!(apply_with(&env, true).unwrap().changed.len(), 6);
         assert_eq!(summary(&status_with(&env)), State::Installed);
-        assert!(apply_with(&env, true).unwrap().is_empty());
+        assert!(apply_with(&env, true).unwrap().changed.is_empty());
 
         let plugins = [
             (h.join(".config/opencode/plugins/clove.js"), OPENCODE_PLUGIN),
@@ -1013,7 +1227,7 @@ mod tests {
             .filter(|t| t.state == State::Outdated)
             .count();
         assert_eq!(outdated, 2);
-        assert_eq!(apply_with(&env, true).unwrap().len(), 2);
+        assert_eq!(apply_with(&env, true).unwrap().changed.len(), 2);
         for (p, body) in &plugins {
             assert_eq!(read(p), *body);
         }
@@ -1029,6 +1243,66 @@ mod tests {
     }
 
     #[test]
+    fn legacy_and_older_marked_skills_are_upgraded_and_removed() {
+        for old in [LEGACY_SKILL, "# An older skill\n  <!-- clove:managed -->  \n"] {
+            let h = home_with(&[".claude/skills/clove"]);
+            let env = Env::for_home(h.path());
+            let path = h.path().join(".claude/skills/clove/SKILL.md");
+            std::fs::write(&path, old).unwrap();
+            assert_eq!(state(&path, Kind::Skill), State::Outdated);
+            let report = install_report_with(&env).unwrap();
+            assert!(report.skipped.is_empty());
+            assert!(
+                report
+                    .changed
+                    .iter()
+                    .any(|t| t.path == path && t.state == State::Installed)
+            );
+            assert_eq!(read(&path), SKILL);
+            apply_with(&env, false).unwrap();
+            assert!(!path.exists());
+
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, old).unwrap();
+            apply_with(&env, false).unwrap();
+            assert!(!path.exists(), "a direct removal recognizes old ownership too");
+        }
+    }
+
+    fn assert_skipped_install_then_remove(env: &Env, path: &Path, assert_untouched: impl Fn()) {
+        let target_state = || {
+            status_with(env)
+                .into_iter()
+                .find(|t| t.path == path)
+                .unwrap()
+                .state
+        };
+        assert_eq!(target_state(), State::Outdated);
+        let report = install_report_with(env).unwrap();
+        assert!(report.has_targets);
+        assert_eq!(report.skipped.len(), 1);
+        assert_eq!(report.skipped[0].path, path);
+        assert_eq!(report.skipped[0].state, State::Outdated);
+        let others = status_with(env).into_iter().filter(|t| t.path != path);
+        assert_eq!(report.changed.len(), others.clone().count());
+        assert!(report.changed.iter().any(|t| t.what == "Codex instructions"));
+        for target in others {
+            assert_eq!(target.state, State::Installed, "{}", target.path.display());
+        }
+        assert_untouched();
+        assert_eq!(target_state(), State::Outdated);
+
+        let unchanged = install_report_with(env).unwrap();
+        assert!(unchanged.changed.is_empty());
+        assert_eq!(unchanged.skipped[0].path, path);
+        let removal = apply_with(env, false).unwrap();
+        assert!(removal.skipped.is_empty());
+        assert_eq!(removal.changed.len(), report.changed.len());
+        assert_untouched();
+        assert_eq!(target_state(), State::Outdated);
+    }
+
+    #[test]
     fn installer_never_touches_foreign_plugins_or_skills() {
         for (name, bytes) in [
             (".config/opencode/plugins/clove.js", &b"// my plugin\n"[..]),
@@ -1040,28 +1314,38 @@ mod tests {
                 b"---\nname: clove\n---\nMy skill says to run `clove guide`.\n",
             ),
             (".claude/skills/clove/SKILL.md", b""),
+            (".claude/skills/clove/SKILL.md", b"non-UTF-8 skill: \xff\n"),
         ] {
-            let h = home_with(&[]);
+            let h = home_with(&[".claude", ".codex", ".pi/agent", ".config/opencode"]);
             let mut env = Env::for_home(h.path());
-            env.has_opencode_v2 = name.starts_with(".config/opencode/");
-            std::fs::create_dir_all(h.path().join(".claude")).unwrap();
+            env.has_opencode_v2 = true;
             let p = h.path().join(name);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(&p, bytes).unwrap();
-            let entry = status_with(&env).into_iter().find(|t| t.path == p).unwrap();
-            assert_eq!(entry.state, State::Outdated, "{name}");
-            let err = apply_with(&env, true).unwrap_err().to_string();
-            assert!(err.contains(&p.display().to_string()), "{err}");
-            assert!(err.contains("was not written by clove"), "{err}");
-            assert_eq!(std::fs::read(&p).unwrap(), bytes, "{name}");
-            for target in status_with(&env) {
-                if target.path != p {
-                    assert_eq!(target.state, State::Missing, "{name}: {}", target.path.display());
-                    assert!(!target.path.exists(), "{name}: {}", target.path.display());
-                }
-            }
-            apply_in(h.path(), false).unwrap();
-            assert_eq!(std::fs::read(&p).unwrap(), bytes, "{name}");
+            assert_skipped_install_then_remove(&env, &p, || {
+                assert_eq!(std::fs::read(&p).unwrap(), bytes, "{name}");
+            });
+        }
+    }
+
+    #[test]
+    fn installer_never_touches_symlinked_plugins_or_skills() {
+        for (name, body) in [
+            (".config/opencode/plugins/clove.js", OPENCODE_PLUGIN),
+            (".claude/skills/clove/SKILL.md", SKILL),
+        ] {
+            let h = home_with(&[".claude", ".codex", ".config/opencode"]);
+            let mut env = Env::for_home(h.path());
+            env.has_opencode_v2 = true;
+            let path = h.path().join(name);
+            let destination = h.path().join("destination");
+            std::fs::write(&destination, body).unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&destination, &path).unwrap();
+            assert_skipped_install_then_remove(&env, &path, || {
+                assert_eq!(std::fs::read_link(&path).unwrap(), destination);
+                assert_eq!(read(&destination), body);
+            });
         }
     }
 
@@ -1095,11 +1379,7 @@ mod tests {
 
     #[test]
     fn install_and_remove_refuse_to_mutate_non_utf8_text() {
-        for name in [
-            ".codex/AGENTS.md",
-            ".claude/settings.json",
-            ".claude/skills/clove/SKILL.md",
-        ] {
+        for name in [".codex/AGENTS.md", ".claude/settings.json"] {
             let h = home_with(&[]);
             let p = h.path().join(name);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();

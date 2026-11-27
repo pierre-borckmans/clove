@@ -182,15 +182,26 @@ function AgentsRow() {
                 : "Off. Agents use git worktree add and don't know clove."}
           </span>
           {state === "outdated" && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-[12.5px]"
-              disabled={toggle.isPending}
-              onClick={() => toggle.mutate(true)}
-            >
-              Update
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-[12.5px]"
+                disabled={toggle.isPending}
+                onClick={() => toggle.mutate(true)}
+              >
+                Update
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-[12.5px]"
+                disabled={toggle.isPending}
+                onClick={() => toggle.mutate(false)}
+              >
+                Remove
+              </Button>
+            </>
           )}
         </div>
         <span className="text-[12px] text-faint">

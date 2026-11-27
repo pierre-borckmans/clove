@@ -4,6 +4,7 @@
 
 import { repoName } from "@/lib/ops";
 import type {
+  AgentsSetResult,
   AppId,
   Check,
   Cleanup,
@@ -650,7 +651,7 @@ const commands: Record<string, (a: Args) => unknown> = {
   agents_status: () => agentsState,
   agents_set: (a) => {
     agentsState = a.install ? "installed" : "missing";
-    return agentsState;
+    return { state: agentsState, opencode_skipped: false, skipped_foreign: 0 } satisfies AgentsSetResult;
   },
   stats: () => [...repos.values()].map((r) => mockStats(r.status.name, r.status.root, r.clones)),
   history: () => [

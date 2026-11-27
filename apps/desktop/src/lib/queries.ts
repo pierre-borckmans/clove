@@ -243,13 +243,28 @@ export function useAgentsToggle() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (install: boolean) => api.agentsSet(install),
-    onSuccess: (state) =>
-      toast.success(state === "installed" ? "Coding agents now know clove" : "clove taken out of agent instructions", {
-        description:
-          state === "installed"
+    onSuccess: (res, install) => {
+      if (res.opencode_skipped) {
+        toast.warning("OpenCode skipped", {
+          description: "The clove plugin requires OpenCode V2 (stable 2.x) on PATH. Update OpenCode and retry.",
+        });
+      }
+      const skipped = res.skipped_foreign;
+      if (skipped > 0) {
+        toast.warning("Existing files skipped", {
+          description: `${skipped} existing file${skipped === 1 ? "" : "s"} not written by clove.`,
+        });
+      }
+      if (install && res.state !== "installed") {
+        toast.warning("Agent setup needs attention", { description: "Not all agent instructions were installed." });
+      } else {
+        toast.success(install ? "Coding agents now know clove" : "clove taken out of agent instructions", {
+          description: install
             ? "Installed coding agents use clove for worktrees. Restart running sessions to pick it up."
             : "They go back to git worktree add",
-      }),
+        });
+      }
+    },
     onError: (e) => toast.error("Could not change agent instructions", { description: String(e) }),
     onSettled: () => qc.invalidateQueries({ queryKey: keys.agents }),
   });

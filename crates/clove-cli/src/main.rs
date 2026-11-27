@@ -2906,13 +2906,16 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
                 serde_json::Value::Null => None,
                 v => Some(v.as_str().context("hook input requestId must be a string")?),
             };
-            let directory = opencode::create_worktree(
+            let c = Clove::discover(&source)?;
+            let directory = opencode::create_worktree_in(
+                &c,
                 &source,
                 &directory,
                 branch,
                 request_id,
                 &TermReporter::new(false),
             )?;
+            c.spawn_spare_fill();
             println!("{}", serde_json::json!({ "directory": directory }));
         }
         HookAction::OpencodeWorktreeRemove => {
@@ -2948,35 +2951,39 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
 
 fn cmd_agents(cli: &Cli, action: &AgentsAction) -> Result<()> {
     use clove_core::agents::{self, State};
-    let (ts, verb, no_targets) = match action {
+    let (ts, verb, no_targets, skipped) = match action {
         AgentsAction::Install => {
             let report = agents::install_with_report()?;
             if report.opencode_skipped {
-                eprintln!(
-                    "OpenCode skipped: the clove plugin requires OpenCode V2 (stable 2.x) on PATH. \
-                     Update OpenCode and rerun `clove agents install`."
-                );
+                eprintln!("{}", agents::OPENCODE_SKIPPED_NOTICE);
             }
-            (report.changed, "installed", !report.has_targets)
+            (report.changed, "installed", !report.has_targets, report.skipped)
         }
-        AgentsAction::Remove => (agents::remove()?, "removed", false),
+        AgentsAction::Remove => (agents::remove()?, "removed", false, Vec::new()),
         AgentsAction::Status => {
             let ts = agents::status()?;
             let no_targets = ts.is_empty();
-            (ts, "", no_targets)
+            (ts, "", no_targets, Vec::new())
         }
     };
     if cli.json {
+        for t in &skipped {
+            eprintln!(
+                "skipped {} ({}): existing file was not written by clove",
+                t.what,
+                tilde(&t.path)
+            );
+        }
         return emit(&ts);
     }
     if no_targets {
         eprintln!(
             "no supported coding agent found (looked for ~/.claude, ~/.codex, ~/.pi/agent, \
-             and opencode or pi on PATH)"
+             and opencode on PATH)"
         );
         return Ok(());
     }
-    if ts.is_empty() && !verb.is_empty() {
+    if ts.is_empty() && skipped.is_empty() && !verb.is_empty() {
         eprintln!("{} nothing to change", paint(GREEN, "✓"));
     }
     for t in &ts {
@@ -2996,6 +3003,15 @@ fn cmd_agents(cli: &Cli, action: &AgentsAction) -> Result<()> {
             "{mark} {:<28} {:<14} {}",
             t.what,
             what,
+            paint(DIM, tilde(&t.path))
+        );
+    }
+    for t in &skipped {
+        eprintln!(
+            "{} {:<28} {:<14} {} (not written by clove)",
+            paint(YELLOW, "!"),
+            t.what,
+            "skipped",
             paint(DIM, tilde(&t.path))
         );
     }

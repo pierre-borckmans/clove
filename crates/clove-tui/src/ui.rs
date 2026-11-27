@@ -1902,6 +1902,10 @@ fn hints(app: &App) -> Vec<Hint> {
             let mut v = vec![("↑↓", "move", Down), ("⏎", what, Enter)];
             if matches!(on, SettingsAction::Field(_)) {
                 v.push(("x", "reset", Char('x')));
+            } else if matches!(on, SettingsAction::Agents)
+                && app.agents == Some(clove_core::agents::State::Outdated)
+            {
+                v.push(("x", "remove", Char('x')));
             }
             v.extend([("←→", "save to", Right), ("esc", "close", Esc)]);
             v

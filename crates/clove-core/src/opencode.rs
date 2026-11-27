@@ -27,15 +27,26 @@ pub fn create_worktree(
     r: &dyn Reporter,
 ) -> Result<PathBuf> {
     let c = Clove::discover(source)?;
+    create_worktree_in(&c, source, directory, start, request_id, r)
+}
+
+pub fn create_worktree_in(
+    c: &Clove,
+    source: &Path,
+    directory: &Path,
+    start: Option<&str>,
+    request_id: Option<&str>,
+    r: &dyn Reporter,
+) -> Result<PathBuf> {
     c.require_record()?;
-    let base = resolve_start_base(&c, source, start)?;
-    let name = match choose_branch(&c, directory)? {
+    let base = resolve_start_base(c, source, start)?;
+    let name = match choose_branch(c, directory)? {
         Some(name) => name,
         None => {
             let generated = crate::names::generate(|n| {
                 !c.clone_dir(n).exists() && !git::ref_exists(&c.root, &format!("refs/heads/{n}"))
             });
-            choose_branch(&c, Path::new(&generated))?.context("could not name OpenCode clone")?
+            choose_branch(c, Path::new(&generated))?.context("could not name OpenCode clone")?
         }
     };
     let info = c.new_clone_with_request(

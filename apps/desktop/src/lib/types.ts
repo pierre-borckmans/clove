@@ -307,6 +307,12 @@ export type Cleanup = {
 /** Whether coding agents know clove (`clove agents`); null when none is installed. */
 export type AgentsState = "installed" | "outdated" | "missing" | null;
 
+export type AgentsSetResult = {
+  state: AgentsState;
+  opencode_skipped: boolean;
+  skipped_foreign: number;
+};
+
 /** One removal from `clove log`. */
 export type Removed = {
   repo: string;
