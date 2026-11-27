@@ -1,6 +1,5 @@
 ---
 source: crates/clove-tui/src/tests.rs
-assertion_line: 852
 expression: s
 ---
 ╭ clove ───────────────────────────────────────────────────────────────────────────────────────────╮
@@ -22,4 +21,4 @@ expression: s
 │ D doctor           ││            slow once, then every new clone takes about a second            │
 │ S service          ││                                                                            │
 ╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯
- i init  tab repo  s settings  g cleanup  L log  D doctor  A add repo  ? help  q quit
+ i init  tab repo  s settings  g cleanup  L log  t timings  D doctor  A add repo  ? help  q quit

@@ -34,6 +34,10 @@ pub struct RepoData {
     pub fields: Vec<clove_core::settings::FieldState>,
     /// Recent removals, newest first (`clove log`).
     pub history: Vec<clove_core::history::Removed>,
+    /// Clone creations with their timings, newest first (`clove stats`).
+    pub created: Vec<clove_core::stats::Created>,
+    /// Golden image builds, newest first.
+    pub golden_builds: Vec<clove_core::stats::GoldenBuild>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -668,6 +672,8 @@ pub enum Modal {
     Help,
     ResolveOffer(ResolveOffer),
     Removals(RemovalsView),
+    /// How fast clones come (`clove stats`); scrolls like the removals.
+    Stats(RemovalsView),
     New(NewForm),
     Remove(RemoveForm),
     Adopt(AdoptForm),

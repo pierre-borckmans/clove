@@ -198,6 +198,7 @@ pub fn run() {
             commands::agents_status,
             commands::agents_set,
             commands::history,
+            commands::stats,
             commands::prs,
             commands::check_prs,
             commands::branch_candidates,

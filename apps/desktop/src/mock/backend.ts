@@ -24,6 +24,7 @@ import type {
 } from "@/lib/types";
 import { MOCK_ATTRS, MOCK_PACKAGES, MOCK_PATCH } from "./diff";
 import { CARGO_OUTPUT, type MockRepo, machineChecks, PNPM_OUTPUT, seed, worktreeCheck } from "./fixtures";
+import { mockStats } from "./stats";
 
 const repos = seed();
 let serviceOn = true;
@@ -607,6 +608,7 @@ const commands: Record<string, (a: Args) => unknown> = {
     agentsState = a.install ? "installed" : "missing";
     return agentsState;
   },
+  stats: () => [...repos.values()].map((r) => mockStats(r.status.name, r.status.root, r.clones)),
   history: () => [
     {
       repo: "mono",

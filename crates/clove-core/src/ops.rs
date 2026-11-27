@@ -591,6 +591,7 @@ impl Clove {
             copied,
         };
         write_json(&gen_dir.join("meta.json"), &meta)?;
+        self.record_golden(&meta);
         Ok(meta)
     }
 
@@ -794,6 +795,7 @@ impl Clove {
             setup_commit,
         };
         write_json(&dir.join("meta.json"), &meta)?;
+        self.record_created(&meta);
         self.info(&name, false)
     }
 

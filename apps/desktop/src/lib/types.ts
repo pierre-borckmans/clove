@@ -350,3 +350,43 @@ export type FileAttrs = {
   /** A `filter` (LFS) or a `diff=<driver>` textconv: no whole-file context. */
   converted: boolean;
 };
+
+/** One `clove new`, as it went (`clove_core::stats::Created`). */
+export type Created = {
+  at: number;
+  name: string;
+  branch: string | null;
+  base: string;
+  golden_generation: number;
+  total_ms: number;
+  timings: Timing[];
+  failed_steps: string[];
+};
+
+export type StepStat = { step: string; runs: number; median_ms: number; p90_ms: number; max_ms: number };
+
+/** How fast clones come in one repo (`clove_core::stats::Stats`). */
+export type Stats = {
+  clones: number;
+  median_ms: number;
+  p90_ms: number;
+  fastest_ms: number;
+  slowest_ms: number;
+  fast: number;
+  reran: number;
+  clean_median_ms: number | null;
+  steps: StepStat[];
+  golden_builds: number;
+  golden_median_ms: number | null;
+};
+
+export type GoldenBuild = {
+  at: number;
+  generation: number;
+  commit: string;
+  base: string;
+  total_ms: number;
+  timings: Timing[];
+};
+
+export type RepoStats = { repo: string; root: string; stats: Stats; created: Created[]; golden_builds: GoldenBuild[] };

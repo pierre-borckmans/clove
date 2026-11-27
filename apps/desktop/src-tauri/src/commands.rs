@@ -467,6 +467,40 @@ pub async fn history(limit: usize) -> CmdResult<Vec<HistoryEntry>> {
     .await
 }
 
+#[derive(Serialize)]
+pub struct RepoStats {
+    pub repo: String,
+    pub root: PathBuf,
+    pub stats: clove_core::stats::Stats,
+    /// The newest creations, newest first.
+    pub created: Vec<clove_core::stats::Created>,
+    pub golden_builds: Vec<clove_core::stats::GoldenBuild>,
+}
+
+/// How fast clones come, per repo (`clove stats --all-repos`).
+#[tauri::command]
+pub async fn stats(limit: usize) -> CmdResult<Vec<RepoStats>> {
+    block(move || {
+        Ok(known_repos()
+            .into_iter()
+            .filter_map(|r| Clove::open(&r.root).ok())
+            .map(|c| {
+                let created = c.created();
+                let golden_builds = c.golden_builds();
+                let stats = clove_core::stats::stats(&created, &golden_builds);
+                RepoStats {
+                    repo: c.name.clone(),
+                    root: c.root.clone(),
+                    stats,
+                    created: created.into_iter().take(limit).collect(),
+                    golden_builds,
+                }
+            })
+            .collect())
+    })
+    .await
+}
+
 /// The last PR check per clone (from `clove prune`, the service, or cleanup).
 #[tauri::command]
 pub async fn prs(root: PathBuf) -> CmdResult<Vec<MergeCheck>> {

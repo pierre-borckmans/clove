@@ -220,6 +220,16 @@ enum Cmd {
         #[arg(long)]
         all_repos: bool,
     },
+    /// How fast clones come: median and p90, where the time goes, which
+    /// clones reran setup, golden image builds, and the recent creations.
+    Stats {
+        /// Recent creations listed, newest first.
+        #[arg(short = 'n', long, default_value_t = 10)]
+        limit: usize,
+        /// Every repo clove manages, not just this one.
+        #[arg(long)]
+        all_repos: bool,
+    },
     /// Find leftovers from interrupted operations.
     Gc {
         /// Remove them (default: only list).
@@ -858,6 +868,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Doctor => cmd_doctor(&cli)?,
         Cmd::Prune { apply } => cmd_prune(&cli, *apply, r)?,
         Cmd::Log { limit, all_repos } => cmd_log(&cli, *limit, *all_repos)?,
+        Cmd::Stats { limit, all_repos } => cmd_stats(&cli, *limit, *all_repos)?,
         Cmd::Gc { apply } => {
             let c = repo(&cli)?;
             let actions = c.gc(*apply)?;
@@ -1869,6 +1880,158 @@ fn print_update(name: &str, u: &clove_core::update::Update) {
             );
         }
     }
+}
+
+/// `clove stats`: per repo, how long clones take and where the time goes.
+fn cmd_stats(cli: &Cli, limit: usize, all_repos: bool) -> Result<()> {
+    use clove_core::stats::{FAST_MS, RERAN_MS};
+    let repos: Vec<Clove> = if all_repos {
+        clove_core::known_repos()
+            .into_iter()
+            .filter_map(|r| Clove::open(&r.root).ok())
+            .collect()
+    } else {
+        vec![repo(cli)?]
+    };
+    if cli.json {
+        let v: Vec<serde_json::Value> = repos
+            .iter()
+            .map(|c| {
+                let mut created = c.created();
+                created.truncate(limit);
+                serde_json::json!({
+                    "repo": c.name,
+                    "root": c.root,
+                    "stats": c.stats(),
+                    "created": created,
+                    "golden_builds": c.golden_builds(),
+                })
+            })
+            .collect();
+        return emit(&v);
+    }
+    let now = clove_core::util::now_unix();
+    for (i, c) in repos.iter().enumerate() {
+        if i > 0 {
+            println!();
+        }
+        let created = c.created();
+        let s = clove_core::stats::stats(&created, &c.golden_builds());
+        if s.clones == 0 {
+            println!("{}  {}", paint(BOLD, &c.name), paint(DIM, "no clones made yet"));
+            continue;
+        }
+        println!(
+            "{}  {} clone{} · median {} · p90 {} · {} of {} under {}",
+            paint(BOLD, &c.name),
+            s.clones,
+            if s.clones == 1 { "" } else { "s" },
+            paint(BOLD, secs(s.median_ms)),
+            secs(s.p90_ms),
+            s.fast,
+            s.clones,
+            secs(FAST_MS),
+        );
+        if let Some(m) = s.clean_median_ms {
+            println!(
+                "  {} median {} when no setup step had to rerun",
+                paint(GREEN, "clove itself:"),
+                paint(BOLD, secs(m)),
+            );
+        }
+        if s.reran > 0 {
+            println!(
+                "  {} {} of {} reran setup (over {}): the branch changed what the golden image had set up",
+                paint(YELLOW, "setup:"),
+                s.reran,
+                s.clones,
+                secs(RERAN_MS),
+            );
+        }
+        if let Some(g) = s.golden_median_ms {
+            println!(
+                "  {} {} build{} logged · median {}",
+                paint(DIM, "golden:"),
+                s.golden_builds,
+                if s.golden_builds == 1 { "" } else { "s" },
+                secs(g),
+            );
+        }
+        println!(
+            "\n  {}",
+            paint(DIM, "WHERE THE TIME GOES (median, when the step ran)")
+        );
+        // Bars are on the scale of a clone that reran nothing, so clove's own
+        // steps stay readable; a rerun step past it overflows with ▸.
+        let scale = s.clean_median_ms.unwrap_or(s.median_ms).max(1.0);
+        let name_w = s.steps.iter().map(|x| x.step.len()).max().unwrap_or(4);
+        for x in &s.steps {
+            if x.max_ms < 5.0 {
+                continue;
+            }
+            let cells = ((x.median_ms / scale) * 24.0).round().max(1.0) as usize;
+            let bar = if cells > 24 {
+                format!("{}▸", "█".repeat(24))
+            } else {
+                "█".repeat(cells)
+            };
+            let runs = if x.runs < s.clones {
+                paint(DIM, format!("  in {} of {}", x.runs, s.clones))
+            } else {
+                String::new()
+            };
+            println!(
+                "  {:<name_w$}  {:>6}  {}  {}{runs}",
+                x.step,
+                secs(x.median_ms),
+                paint(DIM, format!("p90 {:>6}", secs(x.p90_ms))),
+                paint(
+                    if x.step.starts_with("setup ") {
+                        YELLOW
+                    } else {
+                        CYAN
+                    },
+                    bar
+                ),
+            );
+        }
+        println!("\n  {}", paint(DIM, "RECENT"));
+        let mut t = Table::new(&["WHEN", "NAME", "TOTAL", "MOUNT", "CHECKOUT", "SETUP", "OTHER"]);
+        for e in created.iter().take(limit) {
+            let step = |name: &str| e.timings.iter().find(|t| t.step == name).map(|t| t.ms);
+            let fmt = |ms: Option<f64>| ms.map(secs).unwrap_or_else(|| "–".into());
+            let total_style = if e.total_ms < FAST_MS {
+                GREEN
+            } else if e.reran() {
+                YELLOW
+            } else {
+                RED
+            };
+            let other = e.untimed_ms()
+                + e.timings
+                    .iter()
+                    .filter(|t| {
+                        !["mount", "checkout"].contains(&t.step.as_str()) && !t.step.starts_with("setup ")
+                    })
+                    .map(|t| t.ms)
+                    .sum::<f64>();
+            t.row(vec![
+                styled(DIM, clove_core::history::ago(now.saturating_sub(e.at))),
+                styled(BOLD, e.name.clone()),
+                styled(total_style, secs(e.total_ms)),
+                cell(fmt(step("mount"))),
+                cell(fmt(step("checkout"))),
+                if e.reran() {
+                    styled(YELLOW, secs(e.setup_ms()))
+                } else {
+                    cell(secs(e.setup_ms()))
+                },
+                styled(DIM, secs(other)),
+            ]);
+        }
+        t.print();
+    }
+    Ok(())
 }
 
 fn cmd_log(cli: &Cli, limit: usize, all_repos: bool) -> Result<()> {

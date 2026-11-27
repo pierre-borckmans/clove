@@ -22,6 +22,7 @@ export const keys = {
   service: ["service"] as const,
   agents: ["agents"] as const,
   history: ["history"] as const,
+  stats: ["stats"] as const,
   shell: ["shell"] as const,
   apps: ["apps"] as const,
   repoCandidates: ["repo-candidates"] as const,
@@ -319,4 +320,9 @@ export function useCloneDiff(root: string | undefined, name: string) {
     refetchInterval: POLL_MS,
     retry: false,
   });
+}
+
+/** Clone timings per repo (`clove stats --all-repos`). */
+export function useStats() {
+  return useQuery({ queryKey: keys.stats, queryFn: () => api.stats(12), refetchInterval: POLL_MS });
 }
