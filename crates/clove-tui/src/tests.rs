@@ -2240,3 +2240,223 @@ fn an_update_stopped_on_conflicts_offers_the_resolver() {
     let fx = key(&mut app, KeyCode::Esc);
     assert!(fx.is_empty() && app.modal.is_none(), "Esc leaves it stopped");
 }
+
+// ---- diff view ---------------------------------------------------------
+
+const DIFF: &str = "\
+diff --git a/apps/web/src/session.ts b/apps/web/src/session.ts
+index 1111111..2222222 100644
+--- a/apps/web/src/session.ts
++++ b/apps/web/src/session.ts
+@@ -1,6 +1,7 @@ import
+ import { cookies } from \"next/headers\";
+-import { verify } from \"./jwt\";
++import { verify, refresh } from \"./jwt\";
+ 
+-const MAX_AGE = 60 * 60 * 24;
++const MAX_AGE = 60 * 60 * 24 * 7;
++const REFRESH = 60 * 60;
+ export const COOKIE = \"session\";
+diff --git a/proto/orch/vm.proto b/proto/orch/vm.proto
+index 3333333..4444444 100644
+--- a/proto/orch/vm.proto
++++ b/proto/orch/vm.proto
+@@ -10,3 +10,4 @@ message Vm {
+   string id = 1;
++  string cron = 2;
+ }
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 5555555..6666666 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -1 +1 @@
+-lockfileVersion: '6.0'
++lockfileVersion: '9.0'
+";
+
+/// Opens the diff view on `fix-race` with a fixed patch, highlighting done.
+fn diff_app() -> App {
+    let mut app = app();
+    key(&mut app, KeyCode::Down);
+    let effects = key(&mut app, KeyCode::Char('v'));
+    let Some(Effect::LoadDiff { root, name }) = effects.first().cloned() else {
+        panic!("v asks for the diff: {effects:?}");
+    };
+    let diff = clove_core::CloneDiff {
+        base: "origin/main".into(),
+        merge_base: "abc".into(),
+        patch: DIFF.into(),
+        truncated: false,
+        skipped: vec![],
+        attrs: vec![],
+        packages: vec![clove_core::diff::Package {
+            dir: "apps/web".into(),
+            name: "@acme/web".into(),
+            manifest: "package.json".into(),
+        }],
+    };
+    let data = std::sync::Arc::new(crate::diffview::DiffData::new(diff));
+    let (tx, _rx) = std::sync::mpsc::channel();
+    let hl = crate::diffview::highlight(data.clone(), tx);
+    while !hl.finished() {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    app.on_msg(Msg::Diff {
+        root,
+        name,
+        result: Ok((data, hl)),
+    });
+    app
+}
+
+#[test]
+fn diff_view_split() {
+    let mut app = diff_app();
+    let (s, _) = render(&mut app, 140, 30);
+    insta::assert_snapshot!(s);
+}
+
+#[test]
+fn diff_view_unified_grouped_with_a_lockfile_opened() {
+    let mut app = diff_app();
+    key(&mut app, KeyCode::Char('s'));
+    key(&mut app, KeyCode::Char('g'));
+    let (s, _) = render(&mut app, 120, 30);
+    assert!(s.contains("▸ ◆ apps/web"), "{s}");
+    assert!(s.contains("lockfile · z shows it"), "{s}");
+    // The lockfile sits in the repository root's group, first: open the
+    // group, step onto the file, unfold it.
+    key(&mut app, KeyCode::Enter);
+    key(&mut app, KeyCode::Char('j'));
+    key(&mut app, KeyCode::Char('z'));
+    let (s, _) = render(&mut app, 120, 30);
+    insta::assert_snapshot!(s);
+    assert!(s.contains("lockfileVersion: '9.0'"), "{s}");
+    assert!(key(&mut app, KeyCode::Esc).is_empty());
+    assert!(app.modal.is_none());
+}
+
+/// Every scroll position, in every mode, with the wheel and the keys: the
+/// view must never panic, whatever row (a gap between files, say) is on top.
+#[test]
+fn diff_view_survives_every_scroll_position() {
+    use ratatui::crossterm::event::{MouseEvent, MouseEventKind};
+    for keys in [&[][..], &['g'], &['s'], &['s', 'g', 'w'], &['o', 'g', 'f']] {
+        let mut app = diff_app();
+        for &c in keys {
+            key(&mut app, KeyCode::Char(c));
+        }
+        let (_, buf) = render(&mut app, 100, 18);
+        // Every row on top, gaps between files included.
+        for top in 0..120 {
+            if let Some(crate::model::Modal::Diff(v)) = &mut app.modal {
+                v.top = top;
+            }
+            render(&mut app, 100, 18);
+            key(&mut app, KeyCode::Char('j'));
+            render(&mut app, 100, 18);
+        }
+        for _ in 0..60 {
+            for (x, y) in [(60, 10), (5, 10), (60, 1), (60, 17)] {
+                app.on_input(TermEvent::Mouse(MouseEvent {
+                    kind: MouseEventKind::ScrollDown,
+                    column: x,
+                    row: y,
+                    modifiers: KeyModifiers::NONE,
+                }));
+            }
+            render(&mut app, 100, 18);
+        }
+        for c in [
+            KeyCode::End,
+            KeyCode::Char('j'),
+            KeyCode::Char('k'),
+            KeyCode::Char(' '),
+            KeyCode::Char('z'),
+        ] {
+            key(&mut app, c);
+            render(&mut app, 100, 18);
+        }
+        for _ in 0..400 {
+            app.on_input(TermEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: 60,
+                row: 10,
+                modifiers: KeyModifiers::NONE,
+            }));
+            render(&mut app, 100, 18);
+        }
+        assert!(
+            matches!(app.modal, Some(crate::model::Modal::Diff(_))),
+            "still open after {keys:?}"
+        );
+        let _ = buf;
+    }
+}
+
+/// Hovering a panel of the diff view lights up nothing but a file row: the
+/// panels scroll, they are not buttons.
+#[test]
+fn diff_view_hover_marks_only_rows() {
+    use ratatui::crossterm::event::{MouseEvent, MouseEventKind};
+    let mut app = diff_app();
+    render(&mut app, 120, 24);
+    let mv = |app: &mut App, column, row| {
+        app.on_input(TermEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Moved,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }));
+    };
+    // Over diff text: nothing turns green.
+    mv(&mut app, 80, 12);
+    let (s, buf) = render(&mut app, 120, 24);
+    let (x, y) = find(&s, "export const COOKIE");
+    assert_ne!(buf[(x, y)].fg, theme::SAGE, "{s}");
+    // Over a file row: that row is highlighted, the next one is not.
+    let (x, y) = find(&s, "vm.proto");
+    mv(&mut app, x, y);
+    let (s, buf) = render(&mut app, 120, 24);
+    assert_eq!(buf[(x, y)].fg, theme::SAGE, "{s}");
+    let (x2, y2) = find(&s, "pnpm-lock.yaml");
+    assert_ne!(buf[(x2, y2)].fg, theme::SAGE, "{s}");
+}
+
+/// The file list and the diff are a split like the main screen's: } widens
+/// the list, = puts it back, and the border can be dragged.
+#[test]
+fn diff_view_panels_resize() {
+    use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let mut app = diff_app();
+    let list_right = |s: &str| {
+        let line = s.lines().find(|l| l.contains("╭ files")).unwrap();
+        line.chars().position(|c| c == '╮').unwrap()
+    };
+    let (s, _) = render(&mut app, 120, 24);
+    let start = list_right(&s);
+    assert_eq!(key(&mut app, KeyCode::Char('}')), vec![Effect::SaveLayout]);
+    let (s, _) = render(&mut app, 120, 24);
+    assert_eq!(list_right(&s), start + 2);
+    key(&mut app, KeyCode::Char('='));
+    let (s, _) = render(&mut app, 120, 24);
+    assert_eq!(list_right(&s), start);
+    // Drag the border 6 columns to the right.
+    let y = 10;
+    let ev = |kind, column| {
+        TermEvent::Mouse(MouseEvent {
+            kind,
+            column,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+    let x = start as u16;
+    app.on_input(ev(MouseEventKind::Down(MouseButton::Left), x));
+    app.on_input(ev(MouseEventKind::Drag(MouseButton::Left), x + 6));
+    let saved = app.on_input(ev(MouseEventKind::Up(MouseButton::Left), x + 6));
+    assert_eq!(saved, vec![Effect::SaveLayout]);
+    let (s, _) = render(&mut app, 120, 24);
+    assert_eq!(list_right(&s), start + 6, "{s}");
+    assert!(matches!(app.modal, Some(crate::model::Modal::Diff(_))));
+}

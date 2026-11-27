@@ -207,7 +207,7 @@ fn hover_panel(f: &mut Frame, app: &App) {
 
 // ---- building blocks -------------------------------------------------
 
-fn panel<'a>(title_spans: Vec<Span<'a>>, focus: bool) -> Block<'a> {
+pub(crate) fn panel<'a>(title_spans: Vec<Span<'a>>, focus: bool) -> Block<'a> {
     let mut t = vec![Span::raw(" ")];
     t.extend(title_spans);
     t.push(Span::raw(" "));
@@ -243,7 +243,7 @@ fn line_width(l: &Line) -> usize {
 }
 
 /// A thin scrollbar on a border column: `│` track, `┃` thumb.
-fn scrollbar(f: &mut Frame, track: Rect, offset: usize, view: usize, len: usize) {
+pub(crate) fn scrollbar(f: &mut Frame, track: Rect, offset: usize, view: usize, len: usize) {
     if len <= view || track.height == 0 {
         return;
     }
@@ -1858,6 +1858,20 @@ fn hints(app: &App) -> Vec<Hint> {
             v.push(("esc", "close", Esc));
             v
         }
+        Some(Modal::Diff(_)) => {
+            let p = app.diff_prefs;
+            vec![
+                ("↑↓", "file", Down),
+                ("space", "page", Char(' ')),
+                ("⏎", "open", Enter),
+                ("s", if p.split { "unified" } else { "split" }, Char('s')),
+                ("w", if p.wrap { "no wrap" } else { "wrap" }, Char('w')),
+                ("o", if p.by_changes { "by path" } else { "by size" }, Char('o')),
+                ("g", if p.grouped { "ungroup" } else { "packages" }, Char('g')),
+                ("e", "edit", Char('e')),
+                ("esc", "back", Esc),
+            ]
+        }
         Some(Modal::Doctor(_)) | Some(Modal::Removals(_)) => {
             vec![("↑↓", "scroll", Down), ("esc", "close", Esc)]
         }
@@ -1909,11 +1923,12 @@ fn hints(app: &App) -> Vec<Hint> {
                     ("/", "filter", Char('/')),
                 ]);
             } else if let Some(c) = app.selected_clone() {
-                v.extend([
-                    ("⏎", "cd", Enter),
-                    ("n", "new", Char('n')),
-                    ("d", "remove", Char('d')),
-                ]);
+                v.push(("⏎", "cd", Enter));
+                // Early in the bar, so a narrow terminal still shows it.
+                if c.mounted {
+                    v.push(("v", "changes", Char('v')));
+                }
+                v.extend([("n", "new", Char('n')), ("d", "remove", Char('d'))]);
                 v.push(if c.mounted {
                     ("u", "unmount", Char('u'))
                 } else {
@@ -2162,6 +2177,13 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect, list: Rect) {
         Modal::Doctor(d) => draw_doctor(f, app, area, d),
         Modal::Removals(v) => draw_removals(f, app, area, v),
         Modal::Settings(v) => draw_settings(f, app, area, v),
+        Modal::Diff(mut v) => {
+            crate::diffview::draw(f, app, area, &mut v);
+            // Drawing settles scroll and rows: keep them for the next frame.
+            if matches!(app.modal, Some(Modal::Diff(_))) {
+                app.modal = Some(Modal::Diff(v));
+            }
+        }
         Modal::Job(id) => draw_job(f, app, area, id),
         Modal::AddRepo(v) => crate::add_repo::draw(f, app, area, &v),
     }
@@ -2352,6 +2374,7 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
                 ("m / u", "mount / unmount"),
                 ("U / X", "update to latest base / abort"),
                 ("o", "open in $EDITOR"),
+                ("v", "see its changes (diff)"),
                 ("c", "make a plain git worktree a clone"),
                 ("/", "filter by name or branch"),
                 ("↑↓ jk", "move · wheel scrolls"),

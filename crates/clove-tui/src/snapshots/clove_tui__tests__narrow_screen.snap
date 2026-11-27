@@ -1,6 +1,5 @@
 ---
 source: crates/clove-tui/src/tests.rs
-assertion_line: 436
 expression: s
 ---
 ╭ clove ──────────────────────────────────────────────────  app   mono   web  ─╮
@@ -22,4 +21,4 @@ expression: s
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
- ⏎ cd  n new  d remove  u unmount  U update  r refresh  ? help  q quit
+ ⏎ cd  v changes  n new  d remove  u unmount  U update  ? help  q quit

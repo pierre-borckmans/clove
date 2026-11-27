@@ -102,6 +102,19 @@ enum Cmd {
         #[arg(add = ArgValueCompleter::new(complete::clones))]
         clone: String,
     },
+    /// A clone's changes against its base: committed, staged, unstaged and
+    /// untracked. Pages the patch in a terminal; `--stat` counts per file.
+    Diff {
+        /// The clone (default: the one you are in).
+        #[arg(add = ArgValueCompleter::new(complete::clones))]
+        clone: Option<String>,
+        /// Changed lines per file instead of the patch.
+        #[arg(long)]
+        stat: bool,
+        /// Counts per package (the nearest package.json, Cargo.toml, go.mod…).
+        #[arg(long)]
+        packages: bool,
+    },
     /// Run a command inside a clone, in its dev environment (direnv/mise).
     #[command(visible_alias = "exec")]
     Run {
@@ -594,6 +607,15 @@ fn run(cli: Cli) -> Result<()> {
             cmd_update(
                 &cli, clones, *all, mode, strategy, *autostash, !*no_fetch, *resolve, r,
             )?;
+        }
+        Cmd::Diff {
+            clone,
+            stat,
+            packages,
+        } => {
+            let c = repo(&cli)?;
+            let name = c.resolve(clone.as_deref().unwrap_or("."))?;
+            cmd_diff(&cli, &c, &name, *stat, *packages)?;
         }
         Cmd::Setup { clone, all } => {
             let c = repo(&cli)?;
@@ -2606,6 +2628,170 @@ fn plain_worktree_remove(path: &Path) -> Result<()> {
     }
     let p = path.to_string_lossy().to_string();
     clove_core::git::run_ok(path, &["worktree", "remove", &p]).context("git worktree remove")
+}
+
+/// `clove diff`: the patch (paged in a terminal), per-file or per-package
+/// counts, or with --json everything a script or agent needs.
+fn cmd_diff(cli: &Cli, c: &Clove, name: &str, stat: bool, packages: bool) -> Result<()> {
+    use clove_core::patch::{self, Change};
+    let d = c.diff(name)?;
+    let files = patch::parse(&d.patch);
+    if cli.json {
+        let list: Vec<_> = files
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "path": f.path,
+                    "old_path": f.old_path,
+                    "change": f.change,
+                    "added": f.added,
+                    "removed": f.removed,
+                    "binary": f.binary,
+                    "fold": patch::fold(f, patch::attrs_of(&d, &f.path)),
+                    "group": patch::group_of(&f.path, &d.packages).0,
+                })
+            })
+            .collect();
+        let mut v = serde_json::to_value(&d)?;
+        v["files"] = serde_json::json!(list);
+        println!("{}", serde_json::to_string_pretty(&v)?);
+        return Ok(());
+    }
+    let tty = std::io::stdout().is_terminal();
+    if files.is_empty() {
+        eprintln!("{name} matches {}: nothing committed, staged or modified", d.base);
+        return Ok(());
+    }
+    if stat || packages {
+        let (a, r) = files
+            .iter()
+            .fold((0, 0), |(a, r), f| (a + f.added, r + f.removed));
+        let nums = |a: u32, r: u32| {
+            format!(
+                "{} {}",
+                paint(GREEN, format!("{:>6}", format!("+{a}"))),
+                paint(RED, format!("{:<6}", format!("−{r}")))
+            )
+        };
+        if packages {
+            let mut groups: Vec<(String, u32, u32, usize)> = vec![];
+            for f in &files {
+                let key = patch::group_of(&f.path, &d.packages).0;
+                match groups.iter_mut().find(|g| g.0 == key) {
+                    Some(g) => {
+                        g.1 += f.added;
+                        g.2 += f.removed;
+                        g.3 += 1;
+                    }
+                    None => groups.push((key, f.added, f.removed, 1)),
+                }
+            }
+            groups.sort_by_key(|g| std::cmp::Reverse(g.1 + g.2));
+            for (key, a, r, n) in &groups {
+                let label = if key.is_empty() { "(repository root)" } else { key };
+                println!(
+                    "{} {label} {}",
+                    nums(*a, *r),
+                    paint(DIM, format!("{n} file{}", if *n == 1 { "" } else { "s" }))
+                );
+            }
+        } else {
+            for f in &files {
+                let mark = match f.change {
+                    Change::Added => paint(GREEN, "A"),
+                    Change::Deleted => paint(RED, "D"),
+                    Change::Renamed => paint(CYAN, "R"),
+                    Change::Modified => paint(YELLOW, "M"),
+                };
+                let from = f
+                    .old_path
+                    .as_ref()
+                    .map(|o| paint(DIM, format!(" ← {o}")))
+                    .unwrap_or_default();
+                let bin = if f.binary {
+                    paint(DIM, " binary")
+                } else {
+                    String::new()
+                };
+                println!("{} {mark} {}{from}{bin}", nums(f.added, f.removed), f.path);
+            }
+        }
+        println!(
+            "{} {}",
+            nums(a, r),
+            paint(
+                DIM,
+                format!(
+                    "{} files vs {} (from {})",
+                    files.len(),
+                    d.base,
+                    &d.merge_base[..d.merge_base.len().min(10)]
+                )
+            )
+        );
+        return Ok(());
+    }
+    if !tty {
+        // `clove diff | head` closes the pipe early: that is not an error.
+        let _ = std::io::Write::write_all(&mut std::io::stdout(), d.patch.as_bytes());
+        return Ok(());
+    }
+    // In a terminal: colour it like git, and page it like git.
+    let mut out = String::with_capacity(d.patch.len() + d.patch.len() / 8);
+    for line in d.patch.lines() {
+        let style = if line.starts_with("diff --git") || line.starts_with("+++ ") || line.starts_with("--- ")
+        {
+            BOLD
+        } else if line.starts_with("@@") {
+            CYAN
+        } else if line.starts_with('+') {
+            GREEN
+        } else if line.starts_with('-') {
+            RED
+        } else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        out.push_str(&paint(style, line));
+        out.push('\n');
+    }
+    page(&out)
+}
+
+fn stdout_write(text: &str) -> std::io::Result<()> {
+    std::io::Write::write_all(&mut std::io::stdout(), text.as_bytes())
+}
+
+/// Writes through `$PAGER` (default `less -FRX`), or straight out without one.
+fn page(text: &str) -> Result<()> {
+    use std::io::Write;
+    let pager = std::env::var("PAGER").ok().filter(|p| !p.trim().is_empty());
+    let mut cmd = match &pager {
+        Some(p) => {
+            let mut c = std::process::Command::new("sh");
+            c.arg("-c").arg(p);
+            c
+        }
+        None => {
+            let mut c = std::process::Command::new("less");
+            c.arg("-FRX");
+            c
+        }
+    };
+    match cmd.stdin(std::process::Stdio::piped()).spawn() {
+        Ok(mut child) => {
+            if let Some(mut stdin) = child.stdin.take() {
+                // A pager quit early closes the pipe: not an error.
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            child.wait()?;
+        }
+        Err(_) => {
+            let _ = stdout_write(text);
+        }
+    }
+    Ok(())
 }
 
 /// `clove` with no command: the mark, where this repo stands, and what to type next.

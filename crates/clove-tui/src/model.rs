@@ -163,6 +163,20 @@ pub enum Msg {
     Preview(Box<RepoData>),
     Event(u64, clove_core::Event),
     Done(u64, Result<Outcome, String>),
+    /// A clone's diff, read and parsed; highlighting continues in the background.
+    Diff {
+        root: PathBuf,
+        name: String,
+        result: Result<
+            (
+                std::sync::Arc<crate::diffview::DiffData>,
+                std::sync::Arc<crate::diffview::Highlights>,
+            ),
+            String,
+        >,
+    },
+    /// Another file of an open diff got its syntax colours.
+    DiffHighlighted,
     /// Git repos clove could start managing (add-repo dialog).
     ReposFound(Vec<clove_core::RepoCandidate>),
     /// What `init` would do for a path (add-repo dialog).
@@ -660,6 +674,8 @@ pub enum Modal {
     Gc(GcView),
     Doctor(DoctorView),
     Settings(SettingsView),
+    /// A clone's changes against its base.
+    Diff(Box<crate::diffview::DiffView>),
     Job(u64),
     AddRepo(Box<crate::add_repo::AddRepo>),
 }
@@ -721,6 +737,10 @@ pub enum Hit {
     ScrollDoctor,
     ScrollRemovals,
     ScrollSettings,
+    ScrollDiff,
+    ScrollDiffList,
+    /// An entry of the diff view's file list.
+    DiffEntry(usize),
     /// A remove-dialog row: focus it and toggle it.
     RemoveRow(RemoveItem),
     /// A settings row: focus it.
@@ -768,6 +788,8 @@ impl Hit {
                 | Hit::ScrollDoctor
                 | Hit::ScrollRemovals
                 | Hit::ScrollSettings
+                | Hit::ScrollDiff
+                | Hit::ScrollDiffList
                 | Hit::Inert
                 | Hit::Dismiss
         )

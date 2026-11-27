@@ -121,6 +121,21 @@ pub fn check_prs(tx: Sender<Msg>, root: PathBuf) {
     });
 }
 
+/// Reads a clone's changes, parses them, and starts highlighting.
+pub fn load_diff(tx: Sender<Msg>, root: PathBuf, name: String) {
+    std::thread::spawn(move || {
+        let result = clove_core::Clove::open(&root)
+            .and_then(|c| c.diff(&name))
+            .map(|d| {
+                let data = std::sync::Arc::new(crate::diffview::DiffData::new(d));
+                let hl = crate::diffview::highlight(data.clone(), tx.clone());
+                (data, hl)
+            })
+            .map_err(|e| format!("{e:#}"));
+        let _ = tx.send(Msg::Diff { root, name, result });
+    });
+}
+
 pub fn load_refs(tx: Sender<Msg>, root: PathBuf) {
     std::thread::spawn(move || {
         let out = clove_core::git::out(

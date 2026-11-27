@@ -46,6 +46,11 @@ pub enum Effect {
         root: PathBuf,
         name: String,
     },
+    /// Read a clone's changes for the diff view.
+    LoadDiff {
+        root: PathBuf,
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -138,6 +143,8 @@ pub struct App {
     /// Whether coding agents know clove; None when there are none (or before
     /// the first load).
     pub agents: Option<clove_core::agents::State>,
+    /// Split or unified, wrap, sort and grouping of the diff view.
+    pub diff_prefs: crate::diffview::DiffPrefs,
     /// Lines the settings view showed last frame (for page up/down).
     pub settings_height: usize,
 }
@@ -189,6 +196,7 @@ impl App {
             integrated: false,
             service: None,
             agents: None,
+            diff_prefs: Default::default(),
             seen_removal: HashMap::new(),
             settings_height: 10,
         }
@@ -456,7 +464,11 @@ impl App {
     /// Something shows progress or is about to change: toasts, jobs, a load,
     /// a tooltip on its way.
     fn waiting(&self) -> bool {
-        !self.toasts.is_empty() || self.running().next().is_some() || self.loading || self.tip_pending()
+        !self.toasts.is_empty()
+            || self.running().next().is_some()
+            || self.loading
+            || self.tip_pending()
+            || matches!(&self.modal, Some(Modal::Diff(v)) if v.busy())
     }
 
     /// A tooltip may be about to show: keep redrawing so it appears on time.
@@ -860,6 +872,22 @@ impl App {
 
     pub fn on_msg(&mut self, msg: Msg) -> Vec<Effect> {
         match msg {
+            Msg::Diff { root, name, result } => {
+                match &mut self.modal {
+                    Some(Modal::Diff(v)) if v.root == root && v.name == name => v.set(match result {
+                        Ok((data, hl)) => crate::diffview::Load::Ready(data, hl),
+                        Err(e) => crate::diffview::Load::Failed(e),
+                    }),
+                    // Closed meanwhile: stop highlighting what nobody will see.
+                    _ => {
+                        if let Ok((_, hl)) = result {
+                            hl.stop();
+                        }
+                    }
+                }
+                vec![]
+            }
+            Msg::DiffHighlighted => vec![],
             Msg::Loaded {
                 root,
                 data,
@@ -1162,6 +1190,7 @@ impl App {
                 self.filtering = true;
             }
             KeyCode::Char('?') => self.modal = Some(Modal::Help),
+            KeyCode::Char('v') => return self.open_diff(),
             KeyCode::Char('g') => {
                 if self.repo().is_none() {
                     return vec![];
@@ -1227,6 +1256,79 @@ impl App {
             vec![Effect::SaveLayout]
         } else {
             vec![]
+        }
+    }
+
+    /// `v`: the selected clone's changes against its base.
+    fn open_diff(&mut self) -> Vec<Effect> {
+        let Some(root) = self.root() else { return vec![] };
+        let Some(c) = self.selected_clone().cloned() else {
+            self.toast(ToastKind::Info, "select a clone to see its changes");
+            return vec![];
+        };
+        if !c.mounted {
+            self.toast(ToastKind::Info, format!("{} is unmounted: m mounts it", c.name));
+            return vec![];
+        }
+        self.modal = Some(Modal::Diff(Box::new(crate::diffview::DiffView::new(
+            root.clone(),
+            c.name.clone(),
+            c.branch.clone(),
+        ))));
+        vec![Effect::LoadDiff { root, name: c.name }]
+    }
+
+    fn diff_key(
+        &mut self,
+        mut v: Box<crate::diffview::DiffView>,
+        k: KeyEvent,
+    ) -> (Option<Modal>, Vec<Effect>) {
+        use crate::diffview::KeyResult;
+        // `{` `}` move the border between the file list and the diff, `=` resets it.
+        let resize = match k.code {
+            KeyCode::Char('{') => Some(-2),
+            KeyCode::Char('}') => Some(2),
+            KeyCode::Char('=') => Some(0),
+            _ => None,
+        };
+        if let Some(delta) = resize {
+            let split = &mut self.panes.diff;
+            let changed = if delta == 0 {
+                split.reset_all();
+                true
+            } else {
+                split.move_divider(panes::DIFF_FILES, delta)
+            };
+            let effects = if changed { vec![Effect::SaveLayout] } else { vec![] };
+            return (Some(Modal::Diff(v)), effects);
+        }
+        let mut prefs = self.diff_prefs;
+        let r = v.key(k, &mut prefs);
+        self.diff_prefs = prefs;
+        match r {
+            KeyResult::Close => {
+                v.stop();
+                (None, vec![])
+            }
+            KeyResult::Reload => {
+                v.reloading();
+                let e = Effect::LoadDiff {
+                    root: v.root.clone(),
+                    name: v.name.clone(),
+                };
+                (Some(Modal::Diff(v)), vec![e])
+            }
+            KeyResult::Edit(path) => {
+                let clone = self
+                    .current()
+                    .and_then(|d| d.clones.iter().find(|c| c.name == v.name))
+                    .map(|c| c.path.join(&path));
+                (
+                    Some(Modal::Diff(v)),
+                    clone.map(Effect::OpenEditor).into_iter().collect(),
+                )
+            }
+            KeyResult::None => (Some(Modal::Diff(v)), vec![]),
         }
     }
 
@@ -1558,6 +1660,7 @@ impl App {
             Modal::Removals(v) => self.removals_key(v, k),
             Modal::ResolveOffer(o) => self.resolve_offer_key(o, k),
             Modal::Settings(v) => self.settings_key(v, k),
+            Modal::Diff(v) => self.diff_key(v, k),
             Modal::Job(id) => self.job_key(id, k),
             Modal::AddRepo(v) => self.add_repo_key(v, k),
         };
@@ -2128,6 +2231,8 @@ impl App {
                                     | Hit::ScrollDoctor
                                     | Hit::ScrollRemovals
                                     | Hit::ScrollSettings
+                                    | Hit::ScrollDiff
+                                    | Hit::ScrollDiffList
                             )
                     })
                     .map(|(_, h)| *h);
@@ -2146,6 +2251,11 @@ impl App {
                             v.follow = false;
                             let t = v.scroll.target() as isize + d * 2;
                             v.scroll.set(t.max(0) as usize);
+                        }
+                    }
+                    Some(h @ (Hit::ScrollDiff | Hit::ScrollDiffList)) => {
+                        if let Some(Modal::Diff(v)) = &mut self.modal {
+                            v.wheel(h == Hit::ScrollDiffList, d);
                         }
                     }
                     Some(Hit::ScrollRemovals) => {
@@ -2177,6 +2287,13 @@ impl App {
                     if double {
                         self.last_click = None;
                         return self.cd_selected();
+                    }
+                    vec![]
+                }
+                Some(Hit::DiffEntry(i)) => {
+                    let prefs = self.diff_prefs;
+                    if let Some(Modal::Diff(v)) = &mut self.modal {
+                        v.click_entry(i, prefs);
                     }
                     vec![]
                 }
