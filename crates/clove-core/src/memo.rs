@@ -10,11 +10,18 @@
 //! tree also expire: quickly, unless a recursive watcher covers the tree and
 //! calls [`invalidate_under`] on changes. One-shot CLI commands start with an
 //! empty memo, so they always ask git.
+//!
+//! Some answers are also saved to disk ([`get_tree_saved`]), so a UI that
+//! just started can show the last known answer while it asks git again.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime};
+
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 /// What an answer depends on.
 #[derive(Debug, Clone)]
@@ -35,7 +42,7 @@ impl Dep {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum Part {
     File(Option<(SystemTime, u64)>),
     Ref(Option<String>),
@@ -97,13 +104,7 @@ pub fn get<T: Clone + Send + 'static>(key: &str, deps: &[Dep], compute: impl FnO
 /// `compute`'s answer for `key`, reused for `max_age`: for numbers that drift
 /// slowly and are only shown, like disk usage.
 pub fn get_aged<T: Clone + Send + 'static>(key: &str, max_age: Duration, compute: impl FnOnce() -> T) -> T {
-    let hit = || {
-        let m = MEMO.lock().unwrap_or_else(|e| e.into_inner());
-        let e = m.get(key)?;
-        (e.at.elapsed() < max_age)
-            .then(|| e.value.downcast_ref::<T>().cloned())
-            .flatten()
-    };
+    let hit = || aged_hit::<T>(key, max_age);
     if let Some(v) = hit() {
         return v;
     }
@@ -132,6 +133,46 @@ pub fn get_aged<T: Clone + Send + 'static>(key: &str, max_age: Duration, compute
     v
 }
 
+/// Like [`get_aged`], and the answer is saved to disk. With [`serve_saved`]
+/// on, an expired or missing answer is the saved one, if any, while a new one
+/// is worked out in the background: sizes are only shown, and measuring a
+/// dozen images takes a few hundred milliseconds.
+pub fn get_aged_saved<T>(
+    key: &str,
+    tree: &Path,
+    max_age: Duration,
+    compute: impl FnOnce() -> T + Send + 'static,
+) -> T
+where
+    T: Clone + Send + Serialize + DeserializeOwned + 'static,
+{
+    if !serving_saved() {
+        return get_aged(key, max_age, compute);
+    }
+    if let Some(v) = aged_hit(key, max_age) {
+        return v;
+    }
+    if let Some(v) = disk::load::<T>(key, &vec![]) {
+        let (key, tree) = (key.to_string(), tree.to_path_buf());
+        background::queue(key.clone(), move || {
+            let v = get_aged(&key, max_age, compute);
+            disk::save(&key, &tree, &vec![], &v);
+        });
+        return v;
+    }
+    let v = get_aged(key, max_age, compute);
+    disk::save(key, tree, &vec![], &v);
+    v
+}
+
+fn aged_hit<T: Clone + 'static>(key: &str, max_age: Duration) -> Option<T> {
+    let m = MEMO.lock().unwrap_or_else(|e| e.into_inner());
+    let e = m.get(key)?;
+    (e.at.elapsed() < max_age)
+        .then(|| e.value.downcast_ref::<T>().cloned())
+        .flatten()
+}
+
 /// How long disk usage figures are reused.
 pub const SIZE_TTL: Duration = Duration::from_secs(60);
 
@@ -156,6 +197,17 @@ pub fn get_tree_by<T: Clone + Send + 'static>(
     lookup(key, Some(tree), deps, recheck, compute)
 }
 
+/// The memo's answer for `key`, if still good.
+fn hit<T: Clone + 'static>(key: &str, tree: Option<&Path>, deps: &[Dep]) -> Option<T> {
+    let ttl = tree.map(|t| if is_watched(t) { WATCHED_TTL } else { UNWATCHED_TTL });
+    let now = stamp(deps);
+    let m = MEMO.lock().unwrap_or_else(|e| e.into_inner());
+    let e = m.get(key)?;
+    let fresh =
+        e.stamp == now && ttl.is_none_or(|t| e.at.elapsed() < t) && !(e.stale && e.at.elapsed() >= e.recheck);
+    fresh.then(|| e.value.downcast_ref::<T>().cloned()).flatten()
+}
+
 fn lookup<T: Clone + Send + 'static>(
     key: &str,
     tree: Option<&Path>,
@@ -163,16 +215,7 @@ fn lookup<T: Clone + Send + 'static>(
     recheck: impl Fn(&T) -> Duration,
     compute: impl FnOnce() -> T,
 ) -> T {
-    let ttl = tree.map(|t| if is_watched(t) { WATCHED_TTL } else { UNWATCHED_TTL });
-    let hit = || {
-        let now = stamp(deps);
-        let m = MEMO.lock().unwrap_or_else(|e| e.into_inner());
-        let e = m.get(key)?;
-        let fresh = e.stamp == now
-            && ttl.is_none_or(|t| e.at.elapsed() < t)
-            && !(e.stale && e.at.elapsed() >= e.recheck);
-        fresh.then(|| e.value.downcast_ref::<T>().cloned()).flatten()
-    };
+    let hit = || hit::<T>(key, tree, deps);
     if let Some(v) = hit() {
         return v;
     }
@@ -199,6 +242,239 @@ fn lookup<T: Clone + Send + 'static>(
         .unwrap_or_else(|e| e.into_inner())
         .insert(key.to_string(), entry);
     v
+}
+
+/// An answer from [`get_tree_saved`].
+#[derive(Debug, Clone)]
+pub struct Saved<T> {
+    /// None while the first answer is being worked out.
+    pub value: Option<T>,
+    /// Being asked again in the background: `value` may be out of date.
+    pub pending: bool,
+}
+
+static SERVE_SAVED: AtomicBool = AtomicBool::new(false);
+
+/// For long-running UIs: [`get_tree_saved`] answers at once from the saved
+/// copy and asks git in the background, one tree at a time. Off, it asks git
+/// before answering, as one-shot commands must.
+pub fn serve_saved(on: bool) {
+    SERVE_SAVED.store(on, Ordering::Relaxed);
+}
+
+pub fn serving_saved() -> bool {
+    SERVE_SAVED.load(Ordering::Relaxed)
+}
+
+/// Like [`get_tree_by`], and the answer is saved to disk. With
+/// [`serve_saved`] on and `saved_ok`, a miss returns the saved answer, if its
+/// deps still match, and works out a new one in the background.
+pub fn get_tree_saved<T>(
+    key: &str,
+    tree: &Path,
+    deps: &[Dep],
+    saved_ok: bool,
+    recheck: impl Fn(&T) -> Duration + Send + 'static,
+    compute: impl FnOnce() -> T + Send + 'static,
+) -> Saved<T>
+where
+    T: Clone + Send + Serialize + DeserializeOwned + 'static,
+{
+    saved_lookup(
+        SERVE_SAVED.load(Ordering::Relaxed),
+        key,
+        tree,
+        deps,
+        saved_ok,
+        recheck,
+        compute,
+    )
+}
+
+fn saved_lookup<T>(
+    serve: bool,
+    key: &str,
+    tree: &Path,
+    deps: &[Dep],
+    saved_ok: bool,
+    recheck: impl Fn(&T) -> Duration + Send + 'static,
+    compute: impl FnOnce() -> T + Send + 'static,
+) -> Saved<T>
+where
+    T: Clone + Send + Serialize + DeserializeOwned + 'static,
+{
+    // One-shot commands neither read nor write the saved copy.
+    if !serve {
+        return Saved {
+            value: Some(lookup(key, Some(tree), deps, &recheck, compute)),
+            pending: false,
+        };
+    }
+    if !saved_ok {
+        let v = lookup(key, Some(tree), deps, &recheck, compute);
+        disk::save(key, tree, &stamp(deps), &v);
+        return Saved {
+            value: Some(v),
+            pending: false,
+        };
+    }
+    if let Some(v) = hit::<T>(key, Some(tree), deps) {
+        return Saved {
+            value: Some(v),
+            pending: false,
+        };
+    }
+    let saved = disk::load::<T>(key, &stamp(deps));
+    let (key, tree, deps) = (key.to_string(), tree.to_path_buf(), deps.to_vec());
+    background::queue(key.clone(), move || {
+        let v = lookup(&key, Some(&tree), &deps, &recheck, compute);
+        disk::save(&key, &tree, &stamp(&deps), &v);
+    });
+    Saved {
+        value: saved,
+        pending: true,
+    }
+}
+
+/// Saved answers, one file for every repo. Losing it costs one slow start.
+mod disk {
+    use super::*;
+
+    #[derive(Serialize, Deserialize)]
+    struct Item {
+        tree: PathBuf,
+        stamp: Stamp,
+        value: serde_json::Value,
+    }
+
+    type Items = HashMap<String, Item>;
+
+    static ITEMS: LazyLock<Mutex<Option<Items>>> = LazyLock::new(Default::default);
+
+    fn path() -> PathBuf {
+        if cfg!(test) {
+            return std::env::temp_dir().join(format!(
+                "clove-memo-test-{}/status-cache.json",
+                std::process::id()
+            ));
+        }
+        crate::repo::state_home().join("status-cache.json")
+    }
+
+    fn read() -> Items {
+        std::fs::read(path())
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
+    }
+
+    pub(super) fn load<T: DeserializeOwned>(key: &str, now: &Stamp) -> Option<T> {
+        let mut items = ITEMS.lock().unwrap_or_else(|e| e.into_inner());
+        let item = items.get_or_insert_with(read).get(key)?;
+        // A moved index, HEAD or ref means the saved answer is wrong; only
+        // working-tree edits since can't be told apart, as in memory.
+        (item.stamp == *now)
+            .then(|| serde_json::from_value(item.value.clone()).ok())
+            .flatten()
+    }
+
+    pub(super) fn save<T: Serialize>(key: &str, tree: &Path, stamp: &Stamp, v: &T) {
+        let Ok(value) = serde_json::to_value(v) else {
+            return;
+        };
+        let mut items = ITEMS.lock().unwrap_or_else(|e| e.into_inner());
+        let items = items.get_or_insert_with(read);
+        if items
+            .get(key)
+            .is_some_and(|i| i.stamp == *stamp && i.value == value)
+        {
+            return;
+        }
+        let item = Item {
+            tree: tree.to_path_buf(),
+            stamp: stamp.clone(),
+            value,
+        };
+        items.insert(key.to_string(), item);
+        let path = path();
+        let Some(dir) = path.parent() else { return };
+        let _ = std::fs::create_dir_all(dir);
+        // Other clove processes save here too: merge under a lock, keep
+        // their entries, drop ones for trees that are gone.
+        let Ok(_lock) = crate::util::FileLock::acquire(&dir.join("status-cache.lock")) else {
+            return;
+        };
+        let mut merged = read();
+        for (k, i) in items.drain() {
+            merged.insert(k, i);
+        }
+        merged.retain(|_, i| i.tree.exists());
+        if let Ok(b) = serde_json::to_vec(&merged) {
+            let _ = crate::util::write_atomic(&path, &b);
+        }
+        *items = merged;
+    }
+}
+
+/// One thread working through queued recomputations, oldest first: running
+/// them side by side makes git fight over the disk (see `serve_saved`).
+mod background {
+    use super::*;
+
+    type Job = Box<dyn FnOnce() + Send>;
+
+    struct Queue {
+        jobs: std::collections::VecDeque<(String, Job)>,
+        /// Queued: asking again meanwhile adds nothing. A key asked again
+        /// while it runs is queued once more; that run finds the memo filled.
+        keys: HashSet<String>,
+        started: bool,
+    }
+
+    static QUEUE: LazyLock<(Mutex<Queue>, Condvar)> = LazyLock::new(|| {
+        (
+            Mutex::new(Queue {
+                jobs: Default::default(),
+                keys: Default::default(),
+                started: false,
+            }),
+            Condvar::new(),
+        )
+    });
+
+    pub(super) fn queue(key: String, job: impl FnOnce() + Send + 'static) {
+        let (lock, cv) = &*QUEUE;
+        let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
+        if !q.keys.insert(key.clone()) {
+            return;
+        }
+        q.jobs.push_back((key, Box::new(job)));
+        if !q.started {
+            q.started = true;
+            std::thread::Builder::new()
+                .name("clove-memo".into())
+                .spawn(work)
+                .expect("spawn memo thread");
+        }
+        cv.notify_one();
+    }
+
+    fn work() {
+        let (lock, cv) = &*QUEUE;
+        loop {
+            let job = {
+                let mut q = lock.lock().unwrap_or_else(|e| e.into_inner());
+                loop {
+                    if let Some((key, job)) = q.jobs.pop_front() {
+                        q.keys.remove(&key);
+                        break job;
+                    }
+                    q = cv.wait(q).unwrap_or_else(|e| e.into_inner());
+                }
+            };
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+        }
+    }
 }
 
 /// Something changed at `path`: answers about a tree holding it are recomputed
@@ -416,6 +692,57 @@ mod tests {
         backdate(&key, DIRTY_RECHECK);
         ask();
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn saved_answers_show_at_once_and_refresh_behind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tree = tmp.path().join("wt");
+        std::fs::create_dir_all(&tree).unwrap();
+        let index = tree.join("index");
+        std::fs::write(&index, "a").unwrap();
+        let key = format!("t6:{}", tree.display());
+        let deps = [Dep::file(&index)];
+        let ask = |v: u32| saved_lookup(true, &key, &tree, &deps, true, |_| MIN_RECHECK, move || v);
+        let wait = || {
+            for _ in 0..200 {
+                if hit::<u32>(&key, Some(&tree), &deps).is_some() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            panic!("background answer never landed");
+        };
+
+        // Nothing saved yet: no value, asked in the background.
+        let s = ask(1);
+        assert_eq!((s.value, s.pending), (None, true));
+        wait();
+        let s = ask(2);
+        assert_eq!((s.value, s.pending), (Some(1), false));
+
+        // A new process: the memo is empty, the saved answer shows at once.
+        MEMO.lock().unwrap().remove(&key);
+        let s = ask(3);
+        assert_eq!((s.value, s.pending), (Some(1), true));
+        wait();
+        assert_eq!(ask(4).value, Some(3));
+
+        // Deps moved: the saved answer is wrong, so none is shown.
+        MEMO.lock().unwrap().remove(&key);
+        std::fs::write(&index, "bb").unwrap();
+        let s = ask(5);
+        assert_eq!((s.value, s.pending), (None, true));
+        wait();
+
+        // Live asks wait for git, and one-shot commands never see the copy.
+        assert_eq!(
+            saved_lookup(true, &key, &tree, &deps, false, |_| MIN_RECHECK, || 6u32).value,
+            Some(5)
+        );
+        MEMO.lock().unwrap().remove(&key);
+        let s = saved_lookup(false, &key, &tree, &deps, true, |_| MIN_RECHECK, || 7u32);
+        assert_eq!((s.value, s.pending), (Some(7), false));
     }
 
     #[test]

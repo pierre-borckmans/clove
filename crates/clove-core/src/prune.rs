@@ -248,7 +248,7 @@ impl Clove {
             }
             let was_mounted = self.info(&name, false).is_ok_and(|i| i.mounted);
             let _ = self.mount(&name);
-            infos.push(self.info(&name, true)?);
+            infos.push(self.info_live(&name)?);
             if !was_mounted {
                 let _ = self.unmount(&name, false);
             }
@@ -279,7 +279,7 @@ impl Clove {
             if i.mounted
                 && i.dirty.is_none()
                 && candidate(&i.name, &i.branch)
-                && let Ok(full) = self.info(&i.name, true)
+                && let Ok(full) = self.info_live(&i.name)
             {
                 *i = full;
             }

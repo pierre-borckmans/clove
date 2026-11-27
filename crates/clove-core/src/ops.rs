@@ -1125,7 +1125,18 @@ impl Clove {
         self.store()?.clone_detach(self, name, &meta.mount, force)
     }
 
+    /// With `status` in a UI (see [`crate::memo::serve_saved`]), the status
+    /// may be the last known one; see [`CloneInfo::status_pending`].
     pub fn info(&self, name: &str, status: bool) -> Result<CloneInfo> {
+        self.info_with(name, status, true)
+    }
+
+    /// With the status git gives now, for decisions such as pruning.
+    pub fn info_live(&self, name: &str) -> Result<CloneInfo> {
+        self.info_with(name, true, false)
+    }
+
+    fn info_with(&self, name: &str, status: bool, saved_ok: bool) -> Result<CloneInfo> {
         let meta = self.clone_meta(name)?.ok_or_else(|| self.no_clone(name))?;
         let store = self.require_record()?.backend.store()?;
         let mounted = store.clone_attached(self, name, &meta.mount);
@@ -1150,6 +1161,7 @@ impl Clove {
             None => (meta.branch.clone(), None),
         };
         let (mut dirty, mut ahead, mut behind) = (None, None, None);
+        let mut status_pending = false;
         if status && mounted {
             // Reused until the clone's index, HEAD, branch or base moves, or
             // its tree changes (see `memo`).
@@ -1171,17 +1183,13 @@ impl Clove {
                     crate::memo::MIN_RECHECK
                 }
             };
-            (dirty, ahead, behind) = crate::memo::get_tree_by(&key, &meta.path, &deps, recheck, || {
-                let dirty = git::is_dirty(&meta.path).ok();
+            let (path, base) = (meta.path.clone(), meta.base.clone());
+            let saved = crate::memo::get_tree_saved(&key, &meta.path, &deps, saved_ok, recheck, move || {
+                let dirty = git::is_dirty(&path).ok();
                 let (mut ahead, mut behind) = (None, None);
                 if let Ok(s) = git::out(
-                    &meta.path,
-                    &[
-                        "rev-list",
-                        "--left-right",
-                        "--count",
-                        &format!("{}...HEAD", meta.base),
-                    ],
+                    &path,
+                    &["rev-list", "--left-right", "--count", &format!("{base}...HEAD")],
                 ) {
                     let mut it = s.split_whitespace().filter_map(|n| n.parse().ok());
                     behind = it.next();
@@ -1189,12 +1197,21 @@ impl Clove {
                 }
                 (dirty, ahead, behind)
             });
+            (dirty, ahead, behind) = saved.value.unwrap_or_default();
+            status_pending = saved.pending;
         }
-        let (image_bytes, own_bytes) = crate::memo::get_aged(
-            &format!("clone-bytes:{}:{name}", self.root.display()),
-            crate::memo::SIZE_TTL,
-            || store.clone_bytes(self, name, &meta.mount),
-        );
+        let key = format!("clone-bytes:{}:{name}", self.root.display());
+        let (image_bytes, own_bytes) = if crate::memo::serving_saved() {
+            // Measured in the background, where `self` can't go.
+            let (root, owned, mount) = (self.root.clone(), name.to_string(), meta.mount.clone());
+            crate::memo::get_aged_saved(&key, &self.clone_dir(name), crate::memo::SIZE_TTL, move || {
+                Clove::open(&root).map_or((0, 0), |c| store.clone_bytes(&c, &owned, &mount))
+            })
+        } else {
+            crate::memo::get_aged(&key, crate::memo::SIZE_TTL, || {
+                store.clone_bytes(self, name, &meta.mount)
+            })
+        };
         let issue = self.clone_issue(name, &meta.path, mounted);
         Ok(CloneInfo {
             name: meta.name,
@@ -1215,6 +1232,7 @@ impl Clove {
             issue,
             removing_when_free: self.clone_dir(name).join(PENDING_FILE).exists(),
             operation: crate::update::operation(&self.clone_admin(name)),
+            status_pending,
         })
     }
 

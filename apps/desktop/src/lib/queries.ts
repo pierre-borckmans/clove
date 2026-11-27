@@ -37,6 +37,7 @@ export const keys = {
  * catches the rest, like a clone's working tree getting dirty.
  */
 export const POLL_MS = 15_000;
+const PENDING_POLL_MS = 500;
 
 /** Refetches repo data as soon as the backend sees it change on disk. */
 export function useRepoChanges() {
@@ -107,7 +108,8 @@ export function useClones(root: string | undefined) {
     queryKey: keys.clones(root ?? ""),
     queryFn: () => api.clones(root as string, true),
     enabled: !!root,
-    refetchInterval: POLL_MS,
+    // Statuses shown from the saved copy: pick up git's answers soon.
+    refetchInterval: (q) => (q.state.data?.some((c) => c.status_pending) ? PENDING_POLL_MS : POLL_MS),
   });
 }
 

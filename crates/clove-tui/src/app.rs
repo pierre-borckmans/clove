@@ -67,6 +67,8 @@ pub enum Exit {
 pub const RELOAD_MS: u64 = 15_000;
 /// Reload interval without a watcher.
 pub const RELOAD_UNWATCHED_MS: u64 = 3000;
+/// Reload interval while clone statuses are being asked in the background.
+pub const PENDING_RELOAD_MS: u64 = 500;
 /// How often an open TUI asks GitHub about PRs: merges by other tools and
 /// agents show up without the background service.
 pub const PR_CHECK_MS: u64 = 5 * 60 * 1000;
@@ -318,7 +320,13 @@ impl App {
     }
 
     pub fn needs_reload(&self) -> bool {
-        let every = if self.watching {
+        // Statuses shown from the saved copy: pick up git's answers soon.
+        let pending = self
+            .current()
+            .is_some_and(|d| d.clones.iter().any(|c| c.status_pending));
+        let every = if pending {
+            PENDING_RELOAD_MS
+        } else if self.watching {
             RELOAD_MS
         } else {
             RELOAD_UNWATCHED_MS

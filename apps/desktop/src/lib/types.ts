@@ -83,6 +83,8 @@ export type CloneInfo = {
   removing_when_free?: boolean;
   /** A `clove update` (or a rebase or merge) stopped on conflicts. */
   operation?: "rebase" | "merge";
+  /** dirty/ahead/behind are the last known values while git is asked again. */
+  status_pending?: boolean;
 };
 
 /** A plain git worktree clove didn't make (clove_core::OtherWorktree). */
