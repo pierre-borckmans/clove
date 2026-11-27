@@ -144,12 +144,14 @@ fn find_steps(root: &Path, max_installs: usize) -> Vec<Step> {
     for d in &dirs {
         if root.join(d).join("uv.lock").exists() {
             // Virtualenvs embed absolute paths, so each clone re-syncs (fast with uv's cache).
+            // A PYTHONPATH from the repo's env (e.g. a nix shell) leaks into isolated
+            // builds and shadows their setuptools, so sdists fail to build.
             out.push(in_dir(
                 d,
                 Step {
                     name: "uv".into(),
-                    warm: Some("uv sync --frozen".into()),
-                    setup: Some("uv sync --frozen".into()),
+                    warm: Some(UV_SYNC.into()),
+                    setup: Some(UV_SYNC.into()),
                     ..Default::default()
                 },
             ));
@@ -309,6 +311,8 @@ fn shell_quote(s: &str) -> String {
         format!("'{}'", s.replace('\'', r"'\''"))
     }
 }
+
+const UV_SYNC: &str = "env -u PYTHONPATH uv sync --frozen";
 
 pub fn resolve_exec(exec: Exec, root: &Path) -> Exec {
     if exec != Exec::Auto {
