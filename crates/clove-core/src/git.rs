@@ -103,9 +103,24 @@ pub fn any_changed(dir: &Path, a: &str, b: &str, paths: &[&str]) -> bool {
     if paths.is_empty() {
         return false;
     }
+    // Pathspec magic (`:!docs`, `:(glob)…`) from one step would apply to every
+    // other step's paths here: say "changed" and let the per-path checks decide.
+    if paths.iter().any(|p| p.starts_with(':')) {
+        return true;
+    }
     let mut args = vec!["diff", "--quiet", a, b, "--"];
     args.extend(paths);
     !ok(dir, &args)
+}
+
+/// Whether the repo runs a hook by this name (core.hooksPath respected).
+pub fn has_hook(dir: &Path, name: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    out(dir, &["rev-parse", "--git-path", &format!("hooks/{name}")])
+        .ok()
+        .map(|p| dir.join(p))
+        .and_then(|p| p.metadata().ok())
+        .is_some_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 pub fn current_branch(dir: &Path) -> Option<String> {
@@ -165,4 +180,67 @@ pub fn count_commits(dir: &Path, range: &str) -> Option<u32> {
 pub fn split_remote_ref(dir: &Path, r: &str) -> Option<(String, String)> {
     let (remote, branch) = r.split_once('/')?;
     has_remote(dir, remote).then(|| (remote.to_string(), branch.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repo() -> tempfile::TempDir {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        run_ok(d, &["init", "--quiet", "--initial-branch=main"]).unwrap();
+        std::fs::create_dir_all(d.join("a/docs")).unwrap();
+        std::fs::write(d.join("a/x"), "1").unwrap();
+        std::fs::write(d.join("a/docs/y"), "1").unwrap();
+        let commit = |msg: &str| {
+            run_ok(d, &["add", "-A"]).unwrap();
+            run_ok(
+                d,
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-qm",
+                    msg,
+                ],
+            )
+            .unwrap();
+        };
+        commit("one");
+        std::fs::write(d.join("a/docs/y"), "2").unwrap();
+        commit("two");
+        t
+    }
+
+    #[test]
+    fn any_changed_sees_one_diff_and_stands_aside_for_magic() {
+        let t = repo();
+        let d = t.path();
+        assert!(any_changed(d, "HEAD~1", "HEAD", &["a"]));
+        assert!(!any_changed(d, "HEAD~1", "HEAD", &["a/x"]));
+        assert!(!any_changed(d, "HEAD", "HEAD", &["a"]), "same commit");
+        assert!(!any_changed(d, "HEAD~1", "HEAD", &[]));
+        // One step's exclusion must not hide another step's change.
+        assert!(any_changed(d, "HEAD~1", "HEAD", &["a/x", ":!a/docs", "a/docs/y"]));
+    }
+
+    #[test]
+    fn has_hook_needs_an_executable_and_follows_hooks_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = repo();
+        let d = t.path();
+        assert!(!has_hook(d, "post-checkout"));
+        let hook = d.join(".git/hooks/post-checkout");
+        std::fs::write(&hook, "#!/bin/sh\n").unwrap();
+        assert!(!has_hook(d, "post-checkout"), "not executable");
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(has_hook(d, "post-checkout"));
+        run_ok(d, &["config", "core.hooksPath", "elsewhere"]).unwrap();
+        assert!(!has_hook(d, "post-checkout"), "core.hooksPath moves it");
+    }
 }

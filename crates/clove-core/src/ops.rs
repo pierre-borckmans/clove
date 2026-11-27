@@ -821,15 +821,22 @@ impl Clove {
         // index that matches it. When the base is that commit, files and index
         // are already right and only HEAD has to move: no `git switch`, which
         // stats every file of the fresh volume first (~0.7 s in a big repo).
+        // A post-checkout hook (husky, LFS) only runs under `git switch`.
         if git::commit_of(wt, base).as_deref() == Some(golden)
             && git::head_commit(wt).ok().as_deref() == Some(golden)
+            && !git::has_hook(wt, "post-checkout")
         {
             match (branch, new_branch) {
                 (None, _) => return Ok(()),
                 (Some(_), Some(b)) => {
                     // --no-track: a feature branch must not push to its base by accident.
                     git::run_ok(wt, &["branch", "--no-track", b, golden])?;
-                    return git::run_ok(wt, &["symbolic-ref", "HEAD", &format!("refs/heads/{b}")]);
+                    // The reflog line `git switch` writes, so `git checkout -` works the same.
+                    let why = format!("checkout: moving from {golden} to {b}");
+                    return git::run_ok(
+                        wt,
+                        &["symbolic-ref", "-m", &why, "HEAD", &format!("refs/heads/{b}")],
+                    );
                 }
                 _ => {}
             }
