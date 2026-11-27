@@ -176,27 +176,37 @@ function AgentsRow() {
           />
           <span className="text-[13px] text-muted-foreground">
             {state === "installed"
-              ? "Claude Code and Codex make worktrees with clove."
+              ? "Installed coding agents use clove for worktrees."
               : state === "outdated"
-                ? "Instructions from an older clove. Switch on to update them."
+                ? "Agent setup is outdated or needs attention. Switch on to update."
                 : "Off. Agents use git worktree add and don't know clove."}
           </span>
           {state === "outdated" && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-[12.5px]"
-              disabled={toggle.isPending}
-              onClick={() => toggle.mutate(true)}
-            >
-              Update
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-[12.5px]"
+                disabled={toggle.isPending}
+                onClick={() => toggle.mutate(true)}
+              >
+                Update
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-[12.5px]"
+                disabled={toggle.isPending}
+                onClick={() => toggle.mutate(false)}
+              >
+                Remove
+              </Button>
+            </>
           )}
         </div>
         <span className="text-[12px] text-faint">
-          A skill and a short block in <Mono className="text-faint">~/.claude/CLAUDE.md</Mono> and{" "}
-          <Mono className="text-faint">~/.codex/AGENTS.md</Mono>, plus Claude Code's worktree hooks. Same as{" "}
-          <Mono className="text-faint">clove agents install</Mono>.
+          Configures installed coding agents (Claude Code, Codex, OpenCode, Pi) with skills, global instructions, and
+          hooks where supported. Same as <Mono className="text-faint">clove agents install</Mono>.
         </span>
       </div>
     </Row>

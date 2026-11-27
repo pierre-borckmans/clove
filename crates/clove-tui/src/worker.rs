@@ -220,12 +220,19 @@ fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Res
         return res.map(|_| Outcome::Service(install)).map_err(e);
     }
     if let Task::Agents { install } = task {
-        let res = if install {
-            clove_core::agents::install()
+        let (opencode_skipped, skipped_foreign) = if install {
+            let report = clove_core::agents::install_with_report().map_err(e)?;
+            (report.opencode_skipped, report.skipped.len())
         } else {
-            clove_core::agents::remove()
+            clove_core::agents::remove().map_err(e)?;
+            (false, 0)
         };
-        return res.map(|_| Outcome::Agents(agents_state())).map_err(e);
+        return Ok(Outcome::Agents {
+            state: agents_state(),
+            install,
+            opencode_skipped,
+            skipped_foreign,
+        });
     }
     if let Task::ShellInstall = task {
         let sh = clove_core::shellrc::detect().ok_or("can't tell your shell from $SHELL")?;

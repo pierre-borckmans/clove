@@ -896,14 +896,39 @@ impl App {
                 toasts.push((ToastKind::Ok, s.to_string()));
                 Ok(s.to_string())
             }
-            Ok(Outcome::Agents(state)) => {
+            Ok(Outcome::Agents {
+                state,
+                install,
+                opencode_skipped,
+                skipped_foreign,
+            }) => {
                 self.agents = state;
-                let s = if state == Some(clove_core::agents::State::Installed) {
-                    "coding agents now know clove; restart their sessions to pick it up"
+                let (kind, s) = if install && state == Some(clove_core::agents::State::Installed) {
+                    (
+                        ToastKind::Ok,
+                        "coding agents now know clove; restart their sessions to pick it up",
+                    )
+                } else if install {
+                    (ToastKind::Info, "coding agent setup needs attention")
                 } else {
-                    "clove taken out of agent instructions"
+                    (ToastKind::Ok, "clove taken out of agent instructions")
                 };
-                toasts.push((ToastKind::Ok, s.to_string()));
+                toasts.push((kind, s.to_string()));
+                if skipped_foreign > 0 {
+                    toasts.push((
+                        ToastKind::Warn,
+                        format!(
+                            "skipped {skipped_foreign} existing file{} not written by clove",
+                            if skipped_foreign == 1 { "" } else { "s" }
+                        ),
+                    ));
+                }
+                if opencode_skipped {
+                    toasts.push((
+                        ToastKind::Warn,
+                        clove_core::agents::OPENCODE_SKIPPED_NOTICE.to_string(),
+                    ));
+                }
                 Ok(s.to_string())
             }
             Ok(Outcome::Doctor(checks)) => {
@@ -2232,6 +2257,14 @@ impl App {
         (Some(Modal::Settings(v)), vec![])
     }
 
+    fn settings_agents(&mut self, v: SettingsView, install: bool) -> (Option<Modal>, Vec<Effect>) {
+        if self.running().any(|j| matches!(j.task, Task::Agents { .. })) {
+            return (Some(Modal::Settings(v)), vec![]);
+        }
+        self.modal = Some(Modal::Settings(v));
+        (None, self.spawn(Task::Agents { install }, After::Nothing))
+    }
+
     fn settings_act(&mut self, v: SettingsView, a: SettingsAction) -> (Option<Modal>, Vec<Effect>) {
         match a {
             SettingsAction::Field(i) => self.settings_field(v, i),
@@ -2248,13 +2281,9 @@ impl App {
                 (None, self.spawn(Task::ShellInstall, After::Nothing))
             }
             SettingsAction::Agents => {
-                if self.running().any(|j| matches!(j.task, Task::Agents { .. })) {
-                    return (Some(Modal::Settings(v)), vec![]);
-                }
                 // Installed: take out. Missing or outdated: (re)install.
                 let install = self.agents != Some(clove_core::agents::State::Installed);
-                self.modal = Some(Modal::Settings(v));
-                (None, self.spawn(Task::Agents { install }, After::Nothing))
+                self.settings_agents(v, install)
             }
             SettingsAction::Service => {
                 if self.running().any(|j| matches!(j.task, Task::Service { .. })) {
@@ -2292,6 +2321,11 @@ impl App {
                         self.write_setting(&v, i, None)
                     };
                     return (Some(Modal::Settings(v)), fx);
+                }
+                if matches!(on, SettingsAction::Agents)
+                    && self.agents == Some(clove_core::agents::State::Outdated)
+                {
+                    return self.settings_agents(v, false);
                 }
             }
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('s') | KeyCode::Char(',') => {

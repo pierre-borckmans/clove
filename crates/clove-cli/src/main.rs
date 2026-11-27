@@ -8,7 +8,8 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::engine::ArgValueCompleter;
 use clove_core::doctor::{self, Level};
-use clove_core::{Clove, Exec, NewOptions, RemoveOptions, Silent};
+use clove_core::opencode::{self, managed_repo};
+use clove_core::{Clove, Exec, NewOptions, RemoveOptions, Silent, git};
 use render::*;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -213,7 +214,8 @@ enum Cmd {
         apply: bool,
     },
     /// Clones and worktrees clove removed: when, by what (rm, prune,
-    /// auto-prune, Claude Code), why, and how to get the branch back.
+    /// auto-prune, Claude Code, OpenCode), why, and how to get the branch back.
+    /// Codex and Pi use the regular clove commands.
     Log {
         /// How many, newest first.
         #[arg(short = 'n', long, default_value_t = 20)]
@@ -280,15 +282,15 @@ enum Cmd {
         #[command(subcommand)]
         action: ServiceAction,
     },
-    /// Teach coding agents (Claude Code, Codex) to use clove: a skill, a
-    /// short block in their global instructions, and Claude's worktree hooks.
+    /// Teach Claude Code, Codex, OpenCode and Pi to use clove: skills, global
+    /// instructions, and hooks or extensions where supported.
     Agents {
         #[command(subcommand)]
         action: AgentsAction,
     },
     /// How to use clove, written for coding agents (what `clove agents install` points them to).
     Guide,
-    /// Hooks for other tools. `clove hook claude` prints the Claude Code settings.
+    /// Hooks for Claude Code, OpenCode and Pi. Codex uses instructions only.
     Hook {
         #[command(subcommand)]
         action: HookAction,
@@ -324,10 +326,28 @@ enum Cmd {
 enum HookAction {
     /// Print the settings.json block that makes Claude Code use clove for worktrees.
     Claude,
+    /// Print the OpenCode plugin (worktree strategy and context hint).
+    Opencode,
+    /// Print the Pi extension (managed-repo prompt hint).
+    Pi,
     /// Claude Code WorktreeCreate hook: JSON on stdin, prints the clone path.
     WorktreeCreate,
     /// Claude Code WorktreeRemove hook: JSON on stdin with worktree_path.
     WorktreeRemove,
+    #[command(hide = true)]
+    Check {
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+    /// OpenCode worktree create: JSON on stdin; prints the resulting directory as JSON.
+    OpencodeWorktreeCreate,
+    /// OpenCode worktree remove: JSON on stdin with directory and force.
+    OpencodeWorktreeRemove,
+    /// Roll back only the clone reserved by an interrupted OpenCode create.
+    #[command(hide = true)]
+    OpencodeWorktreeAbort,
+    /// OpenCode worktree list: JSON on stdin; prints clove's worktree inventory as JSON.
+    OpencodeWorktreeList,
 }
 
 #[derive(Subcommand)]
@@ -2772,12 +2792,19 @@ const CLAUDE_HOOKS: &str = r#"{
   }
 }"#;
 
-/// Claude Code worktree hooks. Progress goes to stderr; stdout carries only the path.
+/// Agent worktree hooks. Progress goes to stderr; stdout carries the protocol response.
 fn cmd_hook(action: &HookAction) -> Result<()> {
     let read_input = || -> Result<serde_json::Value> {
         let mut buf = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
         serde_json::from_str(&buf).context("hook input is not JSON")
+    };
+    let required = |input: &serde_json::Value, key: &str| {
+        input[key]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .with_context(|| format!("hook input requires a non-empty {key}"))
     };
     match action {
         HookAction::Claude => {
@@ -2791,6 +2818,23 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
                 )
             );
         }
+        HookAction::Opencode | HookAction::Pi => {
+            let (body, location) = match action {
+                HookAction::Opencode => (
+                    clove_core::agents::OPENCODE_PLUGIN,
+                    "~/.config/opencode/plugins/clove.js (or .opencode/plugins/clove.js in a repo)",
+                ),
+                _ => (
+                    clove_core::agents::PI_EXTENSION,
+                    "~/.pi/agent/extensions/clove.js (or .pi/extensions/clove.js in a repo)",
+                ),
+            };
+            print!("{body}");
+            eprintln!(
+                "{}",
+                paint(DIM, format!("save to {location}, or run `clove agents install`"))
+            );
+        }
         HookAction::WorktreeCreate => {
             let input = read_input()?;
             let name = input["name"].as_str().context("hook input has no name")?;
@@ -2800,10 +2844,7 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
                 .unwrap_or(std::env::current_dir()?);
             // Claude Code has no fallback once this hook exists, so repos
             // clove doesn't manage get what Claude would have made.
-            let managed = Clove::discover(&cwd)
-                .ok()
-                .filter(|c| c.record().ok().flatten().is_some());
-            let Some(c) = managed else {
+            let Some(c) = managed_repo(&cwd) else {
                 println!("{}", plain_worktree_add(&cwd, name)?.display());
                 return Ok(());
             };
@@ -2847,26 +2888,108 @@ fn cmd_hook(action: &HookAction) -> Result<()> {
                 &TermReporter::new(false),
             )?;
         }
+        HookAction::Check { dir } => {
+            let dir = match dir {
+                Some(dir) => dir.clone(),
+                None => std::env::current_dir()?,
+            };
+            let output = match managed_repo(&dir) {
+                Some(c) => serde_json::json!({ "managed": true, "root": c.root }),
+                None => serde_json::json!({ "managed": false }),
+            };
+            println!("{output}");
+        }
+        HookAction::OpencodeWorktreeCreate => {
+            let input = read_input()?;
+            let source = required(&input, "sourceDirectory")?;
+            let directory = required(&input, "directory")?;
+            let branch = match &input["branch"] {
+                serde_json::Value::Null => None,
+                serde_json::Value::String(s) => Some(s.as_str()).filter(|s| !s.is_empty()),
+                _ => bail!("hook input branch must be a starting ref string"),
+            };
+            let request_id = match &input["requestId"] {
+                serde_json::Value::Null => None,
+                v => Some(v.as_str().context("hook input requestId must be a string")?),
+            };
+            let c = Clove::discover(&source)?;
+            let directory = opencode::create_worktree_in(
+                &c,
+                &source,
+                &directory,
+                branch,
+                request_id,
+                &TermReporter::new(false),
+            )?;
+            c.spawn_spare_fill();
+            println!("{}", serde_json::json!({ "directory": directory }));
+        }
+        HookAction::OpencodeWorktreeRemove => {
+            let input = read_input()?;
+            let path = required(&input, "directory")?;
+            let project = required(&input, "projectDirectory")?;
+            let force = input["force"].as_bool().unwrap_or(false);
+            opencode::remove_worktree(&project, &path, force, &TermReporter::new(false))?;
+        }
+        HookAction::OpencodeWorktreeAbort => {
+            let input = read_input()?;
+            let project = required(&input, "projectDirectory")?;
+            let id = input["requestId"]
+                .as_str()
+                .context("hook input requestId must be a string")?;
+            let c = Clove::discover(&project)?;
+            c.require_record()?;
+            c.abort_clone_by_request(
+                id,
+                clove_core::history::By::OpencodeHook,
+                &TermReporter::new(false),
+            )?;
+        }
+        HookAction::OpencodeWorktreeList => {
+            let input = read_input()?;
+            let source = required(&input, "sourceDirectory")?;
+            let entries = opencode::list_worktrees(&source)?;
+            println!("{}", serde_json::json!(entries));
+        }
     }
     Ok(())
 }
 
 fn cmd_agents(cli: &Cli, action: &AgentsAction) -> Result<()> {
     use clove_core::agents::{self, State};
-    let (ts, verb) = match action {
-        AgentsAction::Install => (agents::install()?, "installed"),
-        AgentsAction::Remove => (agents::remove()?, "removed"),
-        AgentsAction::Status => (agents::status()?, ""),
+    let (ts, verb, no_targets, skipped) = match action {
+        AgentsAction::Install => {
+            let report = agents::install_with_report()?;
+            if report.opencode_skipped {
+                eprintln!("{}", agents::OPENCODE_SKIPPED_NOTICE);
+            }
+            (report.changed, "installed", !report.has_targets, report.skipped)
+        }
+        AgentsAction::Remove => (agents::remove()?, "removed", false, Vec::new()),
+        AgentsAction::Status => {
+            let ts = agents::status()?;
+            let no_targets = ts.is_empty();
+            (ts, "", no_targets, Vec::new())
+        }
     };
     if cli.json {
+        for t in &skipped {
+            eprintln!(
+                "skipped {} ({}): existing file was not written by clove",
+                t.what,
+                tilde(&t.path)
+            );
+        }
         return emit(&ts);
     }
-    let all = agents::status()?;
-    if all.is_empty() {
-        eprintln!("no supported coding agent found (looked for ~/.claude and ~/.codex)");
+    if no_targets {
+        eprintln!(
+            "no supported coding agent found (looked for ~/.claude, ~/.codex, ~/.pi/agent, \
+             and opencode on PATH)"
+        );
         return Ok(());
     }
-    if ts.is_empty() && !verb.is_empty() {
+    if ts.is_empty() && skipped.is_empty() && !verb.is_empty() {
         eprintln!("{} nothing to change", paint(GREEN, "✓"));
     }
     for t in &ts {
@@ -2889,7 +3012,16 @@ fn cmd_agents(cli: &Cli, action: &AgentsAction) -> Result<()> {
             paint(DIM, tilde(&t.path))
         );
     }
-    match (action, agents::summary(&all)) {
+    for t in &skipped {
+        eprintln!(
+            "{} {:<28} {:<14} {} (not written by clove)",
+            paint(YELLOW, "!"),
+            t.what,
+            "skipped",
+            paint(DIM, tilde(&t.path))
+        );
+    }
+    match (action, agents::summary(&ts)) {
         (AgentsAction::Status, State::Installed) => {}
         (AgentsAction::Status, _) => eprintln!(
             "
@@ -2935,8 +3067,11 @@ fn plain_worktree_remove(path: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
-    let p = path.to_string_lossy().to_string();
-    clove_core::git::run_ok(path, &["worktree", "remove", &p]).context("git worktree remove")
+    let path = path.canonicalize()?;
+    let mut cmd = git::cmd(&path);
+    cmd.args(["worktree", "remove"]);
+    clove_core::util::output(cmd.arg("--").arg(&path)).context("git worktree remove")?;
+    Ok(())
 }
 
 /// `clove diff`: the patch (paged in a terminal), per-file or per-package

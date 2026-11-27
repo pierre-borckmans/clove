@@ -484,17 +484,30 @@ pub async fn agents_status() -> CmdResult<Option<clove_core::agents::State>> {
     .await
 }
 
-/// `clove agents install` / `remove`; returns the new state.
+#[derive(Serialize)]
+pub struct AgentsSetResult {
+    state: Option<clove_core::agents::State>,
+    opencode_skipped: bool,
+    skipped_foreign: usize,
+}
+
+/// `clove agents install` / `remove`; returns the new state and install warnings.
 #[tauri::command]
-pub async fn agents_set(install: bool) -> CmdResult<Option<clove_core::agents::State>> {
+pub async fn agents_set(install: bool) -> CmdResult<AgentsSetResult> {
     block(move || {
-        if install {
-            clove_core::agents::install()?;
+        let (opencode_skipped, skipped_foreign) = if install {
+            let report = clove_core::agents::install_with_report()?;
+            (report.opencode_skipped, report.skipped.len())
         } else {
             clove_core::agents::remove()?;
-        }
+            (false, 0)
+        };
         let ts = clove_core::agents::status()?;
-        Ok((!ts.is_empty()).then(|| clove_core::agents::summary(&ts)))
+        Ok(AgentsSetResult {
+            state: (!ts.is_empty()).then(|| clove_core::agents::summary(&ts)),
+            opencode_skipped,
+            skipped_foreign,
+        })
     })
     .await
 }

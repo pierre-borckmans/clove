@@ -13,6 +13,7 @@ const BY: Record<Removed["by"], string> = {
   prune: "Pruned",
   "auto-prune": "Auto-pruned",
   "claude-hook": "Removed by Claude Code",
+  "opencode-hook": "Removed by OpenCode",
 };
 
 /** `clove log --all-repos`: what clove removed, when, by what, why, and how to get the branch back. */
@@ -36,7 +37,7 @@ export function HistoryPage() {
           ) : !data?.length ? (
             <div className="rounded-xl border border-dashed">
               <Empty icon={<History />} title="Nothing removed yet">
-                Removals by hand, by cleanup, by auto-prune and by Claude Code show up here, with the command that
+                Removals by hand, by cleanup, by auto-prune and by coding agents show up here, with the command that
                 brings a deleted branch back.
               </Empty>
             </div>

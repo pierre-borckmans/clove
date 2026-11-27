@@ -23,6 +23,8 @@ pub enum By {
     AutoPrune,
     /// Claude Code's WorktreeRemove hook.
     ClaudeHook,
+    /// OpenCode's worktree strategy remove hook.
+    OpencodeHook,
 }
 
 impl By {
@@ -32,6 +34,7 @@ impl By {
             By::Prune => "pruned",
             By::AutoPrune => "auto-pruned",
             By::ClaudeHook => "removed by Claude Code",
+            By::OpencodeHook => "removed by OpenCode",
         }
     }
 }
@@ -205,5 +208,14 @@ mod tests {
         assert!(s.contains("\"by\":\"auto-prune\""), "{s}");
         let back: Removed = serde_json::from_str(&s).unwrap();
         assert_eq!(back.by, By::AutoPrune);
+    }
+
+    #[test]
+    fn opencode_hook_round_trips_and_labels_its_removals() {
+        let s = serde_json::to_string(&By::OpencodeHook).unwrap();
+        assert_eq!(s, "\"opencode-hook\"");
+        let by: By = serde_json::from_str(&s).unwrap();
+        assert_eq!(by, By::OpencodeHook);
+        assert_eq!(by.label(), "removed by OpenCode");
     }
 }

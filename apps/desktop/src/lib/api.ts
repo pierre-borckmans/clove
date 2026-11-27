@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "./bridge";
 import type {
+  AgentsSetResult,
   AgentsState,
   AppId,
   Check,
@@ -68,7 +69,7 @@ export const api = {
   serviceStatus: () => invoke<boolean>("service_status"),
   serviceSet: (install: boolean) => invoke<boolean>("service_set", { install }),
   agentsStatus: () => invoke<AgentsState>("agents_status"),
-  agentsSet: (install: boolean) => invoke<AgentsState>("agents_set", { install }),
+  agentsSet: (install: boolean) => invoke<AgentsSetResult>("agents_set", { install }),
   history: (limit: number) => invoke<Removed[]>("history", { limit }),
   stats: (limit: number) => invoke<RepoStats[]>("stats", { limit }),
   prs: (root: string) => invoke<MergeCheck[]>("prs", { root }),

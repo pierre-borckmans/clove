@@ -1916,6 +1916,10 @@ fn hints(app: &App) -> Vec<Hint> {
             let mut v = vec![("↑↓", "move", Down), ("⏎", what, Enter)];
             if matches!(on, SettingsAction::Field(_)) {
                 v.push(("x", "reset", Char('x')));
+            } else if matches!(on, SettingsAction::Agents)
+                && app.agents == Some(clove_core::agents::State::Outdated)
+            {
+                v.push(("x", "remove", Char('x')));
             }
             v.extend([("←→", "save to", Right), ("esc", "close", Esc)]);
             v
@@ -3503,11 +3507,11 @@ fn settings_lines(app: &App, iw: usize) -> SettingsLayout {
             match state {
                 State::Installed => vec![
                     Span::styled("● on   ", fg(SAGE)),
-                    Span::styled("Claude Code and Codex use clove for worktrees", muted()),
+                    Span::styled("installed coding agents use clove for worktrees", muted()),
                 ],
                 State::Outdated => vec![
                     Span::styled("◐ old  ", fg(AMBER)),
-                    Span::styled("instructions from an older clove; Enter updates them", muted()),
+                    Span::styled("agent setup needs attention; Enter updates it", muted()),
                 ],
                 State::Missing => vec![
                     Span::styled("○ off  ", muted()),
@@ -3625,10 +3629,12 @@ fn draw_removals(f: &mut Frame, app: &mut App, area: Rect, v: RemovalsView) {
     let mut tips = SpanTips::default();
     let history = app.current().map(|d| d.history.clone()).unwrap_or_default();
     if history.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "nothing removed yet. Removals by hand, by prune, by auto-prune and by Claude Code land here.",
-            muted(),
-        )));
+        for line in fmt::wrap(
+            "nothing removed yet. Removals by hand, by prune, by auto-prune and by coding agents land here.",
+            iw,
+        ) {
+            lines.push(Line::from(Span::styled(line, muted())));
+        }
     }
     let nw = history.iter().map(|e| width(&e.name)).max().unwrap_or(4).min(28);
     for e in &history {
@@ -3638,6 +3644,7 @@ fn draw_removals(f: &mut Frame, app: &mut App, area: Rect, v: RemovalsView) {
             By::Prune => "pruned",
             By::AutoPrune => "auto-pruned",
             By::ClaudeHook => "by Claude",
+            By::OpencodeHook => "by OpenCode",
         };
         let (name, t) = cut(&e.name, nw);
         tips.add(lines.len(), 3, t);

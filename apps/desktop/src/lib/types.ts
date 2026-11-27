@@ -307,6 +307,12 @@ export type Cleanup = {
 /** Whether coding agents know clove (`clove agents`); null when none is installed. */
 export type AgentsState = "installed" | "outdated" | "missing" | null;
 
+export type AgentsSetResult = {
+  state: AgentsState;
+  opencode_skipped: boolean;
+  skipped_foreign: number;
+};
+
 /** One removal from `clove log`. */
 export type Removed = {
   repo: string;
@@ -317,7 +323,7 @@ export type Removed = {
   path: string;
   branch: string | null;
   head: string | null;
-  by: "hand" | "prune" | "auto-prune" | "claude-hook";
+  by: "hand" | "prune" | "auto-prune" | "claude-hook" | "opencode-hook";
   reason: string | null;
   branch_deleted: boolean;
   /** The command that brings the branch back, when it was deleted. */

@@ -136,7 +136,12 @@ pub enum Outcome {
     Gc(Cleanup),
     Doctor(Vec<Check>),
     Service(bool),
-    Agents(Option<clove_core::agents::State>),
+    Agents {
+        state: Option<clove_core::agents::State>,
+        install: bool,
+        opencode_skipped: bool,
+        skipped_foreign: usize,
+    },
     /// None after an abort.
     Updated(Option<clove_core::update::Update>),
     /// The rc file that now loads the integration, and whether it changed.

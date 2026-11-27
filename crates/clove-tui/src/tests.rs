@@ -2158,6 +2158,66 @@ fn the_agents_row_installs_and_removes() {
 }
 
 #[test]
+fn the_outdated_agents_row_can_remove_the_integration() {
+    let mut app = app();
+    app.agents = Some(clove_core::agents::State::Outdated);
+    let cursor = app
+        .settings_actions()
+        .iter()
+        .position(|&action| action == SettingsAction::Agents)
+        .unwrap();
+    app.modal = Some(Modal::Settings(SettingsView {
+        cursor,
+        follow: true,
+        ..Default::default()
+    }));
+    let (screen, _) = render(&mut app, 120, 60);
+    let fx = key(&mut app, KeyCode::Char('x'));
+    assert!(matches!(&fx[..], [Effect::Spawn { .. }]), "{fx:?}");
+    assert!(matches!(
+        app.jobs.last().unwrap().task,
+        Task::Agents { install: false }
+    ));
+    assert!(matches!(&app.modal, Some(Modal::Settings(v)) if v.cursor == cursor));
+    assert!(screen.contains("x remove"), "{screen}");
+    assert!(key(&mut app, KeyCode::Char('x')).is_empty(), "already running");
+}
+
+#[test]
+fn agents_install_warns_about_skips_without_claiming_removal() {
+    let mut app = app();
+    app.modal = None;
+    let id = match app.spawn(Task::Agents { install: true }, After::Nothing).first() {
+        Some(Effect::Spawn { id, .. }) => *id,
+        fx => panic!("{fx:?}"),
+    };
+    app.on_msg(Msg::Done(
+        id,
+        Ok(Outcome::Agents {
+            state: Some(clove_core::agents::State::Outdated),
+            install: true,
+            opencode_skipped: true,
+            skipped_foreign: 2,
+        }),
+    ));
+    assert!(
+        app.toasts
+            .iter()
+            .any(|t| t.kind == ToastKind::Warn && t.text == clove_core::agents::OPENCODE_SKIPPED_NOTICE)
+    );
+    assert!(
+        app.toasts
+            .iter()
+            .any(|t| t.kind == ToastKind::Warn && t.text.contains("2 existing files not written by clove"))
+    );
+    assert!(!app.toasts.iter().any(|t| t.text.contains("taken out")));
+    assert_eq!(
+        app.jobs.last().unwrap().result.as_ref().unwrap().as_deref(),
+        Ok("coding agent setup needs attention")
+    );
+}
+
+#[test]
 fn l_lists_what_clove_removed_and_how_to_get_it_back() {
     use clove_core::history::{By, Kind, Removed};
     let mut app = app_with(true, vec![]);

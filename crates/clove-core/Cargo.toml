@@ -16,8 +16,6 @@ toml_edit.workspace = true
 libc.workspace = true
 sha2.workspace = true
 notify = "9"
-
-[dev-dependencies]
 tempfile.workspace = true
 
 [lints]
