@@ -105,7 +105,7 @@ mod tests {
     use super::*;
 
     fn git(dir: &Path, args: &[&str]) {
-        let ok = std::process::Command::new("git")
+        let ok = std::process::Command::new(crate::git::bin())
             .arg("-C")
             .arg(dir)
             .args(args)

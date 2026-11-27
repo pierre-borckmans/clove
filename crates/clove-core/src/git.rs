@@ -22,8 +22,33 @@ impl Drop for GoldenGit {
     }
 }
 
+/// The git binary to run. On macOS, `/usr/bin/git` is a launcher that asks
+/// xcrun for the developer directory on every call: ~8 ms of a ~12 ms git
+/// call, and `clove new` makes dozens. Its exec path holds the real binary,
+/// so ask once and run that. Any other git (Homebrew, nix) runs as found.
+pub fn bin() -> &'static Path {
+    static BIN: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    BIN.get_or_init(|| resolve_bin().unwrap_or_else(|| PathBuf::from("git")))
+}
+
+fn resolve_bin() -> Option<PathBuf> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let first = std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|d| d.join("git"))
+        .find(|p| p.is_file())?;
+    if first != Path::new("/usr/bin/git") {
+        return None;
+    }
+    let out = Command::new(&first).arg("--exec-path").output().ok()?;
+    let dir = String::from_utf8(out.stdout).ok()?;
+    let real = Path::new(dir.trim()).join("git").canonicalize().ok()?;
+    real.is_file().then_some(real)
+}
+
 pub fn cmd(dir: &Path) -> Command {
-    let mut c = Command::new("git");
+    let mut c = Command::new(bin());
     // Preloading stats the index from up to 20 threads; on APFS they contend
     // in the kernel and a status costs ~10x the CPU for the same wall time.
     // A repo with core.fsmonitor on would start a daemon in every clone
@@ -60,6 +85,27 @@ pub fn common_dir(dir: &Path) -> Result<PathBuf> {
 
 pub fn head_commit(dir: &Path) -> Result<String> {
     out(dir, &["rev-parse", "HEAD"])
+}
+
+/// The commit a revision names, or None when it names none.
+pub fn commit_of(dir: &Path, rev: &str) -> Option<String> {
+    out(
+        dir,
+        &["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")],
+    )
+    .ok()
+}
+
+/// Whether anything under any of `paths` differs between two commits: one
+/// git call that lets the per-path checks after it be skipped. Same commit,
+/// no call at all.
+pub fn any_changed(dir: &Path, a: &str, b: &str, paths: &[&str]) -> bool {
+    if paths.is_empty() {
+        return false;
+    }
+    let mut args = vec!["diff", "--quiet", a, b, "--"];
+    args.extend(paths);
+    !ok(dir, &args)
 }
 
 pub fn current_branch(dir: &Path) -> Option<String> {
