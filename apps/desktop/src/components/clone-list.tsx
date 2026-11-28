@@ -4,6 +4,9 @@ import {
   ArrowDown,
   ArrowUp,
   Check,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Code,
   Copy,
   Ellipsis,
@@ -24,6 +27,7 @@ import {
   Unplug,
 } from "lucide-react";
 import { type KeyboardEvent, type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { forest, forksOf, isFolded } from "@/components/map/lineage";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -46,6 +50,7 @@ import {
   copyText,
   forkClone,
   openIn,
+  useClones,
   useMountToggle,
   usePrCheck,
   usePrs,
@@ -53,7 +58,7 @@ import {
   useRepoList,
 } from "@/lib/queries";
 import type { CloneInfo, MergeCheck } from "@/lib/types";
-import { setUi } from "@/lib/ui";
+import { setBulbs, setUi, useUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 import { Empty } from "./empty";
 import { PointerMenu } from "./pointer-menu";
@@ -92,10 +97,35 @@ export function CloneList({
   const { data: prs } = usePrs(root);
   usePrCheck(root);
 
-  const shown = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    return q ? clones.filter((c) => c.name.toLowerCase().includes(q) || c.branch?.toLowerCase().includes(q)) : clones;
-  }, [clones, filter]);
+  const { openBulbs, closedBulbs } = useUi();
+  const openList = openBulbs[root];
+  const closedList = closedBulbs[root];
+  // Forks sit under their parent, a level in per fork of a fork; a branch is
+  // never split. A filter keeps a match's ancestors (dimmed) for the path.
+  const rows = useMemo(
+    () => treeRows(clones, filter, new Set(openList ?? []), new Set(closedList ?? [])),
+    [clones, filter, openList, closedList],
+  );
+  const shown = useMemo(() => rows.map((r) => r.clone), [rows]);
+  /** Draw the tree gutter at all: only when some clone has forks. */
+  const treeShown = rows.some((r) => r.depth > 0 || r.forks > 0);
+  // Every clone with forks, for expanding or collapsing them all (shared with the map's bulbs).
+  const lineage = useMemo(() => forest(clones), [clones]);
+  const parents = useMemo(() => clones.filter((c) => (lineage.kids.get(c.name) ?? []).length), [clones, lineage]);
+  const allOpen = parents.every((c) => !isFolded(lineage, c.name, new Set(openList ?? []), new Set(closedList ?? [])));
+  const setAllForks = (open: boolean) =>
+    setBulbs(
+      root,
+      parents.map((c) => c.name),
+      open,
+    );
+  /** A clone and every fork under it that has forks: Option-click folds or unfolds them all. */
+  const subtreeParents = (name: string): string[] => [
+    name,
+    ...(lineage.kids.get(name) ?? []).flatMap((k) =>
+      (lineage.kids.get(k.name) ?? []).length ? subtreeParents(k.name) : [],
+    ),
+  ];
 
   useEffect(() => {
     if (selected >= shown.length) setSelected(Math.max(0, shown.length - 1));
@@ -153,7 +183,9 @@ export function CloneList({
       case "m":
         return mount.mutate({ name: c.name, mounted: c.mounted });
       case "backspace":
-        return pickedClones.length ? removePicked() : setUi({ remove: { root, clones: [c] } });
+        return pickedClones.length
+          ? removePicked()
+          : setUi({ remove: { root, clones: [c], forks: forksOf(clones, c.name) } });
     }
   };
 
@@ -161,6 +193,29 @@ export function CloneList({
     if ((e.target as HTMLElement).closest("button, input, [role=menu]")) return;
     const c = shown[selected];
     const k = e.key.toLowerCase();
+    const row = rows[selected];
+    // `*` expands every branch, as in file trees.
+    if (e.key === "*" && parents.length) {
+      setAllForks(true);
+      e.preventDefault();
+      return;
+    }
+    if (row && (k === "arrowleft" || k === "arrowright")) {
+      // Left folds a branch, else goes to its parent; Right unfolds, else goes to its first fork.
+      if (k === "arrowleft") {
+        if (row.forks && row.open) setBulbs(root, [row.clone.name], false);
+        else if (row.parent)
+          setSelected(
+            Math.max(
+              0,
+              shown.findIndex((x) => x.name === row.parent),
+            ),
+          );
+      } else if (row.forks && !row.open) setBulbs(root, [row.clone.name], true);
+      else if (row.forks && rows[selected + 1]?.parent === row.clone.name) setSelected(selected + 1);
+      e.preventDefault();
+      return;
+    }
     if (k === "arrowdown" || k === "j") setSelected((s) => Math.min(shown.length - 1, s + 1));
     else if (k === "arrowup" || k === "k") setSelected((s) => Math.max(0, s - 1));
     else if (c && !(e.metaKey || e.ctrlKey) && ["enter", "e", "t", "f", "c", "d", "m"].includes(k)) act(c, k);
@@ -197,6 +252,17 @@ export function CloneList({
         <span className="text-[12px] text-muted-foreground tabular-nums">
           {clones.length} · {clones.filter((c) => c.mounted).length} mounted
         </span>
+        {parents.length > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 gap-1.5 px-2 text-[12px] text-muted-foreground"
+            onClick={() => setAllForks(!allOpen)}
+          >
+            {allOpen ? <ChevronsDownUp className="size-3.5" /> : <ChevronsUpDown className="size-3.5" />}
+            {allOpen ? "Fold forks" : "Expand forks"}
+          </Button>
+        )}
         <div className="flex-1" />
         {pickedClones.length > 0 && (
           <div className="flex items-center gap-1.5">
@@ -263,6 +329,9 @@ export function CloneList({
               key={c.name}
               clone={c}
               root={root}
+              tree={treeShown ? rows[i] : undefined}
+              forks={forksOf(clones, c.name)}
+              onToggle={(all) => setBulbs(root, all ? subtreeParents(c.name) : [c.name], !rows[i].open)}
               selected={i === selected}
               picked={picked.has(c.name)}
               picking={picked.size > 0}
@@ -295,6 +364,7 @@ export function CloneList({
         <Hint keys="c" label="copy path" />
         <Hint keys="m" label="mount" />
         <Hint keys="space" label="select" />
+        {parents.length > 0 && <Hint keys="left+right" label="forks" />}
         <Hint keys="mod+backspace" label={pickedClones.length ? `remove ${pickedClones.length}` : "remove"} />
       </div>
     </section>
@@ -388,6 +458,9 @@ export function PickBox({
 function CloneRow({
   clone: c,
   root,
+  tree,
+  forks,
+  onToggle,
   selected,
   picked,
   picking,
@@ -399,6 +472,12 @@ function CloneRow({
 }: {
   clone: CloneInfo;
   root: string;
+  /** Its place in the fork tree, when the list shows one. */
+  tree?: TreeRow;
+  /** Its forks, deepest first: removing it offers to remove them too. */
+  forks: CloneInfo[];
+  /** Fold or unfold its forks; `all`: its whole subtree (Option-click). */
+  onToggle: (all: boolean) => void;
   selected: boolean;
   picked: boolean;
   picking: boolean;
@@ -431,6 +510,7 @@ function CloneRow({
         COLS,
         picked ? "bg-primary/[0.06]" : selected ? "bg-foreground/[0.04]" : "hover:bg-foreground/[0.025]",
         busy && "opacity-55",
+        tree?.context && "opacity-50",
       )}
     >
       {menuAt && (
@@ -458,78 +538,86 @@ function CloneRow({
         </TooltipContent>
       </Tooltip>
 
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span className={cn("truncate text-[13px] font-medium", !c.mounted && "text-muted-foreground")}>
-            {c.name}
-          </span>
-          {c.operation && (
-            <span
-              title="Fix the conflicts and git add them, then Continue update from the menu (or Abort)"
-              className="flex shrink-0 items-center gap-1 rounded-full bg-amber/12 px-1.5 text-[11px] leading-[18px] text-amber"
-            >
-              <TriangleAlert className="size-3" />
-              {c.operation}: conflicts
+      <div className="flex min-w-0 items-center self-stretch">
+        {tree && <TreeGutter row={tree} name={c.name} onToggle={onToggle} />}
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className={cn("truncate text-[13px] font-medium", !c.mounted && "text-muted-foreground")}>
+              {c.name}
             </span>
-          )}
-          {!!c.checkpoints && (
-            <button
-              type="button"
-              title={`${c.checkpoints} checkpoint${c.checkpoints === 1 ? "" : "s"}: rewind…`}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                setUi({ rewind: { root, clone: c } });
-              }}
-              className="flex shrink-0 items-center gap-1 rounded-full bg-bottle-soft px-1.5 text-[11px] leading-[18px] text-bottle hover:brightness-95"
-            >
-              <History className="size-3" />
-              {c.checkpoints}
-            </button>
-          )}
-          {c.removing_when_free && (
-            <span className="shrink-0 rounded-full bg-foreground/[0.06] px-1.5 text-[11px] leading-[18px] text-muted-foreground">
-              removing when free
-            </span>
-          )}
-          {c.issue && (
-            <span className="flex shrink-0 items-center gap-1 rounded-full bg-amber/12 px-1.5 text-[11px] leading-[18px] text-amber">
-              <TriangleAlert className="size-3" />
-              {c.issue}
-            </span>
-          )}
-          {failed && (
-            <span className="flex shrink-0 items-center gap-1 rounded-full bg-amber/12 px-1.5 text-[11px] leading-[18px] text-amber">
-              <TriangleAlert className="size-3" />
-              {c.failed_steps.join(", ")} failed
-            </span>
-          )}
-        </div>
-        <div className="mt-0.5 flex min-w-0 items-center gap-1.5 font-mono text-[11.5px] text-muted-foreground">
-          {c.branch ? (
-            <>
-              <GitBranch className="size-3 shrink-0 text-faint" />
-              <span className="truncate">{c.branch}</span>
-            </>
-          ) : (
-            <>
-              <GitCommitHorizontal className="size-3 shrink-0 text-faint" />
-              <span className="truncate">detached at {c.head?.slice(0, 8)}</span>
-            </>
-          )}
-          {c.forked_from && (
-            <span className="flex shrink-0 items-center gap-1 font-sans text-[11px] text-faint">
-              · <GitFork className="size-3" /> forked from {c.forked_from}
-            </span>
-          )}
-          {stale && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="shrink-0 font-sans text-[11px] text-faint">· gen {c.golden_generation}</span>
-              </TooltipTrigger>
-              <TooltipContent>Made from an older golden image</TooltipContent>
-            </Tooltip>
-          )}
+            {tree && tree.forks > 0 && (
+              <span className="shrink-0 text-[11.5px] text-faint">
+                +{tree.forks} fork{tree.forks === 1 ? "" : "s"}
+              </span>
+            )}
+            {c.operation && (
+              <span
+                title="Fix the conflicts and git add them, then Continue update from the menu (or Abort)"
+                className="flex shrink-0 items-center gap-1 rounded-full bg-amber/12 px-1.5 text-[11px] leading-[18px] text-amber"
+              >
+                <TriangleAlert className="size-3" />
+                {c.operation}: conflicts
+              </span>
+            )}
+            {!!c.checkpoints && (
+              <button
+                type="button"
+                title={`${c.checkpoints} checkpoint${c.checkpoints === 1 ? "" : "s"}: rewind…`}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setUi({ rewind: { root, clone: c } });
+                }}
+                className="flex shrink-0 items-center gap-1 rounded-full bg-bottle-soft px-1.5 text-[11px] leading-[18px] text-bottle hover:brightness-95"
+              >
+                <History className="size-3" />
+                {c.checkpoints}
+              </button>
+            )}
+            {c.removing_when_free && (
+              <span className="shrink-0 rounded-full bg-foreground/[0.06] px-1.5 text-[11px] leading-[18px] text-muted-foreground">
+                removing when free
+              </span>
+            )}
+            {c.issue && (
+              <span className="flex shrink-0 items-center gap-1 rounded-full bg-amber/12 px-1.5 text-[11px] leading-[18px] text-amber">
+                <TriangleAlert className="size-3" />
+                {c.issue}
+              </span>
+            )}
+            {failed && (
+              <span className="flex shrink-0 items-center gap-1 rounded-full bg-amber/12 px-1.5 text-[11px] leading-[18px] text-amber">
+                <TriangleAlert className="size-3" />
+                {c.failed_steps.join(", ")} failed
+              </span>
+            )}
+          </div>
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 font-mono text-[11.5px] text-muted-foreground">
+            {c.branch ? (
+              <>
+                <GitBranch className="size-3 shrink-0 text-faint" />
+                <span className="truncate">{c.branch}</span>
+              </>
+            ) : (
+              <>
+                <GitCommitHorizontal className="size-3 shrink-0 text-faint" />
+                <span className="truncate">detached at {c.head?.slice(0, 8)}</span>
+              </>
+            )}
+            {c.forked_from && (
+              <span className="flex shrink-0 items-center gap-1 font-sans text-[11px] text-faint">
+                · <GitFork className="size-3" /> forked from {c.forked_from}
+              </span>
+            )}
+            {stale && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="shrink-0 font-sans text-[11px] text-faint">· gen {c.golden_generation}</span>
+                </TooltipTrigger>
+                <TooltipContent>Made from an older golden image</TooltipContent>
+              </Tooltip>
+            )}
+          </div>
         </div>
       </div>
 
@@ -597,7 +685,7 @@ function CloneRow({
         <RowAction
           label="Remove clone…"
           className="hover:bg-destructive/10 hover:text-destructive"
-          onClick={() => setUi({ remove: { root, clones: [c] } })}
+          onClick={() => setUi({ remove: { root, clones: [c], forks } })}
         >
           <Trash2 />
         </RowAction>
@@ -738,6 +826,7 @@ export function CloneMenuItems({ clone: c, root }: { clone: CloneInfo; root: str
   const openDiff = useOpenDiff(root);
   const resolver = useRepoConfig(c.operation ? root : undefined).data?.config.update?.resolver;
   const qc = useQueryClient();
+  const allClones = useClones(root).data;
   return (
     <>
       <DropdownMenuItem onSelect={() => void openIn(c.path, prefs.editor)}>
@@ -795,10 +884,12 @@ export function CloneMenuItems({ clone: c, root }: { clone: CloneInfo; root: str
       <DropdownMenuItem onSelect={() => void checkpointNow(qc, root, c.name)}>
         <History /> Checkpoint
       </DropdownMenuItem>
-      <DropdownMenuItem disabled={!c.checkpoints} onSelect={() => setUi({ rewind: { root, clone: c } })}>
-        <Undo2 /> Rewind…
-        {!!c.checkpoints && <DropdownMenuShortcut>{c.checkpoints}</DropdownMenuShortcut>}
-      </DropdownMenuItem>
+      {!!c.checkpoints && (
+        <DropdownMenuItem onSelect={() => setUi({ rewind: { root, clone: c } })}>
+          <Undo2 /> Rewind…
+          <DropdownMenuShortcut>{c.checkpoints}</DropdownMenuShortcut>
+        </DropdownMenuItem>
+      )}
       <DropdownMenuItem onSelect={() => forkClone(root, c.name)}>
         <GitFork /> Fork
       </DropdownMenuItem>
@@ -808,7 +899,10 @@ export function CloneMenuItems({ clone: c, root }: { clone: CloneInfo; root: str
         {c.mounted ? "Unmount" : "Mount"}
         <DropdownMenuShortcut>M</DropdownMenuShortcut>
       </DropdownMenuItem>
-      <DropdownMenuItem variant="destructive" onSelect={() => setUi({ remove: { root, clones: [c] } })}>
+      <DropdownMenuItem
+        variant="destructive"
+        onSelect={() => setUi({ remove: { root, clones: [c], forks: forksOf(allClones ?? [], c.name) } })}
+      >
         <Trash2 /> Remove clone…
         <DropdownMenuShortcut>{isMac ? "⌘⌫" : "Ctrl+⌫"}</DropdownMenuShortcut>
       </DropdownMenuItem>
@@ -823,4 +917,107 @@ export function useOpenDiff(root: string) {
   return (c: CloneInfo) => {
     if (repoId && c.mounted) void navigate({ to: "/repo/$repoId/diff/$clone", params: { repoId, clone: c.name } });
   };
+}
+
+/** A row of the fork tree. */
+export type TreeRow = {
+  clone: CloneInfo;
+  depth: number;
+  /** The clone it was forked from, when that's in the list. */
+  parent: string | null;
+  /** Per column left of it, whether an ancestor's later sibling keeps the line going. */
+  rails: boolean[];
+  /** The last of its parent's forks (└ rather than ├). */
+  last: boolean;
+  /** How many forks hang from it, at any depth. */
+  forks: number;
+  open: boolean;
+  /** Shown only as a filtered match's ancestor. */
+  context: boolean;
+};
+
+/**
+ * The list's rows: lineage roots in list order, each followed by its forks
+ * (oldest first), depth first. Folded branches (shared with the map's bulbs)
+ * hide their forks. A filter shows matches and their ancestors, folded or not.
+ */
+export function treeRows(
+  clones: CloneInfo[],
+  filter: string,
+  open: ReadonlySet<string>,
+  closed: ReadonlySet<string>,
+): TreeRow[] {
+  const f = forest(clones);
+  const q = filter.trim().toLowerCase();
+  const matches = (c: CloneInfo) => !q || c.name.toLowerCase().includes(q) || !!c.branch?.toLowerCase().includes(q);
+  // With a filter, a clone shows if it or a fork under it matches.
+  const keep = (c: CloneInfo): boolean => matches(c) || (f.kids.get(c.name) ?? []).some(keep);
+  const out: TreeRow[] = [];
+  const visit = (c: CloneInfo, depth: number, rails: boolean[], last: boolean) => {
+    if (!keep(c)) return;
+    const forks = f.descendants(c.name);
+    const isOpen = q ? true : !isFolded(f, c.name, open, closed);
+    out.push({
+      clone: c,
+      depth,
+      parent: f.parentOf.get(c.name) ?? null,
+      rails,
+      last,
+      forks,
+      open: isOpen,
+      context: !matches(c),
+    });
+    if (!isOpen) return;
+    const kids = (f.kids.get(c.name) ?? []).filter(keep);
+    kids.forEach((k, i) => {
+      visit(k, depth + 1, depth ? [...rails, !last] : [], i === kids.length - 1);
+    });
+  };
+  for (const c of clones.filter(f.isRoot)) visit(c, 0, [], true);
+  return out;
+}
+
+const STEP = 14;
+
+/** The gutter left of a clone's name: connectors to its parent, and a chevron if it has forks. */
+function TreeGutter({ row, name, onToggle }: { row: TreeRow; name: string; onToggle: (all: boolean) => void }) {
+  const h = 52;
+  const w = row.depth * STEP;
+  return (
+    <>
+      {row.depth > 0 && (
+        <svg width={w} height={h} className="shrink-0 text-border" aria-hidden="true">
+          {row.rails.map((on, k) =>
+            on ? <line key={k} x1={k * STEP + 7} x2={k * STEP + 7} y1={0} y2={h} stroke="currentColor" /> : null,
+          )}
+          {/* Its own connector: ├ or └ into its row. */}
+          <line
+            x1={(row.depth - 1) * STEP + 7}
+            x2={(row.depth - 1) * STEP + 7}
+            y1={0}
+            y2={row.last ? h / 2 : h}
+            stroke="currentColor"
+          />
+          <line x1={(row.depth - 1) * STEP + 7} x2={w} y1={h / 2} y2={h / 2} stroke="currentColor" />
+        </svg>
+      )}
+      {row.forks > 0 ? (
+        <button
+          type="button"
+          aria-expanded={row.open}
+          aria-label={row.open ? `Fold ${name}'s forks` : `Show ${name}'s forks`}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle(e.altKey);
+          }}
+          className="mr-1 flex size-[14px] shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+        >
+          <ChevronRight className={cn("size-3 transition-transform", row.open && "rotate-90")} />
+        </button>
+      ) : (
+        <span className="mr-1 w-[14px] shrink-0" />
+      )}
+    </>
+  );
 }

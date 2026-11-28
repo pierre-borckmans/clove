@@ -20,8 +20,6 @@ export function MapInspector({
   picked,
   pickedWt,
   generation,
-  panel,
-  setPanel,
   refreshing,
 }: {
   status: RepoStatus;
@@ -29,8 +27,6 @@ export function MapInspector({
   picked: CloneInfo | undefined;
   pickedWt: OtherWorktree | undefined;
   generation: number | undefined;
-  panel: "image" | null;
-  setPanel: (panel: "image" | null) => void;
   refreshing: boolean;
 }) {
   const prefs = usePrefs();
@@ -41,10 +37,7 @@ export function MapInspector({
   const currentImage = current !== undefined && generation === current;
   const selectedPr = picked && prs?.get(picked.name)?.pr;
   return (
-    <div
-      className="map-inspector flex min-h-[90px] shrink-0 flex-wrap items-center gap-x-5 gap-y-2 border-t bg-card px-5 py-3"
-      aria-live="polite"
-    >
+    <div className="map-inspector flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2" aria-live="polite">
       {pickedWt ? (
         <>
           <div className="min-w-0 flex-1 basis-[230px]">
@@ -96,7 +89,7 @@ export function MapInspector({
               <span className="truncate">
                 {picked?.name ??
                   (currentImage
-                    ? "Golden image"
+                    ? "Bulb (golden image)"
                     : generation !== undefined
                       ? `Generation ${generation}`
                       : "No golden image")}
@@ -168,26 +161,16 @@ export function MapInspector({
                 </CloneMenu>
               </>
             ) : currentImage ? (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-[12px]"
-                  onClick={() => setPanel(panel === "image" ? null : "image")}
-                >
-                  Image details
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-[12px]"
-                  disabled={refreshing}
-                  onClick={() => void startOp({ kind: "refresh", root: status.root })}
-                >
-                  <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
-                  {refreshing ? "Refreshing…" : "Refresh"}
-                </Button>
-              </>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-[12px]"
+                disabled={refreshing}
+                onClick={() => void startOp({ kind: "refresh", root: status.root })}
+              >
+                <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
+                {refreshing ? "Refreshing…" : "Refresh"}
+              </Button>
             ) : !status.golden && generation === undefined ? (
               <Button size="sm" disabled={refreshing} onClick={() => void startOp({ kind: "init", root: status.root })}>
                 Build golden image

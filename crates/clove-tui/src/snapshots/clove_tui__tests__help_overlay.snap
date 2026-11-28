@@ -14,23 +14,23 @@ expression: s
 │                    ││             o   open in $EDITOR                      │        4d     14M   │
 │                    ││             v   see its changes (diff)               │        3h     14M   │
 │                    ││             t   how fast clones come (timings)       │                     │
-│                    ││             c   make a plain git worktree a clone    │                     │
 │                    ││             /   filter by name or branch             │                     │
 │                    ││         ↑↓ jk   move · wheel scrolls                 │                     │
 │                    ││                                                      │                     │
+│                    ││  CHECKPOINTS AND FORKS                               │                     │
+│                    ││             c   checkpoint · worktree: make a clone  │                     │
+│                    ││             b   rewind to a checkpoint               │                     │
+│                    ││             f   fork: a new clone, a copy of it now  │─────────────────────╯
+│                    ││         ← → *   fold / unfold forks · * all          │─────────────────────╮
+│                    ││                                                      │                     │
 │                    ││  GOLDEN IMAGE                                        │                     │
 │                    ││             r   refresh to latest base               │                     │
-│                    ││             i   build it (first time)                │─────────────────────╯
-│                    ││             l   watch the last operation             │─────────────────────╮
-│                    ││                                                      │                     │
-│                    ││  ANYWHERE                                            │                     │
-│                    ││   tab [ ] 1-9   switch repository                    │                     │
-│                    ││             A   add a repo clove doesn't manage yet  │                     │
-│                    ││             s   settings, service                    │                     │
-│ ────────────────── ││             g   cleanup: merged clones/worktrees     │                     │
-│ s settings         ││             L   log: what clove removed, and why     │                     │
-│ g cleanup          ││             D   doctor                               │               3.2s  │
-│ D doctor           ││             K   check for a new clove / upgrade      │                6ms  │
-│ S service          ││        ctrl-r   reload now                           │                     │
+│                    ││             i   build it (first time)                │                     │
+│                    ││             l   watch the last operation             │                     │
+│ ────────────────── ││                                                      │                     │
+│ s settings         ││  ANYWHERE                                            │                     │
+│ g cleanup          ││   tab [ ] 1-9   switch repository                    │               3.2s  │
+│ D doctor           ││             A   add a repo clove doesn't manage yet  │                6ms  │
+│ S service          ││             s   settings, service                    │                     │
 ╰────────────────────╯│                                                      │─────────────────────╯
  esc close            ╰──────────────────────────────────────────────────────╯

@@ -239,7 +239,7 @@ impl Clove {
 
     /// New clones copied from clone `from` as it is now: uncommitted and
     /// ignored files, index and all, each on its own new branch at `from`'s
-    /// HEAD (default `<from's branch>-<name>`). Several names share one flush
+    /// HEAD (default `<from's branch>-<suffix>`, see [`fork_suffix`]). Several names share one flush
     /// of the source, so they start identical.
     pub fn fork(&self, from: &str, opts: &ForkOptions, r: &dyn Reporter) -> Result<Vec<CloneInfo>> {
         let started = std::time::Instant::now();
@@ -250,7 +250,7 @@ impl Clove {
             bail!("name at least one fork");
         }
         if opts.branch.is_some() && opts.names.len() > 1 {
-            bail!("--branch names one fork's branch; several forks get <branch>-<name> each");
+            bail!("--branch names one fork's branch; several forks get one branch each");
         }
         let src_admin = self.clone_admin(from);
         if let Some(op) = crate::update::operation(&src_admin) {
@@ -292,7 +292,7 @@ impl Clove {
             }
             let branch = (!opts.detach).then(|| {
                 opts.branch.clone().unwrap_or_else(|| match &src_branch {
-                    Some(b) => format!("{b}-{name}"),
+                    Some(b) => format!("{b}-{}", fork_suffix(from, &name)),
                     None => name.clone(),
                 })
             });
@@ -669,9 +669,30 @@ fn copy_tree(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The part of a fork's name its default branch adds to the source branch:
+/// the name minus the source's `<from>-` prefix (`feat-x-b` from `feat-x`
+/// gives `b`), or the whole name when it doesn't start with it.
+pub fn fork_suffix<'a>(from: &str, name: &'a str) -> &'a str {
+    name.strip_prefix(from)
+        .and_then(|s| s.strip_prefix('-'))
+        .filter(|s| !s.is_empty())
+        .unwrap_or(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fork_branch_suffix_drops_the_source_name() {
+        assert_eq!(fork_suffix("glad-juniper", "glad-juniper-a"), "a");
+        assert_eq!(fork_suffix("feat-search", "feat-search-b"), "b");
+        assert_eq!(fork_suffix("glad-juniper-a", "glad-juniper-a-a"), "a");
+        // No shared prefix, or nothing after it: the whole name.
+        assert_eq!(fork_suffix("feat-x", "spike"), "spike");
+        assert_eq!(fork_suffix("feat-x", "feat-xy"), "feat-xy");
+        assert_eq!(fork_suffix("feat-x", "feat-x-"), "feat-x-");
+    }
 
     #[test]
     fn copies_admin_state_but_not_identity() {

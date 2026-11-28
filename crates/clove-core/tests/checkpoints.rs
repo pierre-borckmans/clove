@@ -304,6 +304,29 @@ fn checkpoint_rewind_fork() {
         (auto.name.as_str(), auto.branch.as_deref()),
         ("feat-x-d", Some("feat/x-d"))
     );
+    // A name that starts with the source's: the branch doesn't repeat it.
+    let prefixed = c
+        .fork(
+            &x.name,
+            &ForkOptions {
+                names: vec![format!("{}-e", x.name)],
+                ..Default::default()
+            },
+            &Silent,
+        )
+        .unwrap();
+    assert_eq!(prefixed[0].branch.as_deref(), Some("feat/x-e"));
+    let nested = c
+        .fork(
+            &prefixed[0].name,
+            &ForkOptions {
+                names: vec![format!("{}-e-a", x.name)],
+                ..Default::default()
+            },
+            &Silent,
+        )
+        .unwrap();
+    assert_eq!(nested[0].branch.as_deref(), Some("feat/x-e-a"));
 
     // Removing a clone takes its checkpoints and their refs with it.
     c.remove(

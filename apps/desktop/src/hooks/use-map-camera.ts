@@ -3,10 +3,28 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 
 type Point = { x: number; y: number };
 type Camera = Point & { scale: number };
+/** A box in viewport px. */
+export type Box = { left: number; top: number; right: number; bottom: number };
 type GestureEvent = Event & { scale: number; clientX: number; clientY: number };
 const MAX_SCALE = 4;
 /** A small map fits up to this zoom, so it fills a big pane instead of floating in it. */
 const MAX_FIT = 1.5;
+
+/** One notch of a mouse wheel zooms by this much. */
+const NOTCH_ZOOM = 1.1;
+/** Zoom per pixel of a smooth (trackpad) delta. */
+const SMOOTH_ZOOM = 0.004;
+
+/**
+ * The zoom factor for a ⌘/Ctrl wheel event. A mouse wheel's notch (a line
+ * or page delta, or a big pixel jump) is a fixed step; a trackpad's stream
+ * of small pixel deltas scales smoothly, each event capped so a fling can't jump.
+ */
+export function wheelZoom(dy: number, mode: number) {
+  if (dy === 0) return 1;
+  if (mode !== 0 || Math.abs(dy) >= 50) return dy > 0 ? 1 / NOTCH_ZOOM : NOTCH_ZOOM;
+  return Math.exp(-Math.max(-25, Math.min(25, dy)) * SMOOTH_ZOOM);
+}
 
 /** A local canvas camera: gestures change the map, never the webview's zoom. */
 /** `bottomInset` is viewport height kept clear (an overlay at the bottom); fitting centres above it. */
@@ -26,6 +44,8 @@ export function useMapCamera(worldWidth: number, worldHeight: number, bottomInse
   world.current = { width: worldWidth, height: worldHeight };
   const inset = useRef(bottomInset);
   inset.current = bottomInset;
+  /** Height of a drawer over the viewport's bottom: the map may pan up that far more, never forced to. */
+  const overlay = useRef(0);
 
   /** The scale that fits the whole map, enlarging a small one up to MAX_FIT. */
   const fitScale = useCallback(() => {
@@ -42,25 +62,38 @@ export function useMapCamera(worldWidth: number, worldHeight: number, bottomInse
 
   // A map smaller than the viewport stays centred; a larger one pans until
   // its edge meets the viewport's. The map carries its own padding.
-  const update = useCallback((next: Camera) => {
+  /** A camera glide in flight (fit from the button, double-click or key); any gesture stops it. */
+  const glide = useRef<number | null>(null);
+  /** The camera kept inside the map's bounds (plus room to pan above a drawer). */
+  const bound = useCallback((next: Camera): Camera => {
     const el = viewport.current;
-    let bounded = next;
-    if (el) {
-      const axis = (pos: number, view: number, size: number) => {
-        const centered = (view - size) / 2;
-        const lo = Math.min(view - size, centered);
-        const hi = Math.max(0, centered);
-        return Math.min(hi, Math.max(lo, pos));
-      };
-      bounded = {
-        scale: next.scale,
-        x: axis(next.x, el.clientWidth, world.current.width * next.scale),
-        y: axis(next.y, el.clientHeight - inset.current, world.current.height * next.scale),
-      };
-    }
-    liveCamera.current = bounded;
-    setCamera(bounded);
+    if (!el) return next;
+    const axis = (pos: number, view: number, size: number, extra = 0) => {
+      const centered = (view - size) / 2;
+      const lo = Math.min(view - size - extra, centered - extra);
+      const hi = Math.max(0, centered);
+      return Math.min(hi, Math.max(lo, pos));
+    };
+    return {
+      scale: next.scale,
+      x: axis(next.x, el.clientWidth, world.current.width * next.scale),
+      y: axis(next.y, el.clientHeight - inset.current, world.current.height * next.scale, overlay.current),
+    };
   }, []);
+  const update = useCallback(
+    (next: Camera, gliding = false) => {
+      if (!gliding && glide.current !== null) {
+        cancelAnimationFrame(glide.current);
+        glide.current = null;
+      }
+      // A glide ends on the fit, inside the bounds: clamping every frame on the
+      // way would snap the path.
+      const bounded = gliding ? next : bound(next);
+      liveCamera.current = bounded;
+      setCamera(bounded);
+    },
+    [bound],
+  );
 
   const localPoint = useCallback((clientX: number, clientY: number): Point => {
     const rect = viewport.current?.getBoundingClientRect();
@@ -83,18 +116,105 @@ export function useMapCamera(worldWidth: number, worldHeight: number, bottomInse
     [zoomAt],
   );
 
-  const fit = useCallback(() => {
-    if (!viewport.current) return;
+  const fitTarget = useCallback((): Camera | null => {
+    if (!viewport.current) return null;
     const { clientWidth: width, clientHeight: height } = viewport.current;
     const scale = Math.max(0.05, fitScale());
-    update({ x: (width - worldWidth * scale) / 2, y: (height - bottomInset - worldHeight * scale) / 2, scale });
-  }, [update, fitScale, worldHeight, worldWidth, bottomInset]);
+    return { x: (width - worldWidth * scale) / 2, y: (height - bottomInset - worldHeight * scale) / 2, scale };
+  }, [fitScale, worldHeight, worldWidth, bottomInset]);
+
+  /** Fits at once: on mount and on resize. */
+  const fitNow = useCallback(() => {
+    const target = fitTarget();
+    if (target) update(target);
+  }, [fitTarget, update]);
+
+  /**
+   * Glides to the fit (the button, a double-click, 0 or F). Scale moves in log
+   * space and the position follows it, so the zoom feels even; ease-out cubic.
+   */
+  const glideTo = useCallback(
+    (target: Camera) => {
+      const from = liveCamera.current;
+      if (glide.current !== null) cancelAnimationFrame(glide.current);
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return update(target);
+      const el = viewport.current;
+      if (!el) return;
+      // Glide the world point at the viewport's centre, not the camera's
+      // corner: with the scale moving in log space, that keeps the path straight.
+      const cx = el.clientWidth / 2;
+      const cy = (el.clientHeight - inset.current) / 2;
+      const centre = (c: Camera) => ({ x: (cx - c.x) / c.scale, y: (cy - c.y) / c.scale });
+      const a = centre(from);
+      const b = centre(target);
+      const start = performance.now();
+      const ms = 420;
+      const step = (now: number) => {
+        const t = Math.min(1, (now - start) / ms);
+        const e = 1 - (1 - t) ** 3;
+        const lerp = (p: number, q: number) => p + (q - p) * e;
+        const scale = Math.exp(lerp(Math.log(from.scale), Math.log(target.scale)));
+        const wx = lerp(a.x, b.x);
+        const wy = lerp(a.y, b.y);
+        update(t < 1 ? { x: cx - wx * scale, y: cy - wy * scale, scale } : target, t < 1);
+        glide.current = t < 1 ? requestAnimationFrame(step) : null;
+      };
+      glide.current = requestAnimationFrame(step);
+    },
+    [update],
+  );
+
+  const fit = useCallback(() => {
+    const target = fitTarget();
+    if (target) glideTo(target);
+  }, [fitTarget, glideTo]);
+
+  /**
+   * Glides just enough that `box` (viewport px) sits inside the viewport,
+   * `margin` in from its edges and above the bottom inset and any drawer. When
+   * it can't fit, its top (and left) edge wins: better a whole menu ring over
+   * the drawer than one cut off at the top.
+   */
+  const keepVisible = useCallback(
+    (box: Box, margin = 12) => {
+      const el = viewport.current;
+      if (!el) return;
+      const live = liveCamera.current;
+      const fit = (lo: number, hi: number, a: number, b: number) => {
+        if (b > hi) return Math.min(b - hi, Math.max(0, a - lo));
+        if (a < lo) return a - lo;
+        return 0;
+      };
+      const dx = fit(margin, el.clientWidth - margin, box.left, box.right);
+      const dy = fit(margin, el.clientHeight - inset.current - overlay.current - margin, box.top, box.bottom);
+      if (Math.abs(dx) > 1 || Math.abs(dy) > 1) glideTo({ ...live, x: live.x - dx, y: live.y - dy });
+    },
+    [glideTo],
+  );
+
+  /**
+   * A drawer of `height` px now covers the viewport's bottom: the map may pan
+   * up that much more, and `keep` (viewport px) glides above it. With no
+   * drawer, glides back inside the map's usual bounds.
+   */
+  const setDrawer = useCallback(
+    (height: number, keep?: Box) => {
+      overlay.current = height;
+      const live = liveCamera.current;
+      if (height && keep) keepVisible(keep);
+      else if (!height) {
+        const bounded = bound(live);
+        if (Math.abs(bounded.y - live.y) > 1) glideTo(bounded);
+      }
+    },
+    [glideTo, bound, keepVisible],
+  );
 
   // Fit before the first paint, so the map never shows a frame at 100% in a
   // corner before the resize observer below catches up.
   // biome-ignore lint/correctness/useExhaustiveDependencies: once, on mount.
   useLayoutEffect(() => {
-    fit();
+    fitNow();
   }, []);
 
   useEffect(() => {
@@ -104,7 +224,7 @@ export function useMapCamera(worldWidth: number, worldHeight: number, bottomInse
     const observer = new ResizeObserver(() => {
       const width = element.clientWidth;
       const height = element.clientHeight;
-      if (!previous.width) fit();
+      if (!previous.width) fitNow();
       else {
         const current = liveCamera.current;
         update({
@@ -117,7 +237,7 @@ export function useMapCamera(worldWidth: number, worldHeight: number, bottomInse
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [fit, update]);
+  }, [fitNow, update]);
 
   useEffect(() => {
     const element = viewport.current;
@@ -129,10 +249,7 @@ export function useMapCamera(worldWidth: number, worldHeight: number, bottomInse
       // mouse wheel zooms about the cursor rather than the canvas origin.
       const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? element.clientHeight : 1;
       if (event.ctrlKey || event.metaKey) {
-        zoomAt(
-          Math.exp(-Math.max(-120, Math.min(120, event.deltaY * unit)) * 0.01),
-          localPoint(event.clientX, event.clientY),
-        );
+        zoomAt(wheelZoom(event.deltaY * unit, event.deltaMode), localPoint(event.clientX, event.clientY));
       } else {
         const current = liveCamera.current;
         update({ ...current, x: current.x - event.deltaX * unit, y: current.y - event.deltaY * unit });
@@ -175,7 +292,7 @@ export function useMapCamera(worldWidth: number, worldHeight: number, bottomInse
   const onPointerDown = (event: PointerEvent<HTMLElement>) => {
     if (event.button !== 0 && event.button !== 1) return;
     suppressClick.current = false;
-    const node = (event.target as Element).closest("button");
+    const node = (event.target as Element).closest('button, [role="button"]');
     if (node && !space.current && event.button === 0 && event.pointerType !== "touch") return;
     const point = localPoint(event.clientX, event.clientY);
     pointers.current.set(event.pointerId, point);
@@ -268,6 +385,8 @@ export function useMapCamera(worldWidth: number, worldHeight: number, bottomInse
     hand,
     fit,
     zoomBy,
+    setDrawer,
+    keepVisible,
     bindings: {
       onPointerDown,
       onPointerMove,
@@ -285,10 +404,10 @@ export function useMapCamera(worldWidth: number, worldHeight: number, bottomInse
       },
       // On empty canvas; a clone's own double-click opens it.
       onDoubleClick: (event: MouseEvent<HTMLElement>) => {
-        if (!(event.target as Element).closest("button")) fit();
+        if (!(event.target as Element).closest('button, [role="button"]')) fit();
       },
       onFocusCapture: (event: FocusEvent<HTMLElement>) => {
-        const node = (event.target as Element).closest("button");
+        const node = (event.target as Element).closest('button, [role="button"]');
         if (!node || !viewport.current) return;
         const bounds = viewport.current.getBoundingClientRect();
         const box = node.getBoundingClientRect();

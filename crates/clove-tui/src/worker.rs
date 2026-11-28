@@ -150,6 +150,29 @@ pub fn load_diff(tx: Sender<Msg>, root: PathBuf, name: String) {
     });
 }
 
+/// A clone's checkpoints, newest first.
+pub fn load_checkpoints(tx: Sender<Msg>, root: PathBuf, name: String) {
+    std::thread::spawn(move || {
+        let result = guarded(|| {
+            let c = Clove::open(&root).map_err(|e| format!("{e:#}"))?;
+            let mut v = c.checkpoints(&name).map_err(|e| format!("{e:#}"))?;
+            v.reverse();
+            Ok(v)
+        });
+        let _ = tx.send(Msg::Checkpoints { root, name, result });
+    });
+}
+
+/// The processes a "volume is busy" refusal names (`backend::busy_error`).
+pub fn busy_users(err: &str) -> Option<Vec<String>> {
+    let rest = &err[err.find("the volume is busy: ")? + "the volume is busy: ".len()..];
+    let who = rest.split("; close it").next().unwrap_or(rest).trim();
+    if who.is_empty() || who.starts_with("a shell, editor or dev server") {
+        return Some(vec![]);
+    }
+    Some(who.split(", ").map(str::to_string).collect())
+}
+
 pub fn load_refs(tx: Sender<Msg>, root: PathBuf) {
     std::thread::spawn(move || {
         let out = clove_core::git::out(
@@ -296,6 +319,46 @@ fn execute(root: Option<&Path>, task: Task, r: &dyn clove_core::Reporter) -> Res
                 .map(|_| Outcome::Removed)
                 .map_err(e)
         }
+        Task::RemoveTree { name, opts, forks } => {
+            let mut users = vec![];
+            // Deepest first, then the clone they came from.
+            for n in forks.iter().chain([&name]) {
+                match c
+                    .remove_or_defer(n, &opts, r)
+                    .map_err(|err| format!("{n}: {err:#}"))?
+                {
+                    clove_core::Removal::Removed => {}
+                    clove_core::Removal::WhenFree(u) => users.extend(u),
+                }
+            }
+            if users.is_empty() {
+                Ok(Outcome::Removed)
+            } else {
+                spawn_pending_waiter(&c.root);
+                users.dedup();
+                Ok(Outcome::RemovedWhenFree(users))
+            }
+        }
+        Task::Checkpoint { name } => c.checkpoint(&name, None, r).map(Outcome::Checkpointed).map_err(e),
+        Task::Rewind { name, id, force } => {
+            let opts = clove_core::RewindOptions {
+                id: Some(id),
+                force,
+                no_save: false,
+            };
+            c.rewind(&name, &opts, r).map(Outcome::Rewound).map_err(e)
+        }
+        Task::Fork { from, name } => {
+            let opts = clove_core::ForkOptions {
+                names: vec![name],
+                ..Default::default()
+            };
+            c.fork(&from, &opts, r)
+                .map_err(e)?
+                .pop()
+                .map(Outcome::Forked)
+                .ok_or_else(|| "fork made nothing".to_string())
+        }
         Task::Adopt { path, .. } => c
             .adopt(&path, &clove_core::AdoptOptions::default(), r)
             .map(Outcome::Clone)
@@ -363,6 +426,21 @@ pub fn write_config(w: &ConfigWrite) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_who_holds_a_busy_clone() {
+        assert_eq!(
+            busy_users("rewind: the volume is busy: zsh (pid 12), node (pid 40); close it or pass --force"),
+            Some(vec!["zsh (pid 12)".to_string(), "node (pid 40)".to_string()])
+        );
+        assert_eq!(
+            busy_users(
+                "the volume is busy: a shell, editor or dev server is using it; close it or pass --force"
+            ),
+            Some(vec![])
+        );
+        assert_eq!(busy_users("no such checkpoint"), None);
+    }
 
     #[test]
     fn parses_refs() {

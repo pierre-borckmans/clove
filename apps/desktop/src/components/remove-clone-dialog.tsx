@@ -35,7 +35,10 @@ export function RemoveCloneDialog() {
   const { remove } = useUi();
   const [deleteBranch, setDeleteBranch] = useState(true);
   const [force, setForce] = useState(false);
-  const clones = remove?.clones ?? [];
+  const [withForks, setWithForks] = useState(true);
+  const forks = remove?.forks ?? [];
+  // Its forks go too unless unchecked; then they stay, falling back to the image.
+  const clones = [...(withForks ? forks : []), ...(remove?.clones ?? [])];
   const many = clones.length > 1;
   const c = clones[0];
 
@@ -43,6 +46,7 @@ export function RemoveCloneDialog() {
     if (remove) {
       setDeleteBranch(true);
       setForce(false);
+      setWithForks(true);
     }
   }, [remove]);
 
@@ -83,6 +87,18 @@ export function RemoveCloneDialog() {
               </li>
             ))}
           </ul>
+        )}
+
+        {forks.length > 0 && (
+          <label className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5">
+            <span className="text-[13px]">
+              Also remove {forks.length} fork{forks.length === 1 ? "" : "s"}
+              <span className="block text-[12px] text-muted-foreground">
+                Unchecked, they stay: the clone goes, its forks hang from the image.
+              </span>
+            </span>
+            <Switch checked={withForks} onCheckedChange={setWithForks} aria-label="Also remove its forks" />
+          </label>
         )}
 
         {dirty > 0 && (

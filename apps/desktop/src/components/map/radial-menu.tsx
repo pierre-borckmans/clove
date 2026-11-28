@@ -4,26 +4,28 @@ import {
   Code,
   CopyPlus,
   FileDiff,
+  FoldVertical,
   GitFork,
   GitPullRequestArrow,
   HardDrive,
   History,
-  Info,
   type LucideIcon,
   RefreshCw,
   Settings,
   SquareTerminal,
   Trash2,
   Undo2,
+  UnfoldVertical,
   Unplug,
 } from "lucide-react";
 import { type CSSProperties, type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useOpenDiff } from "@/components/clone-list";
 import { startOp } from "@/lib/ops";
 import { APP_LABELS, usePrefs } from "@/lib/prefs";
-import { checkpointNow, forkClone, openIn, useMountToggle } from "@/lib/queries";
+import { checkpointNow, forkClone, openIn, useClones, useMountToggle } from "@/lib/queries";
 import type { CloneInfo, RepoStatus } from "@/lib/types";
-import { setUi } from "@/lib/ui";
+import { setBulbs, setUi } from "@/lib/ui";
+import { forksOf } from "./lineage";
 
 /** `tone` is the action's colour, a CSS colour (usually a palette token). */
 export type RadialAction = { label: string; icon: LucideIcon; tone: string; run: () => void; disabled?: boolean };
@@ -40,11 +42,19 @@ const TONE = {
 };
 
 /** A clone's main actions, as in the list view's menu. */
-export function useCloneActions(c: CloneInfo, root: string): RadialAction[] {
+export function useCloneActions(
+  c: CloneInfo,
+  root: string,
+  /** Its folded (or unfolded) forks on the map, in bulb mode. */
+  bulb?: { forks: number; open: boolean },
+  /** It and the clones it was forked from: a fork unfolds them all, so it shows. */
+  lineage: string[] = [c.name],
+): RadialAction[] {
   const prefs = usePrefs();
   const mount = useMountToggle(root);
   const openDiff = useOpenDiff(root);
   const qc = useQueryClient();
+  const all = useClones(root).data;
   const n = c.checkpoints ?? 0;
   return [
     { label: "View changes", icon: FileDiff, tone: TONE.changes, run: () => openDiff(c), disabled: !c.mounted },
@@ -61,15 +71,42 @@ export function useCloneActions(c: CloneInfo, root: string): RadialAction[] {
       run: () => void openIn(c.path, prefs.editor),
     },
     { label: "Checkpoint", icon: History, tone: TONE.time, run: () => void checkpointNow(qc, root, c.name) },
+    // Rewind only once there is something to rewind to.
+    ...(n
+      ? [
+          {
+            label: `Rewind… (${n} checkpoint${n === 1 ? "" : "s"})`,
+            icon: Undo2,
+            tone: TONE.time,
+            run: () => setUi({ rewind: { root, clone: c } }),
+          },
+        ]
+      : []),
     {
-      label: n ? `Rewind… (${n} checkpoint${n === 1 ? "" : "s"})` : "Rewind… (no checkpoints)",
-      icon: Undo2,
-      tone: TONE.time,
-      run: () => setUi({ rewind: { root, clone: c } }),
-      disabled: !n,
+      label: "Fork (or ⌥-drag the clove)",
+      icon: GitFork,
+      tone: TONE.grow,
+      run: () => {
+        setBulbs(root, lineage, true);
+        forkClone(root, c.name);
+      },
     },
-    { label: "Fork (or ⌥-drag the clove)", icon: GitFork, tone: TONE.grow, run: () => forkClone(root, c.name) },
-    { label: "Remove clone…", icon: Trash2, tone: TONE.remove, run: () => setUi({ remove: { root, clones: [c] } }) },
+    ...(bulb
+      ? [
+          {
+            label: bulb.open ? "Hide forks" : `Show forks (${bulb.forks})`,
+            icon: bulb.open ? FoldVertical : UnfoldVertical,
+            tone: TONE.grow,
+            run: () => setBulbs(root, [c.name], !bulb.open),
+          },
+        ]
+      : []),
+    {
+      label: "Remove clone…",
+      icon: Trash2,
+      tone: TONE.remove,
+      run: () => setUi({ remove: { root, clones: [c], forks: forksOf(all ?? [], c.name) } }),
+    },
     {
       label: c.mounted ? "Unmount" : "Mount",
       icon: c.mounted ? Unplug : HardDrive,
@@ -94,7 +131,7 @@ export function useCloneActions(c: CloneInfo, root: string): RadialAction[] {
 }
 
 /** The golden image's main actions: make a clone, refresh, and the repo itself. */
-export function useImageActions(status: RepoStatus, refreshing: boolean, showDetails: () => void): RadialAction[] {
+export function useImageActions(status: RepoStatus, refreshing: boolean): RadialAction[] {
   const prefs = usePrefs();
   const navigate = useNavigate();
   return [
@@ -106,7 +143,6 @@ export function useImageActions(status: RepoStatus, refreshing: boolean, showDet
       run: () => void startOp({ kind: "refresh", root: status.root }),
       disabled: refreshing || !status.golden,
     },
-    { label: "Image details", icon: Info, tone: TONE.open, run: showDetails, disabled: !status.golden },
     {
       label: `Open repo in ${APP_LABELS[prefs.editor]}`,
       icon: Code,
@@ -161,7 +197,7 @@ export function RadialMenu({
   onClosed: () => void;
   /**
    * Draw the title above the ring. Off for a clone: its own map label rises
-   * into that place instead (MapCtx.menuLift), so nothing is swapped.
+   * into that place instead (scene.setLift), so nothing is swapped.
    */
   showTitle?: boolean;
 }) {
@@ -314,16 +350,23 @@ type Placement = {
   onClosed: () => void;
 };
 
-export function CloneRadialMenu({ clone, root, ...place }: { clone: CloneInfo; root: string } & Placement) {
-  return <RadialMenu title={clone.name} actions={useCloneActions(clone, root)} showTitle={false} {...place} />;
+export function CloneRadialMenu({
+  clone,
+  root,
+  bulb,
+  lineage,
+  ...place
+}: { clone: CloneInfo; root: string; bulb?: { forks: number; open: boolean }; lineage?: string[] } & Placement) {
+  return (
+    <RadialMenu title={clone.name} actions={useCloneActions(clone, root, bulb, lineage)} showTitle={false} {...place} />
+  );
 }
 
 export function ImageRadialMenu({
   status,
   refreshing,
-  showDetails,
   ...place
-}: { status: RepoStatus; refreshing: boolean; showDetails: () => void } & Placement) {
-  const title = status.golden ? `Golden image · gen ${status.golden.generation}` : "Golden image";
-  return <RadialMenu title={title} actions={useImageActions(status, refreshing, showDetails)} {...place} />;
+}: { status: RepoStatus; refreshing: boolean } & Placement) {
+  const title = status.golden ? `Bulb (golden image) · gen ${status.golden.generation}` : "Bulb (golden image)";
+  return <RadialMenu title={title} actions={useImageActions(status, refreshing)} {...place} />;
 }

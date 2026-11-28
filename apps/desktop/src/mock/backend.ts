@@ -291,6 +291,11 @@ async function runOp(id: string, op: OpRequest): Promise<unknown> {
   switch (op.kind) {
     case "new": {
       const r = get(op.root);
+      // `?createFail=1`: new clones and forks fail, to see the copy shrink back.
+      if (new URLSearchParams(globalThis.location?.search).get("createFail")) {
+        await sleep(900);
+        throw new Error("clone image: no space left on device");
+      }
       const branch = op.detach ? null : op.branch?.trim() || `swift-otter-${Math.floor(Math.random() * 90 + 10)}`;
       const name = op.name?.trim() || sanitize(branch ?? `detached-${Date.now() % 1000}`);
       if (r.clones.some((c) => c.name === name)) {
@@ -440,14 +445,18 @@ async function runOp(id: string, op: OpRequest): Promise<unknown> {
     case "refresh": {
       const r = get(op.root);
       const g = r.status.golden as GoldenStatus;
+      // About 4s, in a few visible steps. `?refreshFail=1` makes it fail after checkout.
       await play(id, [
-        { step: "fetch", ms: 600 },
-        { step: "clone golden", ms: 30 },
-        { step: "mount", ms: 320 },
+        { step: "fetch", ms: 700 },
         { step: "checkout", ms: 900 },
-        ...warmScript(r),
-        { step: "index", ms: 280 },
-        { step: "unmount", ms: 260 },
+      ]);
+      if (new URLSearchParams(globalThis.location?.search).get("refreshFail")) {
+        throw new Error("setup pnpm failed: ERR_PNPM_OUTDATED_LOCKFILE");
+      }
+      await play(id, [
+        { step: "setup pnpm", ms: 1500 },
+        { step: "index", ms: 500 },
+        { step: "unmount", ms: 300 },
       ]);
       emit("op-event", {
         id,
@@ -522,11 +531,18 @@ async function runOp(id: string, op: OpRequest): Promise<unknown> {
     }
     case "fork": {
       const r = get(op.root);
+      if (new URLSearchParams(globalThis.location?.search).get("createFail")) {
+        await sleep(900);
+        throw new Error("fork: no space left on device");
+      }
       const src = cloneOf(op.root, op.from);
       const free = (n: string, b: string | null) =>
         !r.clones.some((c) => c.name === n) && !r.refs.some((x) => x.kind === "local" && x.name === b);
       let name = op.name?.trim() || "";
-      let branch: string | null = name ? (src.branch ? `${src.branch}-${name}` : name) : null;
+      // As clove-core: the name minus the source's `<from>-` prefix.
+      const suffix =
+        name.startsWith(`${op.from}-`) && name.length > op.from.length + 1 ? name.slice(op.from.length + 1) : name;
+      let branch: string | null = name ? (src.branch ? `${src.branch}-${suffix}` : name) : null;
       if (!name) {
         for (const s of "abcdefghijklmnopqrstuvwxyz") {
           const b = src.branch ? `${src.branch}-${s}` : `${op.from}-${s}`;

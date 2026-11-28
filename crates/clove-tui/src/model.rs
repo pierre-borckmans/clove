@@ -64,6 +64,27 @@ pub enum Task {
         name: String,
         opts: RemoveOptions,
     },
+    /// Removes `forks` one after the other (deepest first), then `name`.
+    RemoveTree {
+        name: String,
+        opts: RemoveOptions,
+        forks: Vec<String>,
+    },
+    /// Freezes the clone as it is now (`clove checkpoint`).
+    Checkpoint {
+        name: String,
+    },
+    /// Puts the clone back to checkpoint `id`; `force` even while in use.
+    Rewind {
+        name: String,
+        id: String,
+        force: bool,
+    },
+    /// A new clone `name`, a copy of `from` as it is now.
+    Fork {
+        from: String,
+        name: String,
+    },
     Mount {
         name: String,
     },
@@ -147,6 +168,9 @@ pub enum Outcome {
     /// The rc file that now loads the integration, and whether it changed.
     ShellInstalled(PathBuf, bool),
     Upgraded(clove_core::upgrade::Upgraded),
+    Checkpointed(clove_core::CheckpointInfo),
+    Rewound(clove_core::Rewound),
+    Forked(CloneInfo),
 }
 
 pub use clove_core::Cleanup;
@@ -195,6 +219,12 @@ pub enum Msg {
     InitPreview {
         path: PathBuf,
         result: Result<clove_core::InitPreview, String>,
+    },
+    /// A clone's checkpoints, for the rewind picker.
+    Checkpoints {
+        root: PathBuf,
+        name: String,
+        result: Result<Vec<clove_core::CheckpointInfo>, String>,
     },
     /// The latest release, asked for when `forced`, else maybe from the cache.
     Upgrade {
@@ -323,6 +353,14 @@ impl Job {
                 (None, None) => "new clone".into(),
             },
             Task::Remove { name, .. } => format!("remove {name}"),
+            Task::RemoveTree { name, forks, .. } => format!(
+                "remove {name} and {} fork{}",
+                forks.len(),
+                if forks.len() == 1 { "" } else { "s" }
+            ),
+            Task::Checkpoint { name } => format!("checkpoint {name}"),
+            Task::Rewind { name, id, .. } => format!("rewind {name} to {id}"),
+            Task::Fork { from, name } => format!("fork {from} as {name}"),
             Task::RemoveWorktree { name, .. } => format!("remove worktree {name}"),
             Task::Adopt { name, .. } => format!("make {name} a clone"),
             Task::Mount { name } => format!("mount {name}"),
@@ -354,7 +392,10 @@ impl Job {
     /// Short verb for a spinner next to a clone row.
     pub fn verb(&self) -> &'static str {
         match &self.task {
-            Task::Remove { .. } | Task::RemoveWorktree { .. } => "removing",
+            Task::Remove { .. } | Task::RemoveTree { .. } | Task::RemoveWorktree { .. } => "removing",
+            Task::Checkpoint { .. } => "checkpointing",
+            Task::Rewind { .. } => "rewinding",
+            Task::Fork { .. } => "forking",
             Task::Adopt { .. } => "adopting",
             Task::Mount { .. } => "mounting",
             Task::Unmount { .. } => "unmounting",
@@ -368,10 +409,22 @@ impl Job {
     pub fn target(&self) -> Option<&str> {
         match &self.task {
             Task::Remove { name, .. }
+            | Task::RemoveTree { name, .. }
+            | Task::Checkpoint { name }
+            | Task::Rewind { name, .. }
+            | Task::Fork { from: name, .. }
             | Task::Mount { name }
             | Task::Unmount { name }
             | Task::Update { name, .. } => Some(name),
             _ => None,
+        }
+    }
+
+    /// Forks this job removes along with its target.
+    pub fn forks(&self) -> &[String] {
+        match &self.task {
+            Task::RemoveTree { forks, .. } => forks,
+            _ => &[],
         }
     }
 
@@ -582,11 +635,16 @@ pub struct RemoveForm {
     /// Marked rows removed together, one form each; empty for a single one.
     /// The toggles here then apply to all of them.
     pub batch: Vec<RemoveForm>,
+    /// Its forks at any depth, deepest first (a single clone only).
+    pub forks: Vec<String>,
+    /// Remove those forks first; off, they stay as clones of their own.
+    pub remove_forks: bool,
 }
 
 /// The focusable rows of the remove dialog, top to bottom.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoveItem {
+    Forks,
     DeleteBranch,
     Unlock,
     Force,
@@ -625,6 +683,9 @@ impl RemoveForm {
             v.extend([RemoveItem::Remove, RemoveItem::Cancel]);
             return v;
         }
+        if !self.forks.is_empty() {
+            v.push(RemoveItem::Forks);
+        }
         if self.branch.is_some() {
             v.push(RemoveItem::DeleteBranch);
         }
@@ -655,6 +716,7 @@ impl RemoveForm {
             RemoveItem::DeleteBranch => self.delete_branch = !self.delete_branch,
             RemoveItem::Force => self.force = !self.force,
             RemoveItem::Unlock => self.unlock = !self.unlock,
+            RemoveItem::Forks => self.remove_forks = !self.remove_forks,
             _ => return false,
         }
         true
@@ -711,6 +773,30 @@ pub struct ResolveOffer {
     pub focus_no: bool,
 }
 
+/// Picks a checkpoint to rewind a clone to.
+#[derive(Debug, Clone)]
+pub struct RewindView {
+    pub name: String,
+    /// Newest first; None while loading.
+    pub list: Option<Result<Vec<clove_core::CheckpointInfo>, String>>,
+    pub cursor: usize,
+    /// The rewind was refused because these use the clone: (checkpoint, who).
+    pub busy: Option<(String, Vec<String>)>,
+    /// Cancel has focus in the in-use question (else force).
+    pub focus_cancel: bool,
+}
+
+/// Names a fork of a clone.
+#[derive(Debug, Clone)]
+pub struct ForkForm {
+    pub from: String,
+    /// The source's branch: the fork's is `<branch>-<suffix>`.
+    pub branch: Option<String>,
+    pub name: Input,
+    /// The name it was prefilled with, while the user hasn't typed.
+    pub auto: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub enum Modal {
     Help,
@@ -721,6 +807,8 @@ pub enum Modal {
     New(NewForm),
     Remove(RemoveForm),
     Adopt(AdoptForm),
+    Rewind(RewindView),
+    Fork(ForkForm),
     Gc(GcView),
     Doctor(DoctorView),
     Settings(SettingsView),

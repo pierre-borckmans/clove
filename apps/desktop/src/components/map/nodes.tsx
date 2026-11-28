@@ -1,30 +1,13 @@
-import { ArrowDown, ArrowUp, Check, GitBranch, Lock } from "lucide-react";
-import type { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent, ReactNode } from "react";
+import { ArrowDown, ArrowUp, GitBranch, Lock } from "lucide-react";
+import type { KeyboardEvent, MouseEvent, PointerEvent } from "react";
 import { CLOVE_PATH } from "@/components/glyph";
 import type { CloneInfo, OtherWorktree, Pr } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { ageOf, cloneState, type LabelSpot, labelSize, type StatePart, worktreeState } from "./geometry";
+import { ageOf, cloneState, labelSize, type StatePart, worktreeState } from "./geometry";
 import type { Pull } from "./pull";
 
 /** What a radial menu is open on. */
 export type MenuTarget = { kind: "clone"; name: string } | { kind: "image" };
-/** Where a menu opens, in viewport client pixels, and the radius of the node it surrounds (0 for none). */
-export type MenuAnchor = {
-  x: number;
-  y: number;
-  radius: number;
-  /** Where the node's name sits on screen, for the menu's title to grow out of. */
-  title?: ScreenRect;
-};
-export type ScreenRect = { x: number; y: number; w: number; h: number };
-
-/** Where a label's name sits on screen. */
-export function nameRect(name: Element | null | undefined): ScreenRect | undefined {
-  if (!name) return undefined;
-  const box = name.getBoundingClientRect();
-  return { x: box.left, y: box.top, w: box.width, h: box.height };
-}
-
 export type Selection =
   | { kind: "image"; generation: number }
   | { kind: "clone"; name: string }
@@ -48,22 +31,29 @@ export type MapCtx = {
   open: (path: string) => void;
   /** What the radial menu is open on: a clone's name, or "image". */
   menuFor: string | undefined;
-  /** How far the open clone's label rises (world units) to sit above its ring. */
-  menuLift: { dx: number; dy: number } | undefined;
-  menu: (target: MenuTarget, at: MenuAnchor, keyboard: boolean) => void;
+  /** Opens the radial menu on a node; it follows the node as it moves. */
+  menu: (target: MenuTarget, keyboard: boolean) => void;
   /** A clove being pulled off a clone or out of the image. */
   pull: Pull | null;
-  /** What just sprang back home ("image" or a clone's name). */
-  returning: string | null;
-  /** Ripped clones flying off, and where they were let go (world offset from home). */
-  flights: ReadonlyMap<string, { dx: number; dy: number }>;
-  startPull: (target: MenuTarget, event: PointerEvent<HTMLElement>) => void;
+  startPull: (target: MenuTarget, event: PointerEvent<Element>) => void;
   /** Clones being rewound: their skins peel back. */
   peeling: ReadonlySet<string>;
+  /** Folds or unfolds a clone's forks. */
+  toggleBulb: (name: string) => void;
+  /** The repo's name and base ref, written on the bulb. */
+  repoName: string;
+  base: string;
+  /** Commits the image is behind its base (0 or null: nothing to say). */
+  behind: number | null;
+  /** The image is being built or refreshed: a new skin forms round the bulb. */
+  refreshing: boolean;
+  /** The refresh's current step (fetch, checkout, setup pnpm...), shown under the bulb. */
+  refreshStep: string | null;
+  /** A refresh just failed: the forming skin fades out, the label says so for a few seconds. */
+  refreshFailed: boolean;
+  /** The oldest generation drawn in the bulb (0: just the rim). */
+  deepestAge: number;
 };
-
-/** How far a clone sits from home: pulled, or flying off from where it was let go. */
-export const offsetOf = (ctx: MapCtx, name: string) => pullOn(ctx, name) ?? ctx.flights.get(name);
 
 /** The pull on this clone, if it's the one being pulled off (not a fork's copy: the clone stays put). */
 export const pullOn = (ctx: MapCtx, name: string) =>
@@ -83,47 +73,7 @@ export const isDimmed = (ctx: MapCtx, generation: number, name: string) => {
   return ctx.focusAge !== null && ageOf(ctx.newest, generation) !== ctx.focusAge;
 };
 
-/** A name and state line at a computed world box, positioned relative to its node. */
-function Label({
-  name,
-  state,
-  at,
-  origin,
-  lift,
-}: {
-  name: string;
-  state: ReactNode;
-  at: LabelSpot;
-  origin: { x: number; y: number };
-  lift?: { dx: number; dy: number };
-}) {
-  const align = at.align;
-  return (
-    <span
-      className={cn(
-        "map-leaf-label absolute flex flex-col",
-        align === "left" && "items-start text-left",
-        align === "right" && "items-end text-right",
-        align === "center" && "items-center text-center",
-      )}
-      style={{
-        left: at.x - origin.x,
-        top: at.y - origin.y,
-        width: at.w,
-        transform: lift ? `translate(${lift.dx}px, ${lift.dy}px)` : undefined,
-      }}
-    >
-      <span className="map-clone-name flex max-w-full items-baseline gap-1.5 rounded px-1.5 py-0.5 text-[12px] font-medium">
-        <span className="truncate">{name}</span>
-      </span>
-      <span className="map-clone-state mt-0.5 flex h-4 items-center justify-center gap-2 text-[10.5px] text-muted-foreground">
-        {state}
-      </span>
-    </span>
-  );
-}
-
-function StateLine({ parts }: { parts: StatePart[] }) {
+export function StateLine({ parts }: { parts: StatePart[] }) {
   return parts.map((p) =>
     p.arrow ? (
       <span key={p.arrow} className="flex items-center">
@@ -147,124 +97,29 @@ function StateLine({ parts }: { parts: StatePart[] }) {
 
 export const cloneLabelSize = (c: CloneInfo, prOf: MapCtx["prOf"]) => labelSize(c.name, cloneState(c, prOf(c.name)));
 
-/** A clone on the map: a button holding a symbol, with its name and state beside it. */
-export function CloneNode({
-  clone: c,
-  ctx,
-  x,
-  y,
-  size,
-  label,
-  leaving,
-  className,
-  style,
-  children,
-}: {
-  clone: CloneInfo;
-  ctx: MapCtx;
-  /** Centre of the button, and its square size. */
-  x: number;
-  y: number;
-  size: number;
-  label: LabelSpot;
-  /** On its way out: shown while it animates, but no longer interactive. */
-  leaving?: boolean;
-  className?: string;
-  style?: CSSProperties;
-  children: ReactNode;
-}) {
-  const warning = !!(c.failed_steps.length || c.issue || c.operation);
-  const origin = { x: x - size / 2, y: y - size / 2 };
-  const pull = pullOn(ctx, c.name);
-  return (
-    <button
-      type="button"
-      inert={leaving}
-      aria-label={`Clone ${c.name}`}
-      aria-pressed={ctx.picked === c.name}
-      title={c.branch ?? c.name}
-      {...menuTrigger(ctx, { kind: "clone", name: c.name }, () => ctx.select({ kind: "clone", name: c.name }))}
-      onPointerDown={(event) => !leaving && ctx.startPull({ kind: "clone", name: c.name }, event)}
-      onPointerEnter={() => ctx.setHovered(() => c.name)}
-      onPointerLeave={() => ctx.setHovered((h) => (h === c.name ? null : h))}
-      className={cn(
-        "map-clone absolute",
-        ctx.picked === c.name && "map-node-selected",
-        ctx.menuFor === c.name && "map-menu-open",
-        leaving && "map-leaving",
-        pull && "map-pulling",
-        pull?.torn && "map-pull-torn",
-        ctx.returning === c.name && "map-pull-return",
-        isDimmed(ctx, c.golden_generation, c.name) && "map-dim",
-        !c.mounted && "map-clone-unmounted",
-        warning && "map-clone-warning",
-        className,
-      )}
-      // Placed with a transform, not left/top: cheaper to move every frame.
-      style={{
-        left: 0,
-        top: 0,
-        width: size,
-        height: size,
-        transform: `translate(${origin.x}px, ${origin.y}px)`,
-        ...(pull && ({ "--strain": pull.strain } as CSSProperties)),
-        ...style,
-      }}
-    >
-      {children}
-      <Label
-        name={c.name}
-        at={label}
-        origin={origin}
-        state={<StateLine parts={cloneState(c, ctx.prOf(c.name))} />}
-        lift={ctx.menuFor === c.name ? ctx.menuLift : undefined}
-      />
-    </button>
-  );
-}
-
-/**
- * Where a menu opens. A clone's opens on its clove; one whose button is
- * bigger than a clove (a bulb slice) opens at the pointer, or its label from
- * the keyboard. The image's centres on it, with a hole it fits in.
- */
-function menuAnchor(target: MenuTarget, button: HTMLElement, pointer?: { clientX: number; clientY: number }) {
-  const box = button.getBoundingClientRect();
-  const centre = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
-  const radius = Math.min(box.width, box.height) / 2;
-  const title = nameRect(button.querySelector(".map-clone-name"));
-  // Judge "a clove" by its size on the map, not on screen, which grows with zoom.
-  if (target.kind === "image") return { ...centre, radius };
-  if (button.offsetWidth <= 60) return { ...centre, radius, title };
-  if (pointer?.clientX) return { x: pointer.clientX, y: pointer.clientY, radius: 0 };
-  const label = button.querySelector(".map-leaf-label")?.getBoundingClientRect() ?? box;
-  return { x: label.left + label.width / 2, y: label.top + label.height / 2, radius: 0 };
-}
-
-const isMenuKey = (event: KeyboardEvent<HTMLElement>) =>
+const isMenuKey = (event: KeyboardEvent<Element>) =>
   event.key === "." || event.key === "ContextMenu" || (event.shiftKey && event.key === "F10");
 
 /**
  * Handlers that pick a node and open its radial menu: a click, a right-click,
- * or period (or the menu key) from the keyboard.
+ * Enter or Space, or period (or the menu key) from the keyboard.
  */
 export function menuTrigger(ctx: MapCtx, target: MenuTarget, select: () => void) {
   return {
-    onClick: (event: MouseEvent<HTMLElement>) => {
+    onClick: () => {
       select();
-      // A click from Enter or Space has no pointer: focus goes into the ring.
-      ctx.menu(target, menuAnchor(target, event.currentTarget, event), event.detail === 0);
+      ctx.menu(target, false);
     },
-    onContextMenu: (event: MouseEvent<HTMLElement>) => {
+    onContextMenu: (event: MouseEvent<Element>) => {
       event.preventDefault();
       select();
-      ctx.menu(target, menuAnchor(target, event.currentTarget, event), false);
+      ctx.menu(target, false);
     },
-    onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
-      if (!isMenuKey(event)) return;
+    onKeyDown: (event: KeyboardEvent<Element>) => {
+      if (!isMenuKey(event) && event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       select();
-      ctx.menu(target, menuAnchor(target, event.currentTarget), true);
+      ctx.menu(target, true);
     },
   };
 }
@@ -275,13 +130,14 @@ export function skinClasses(c: CloneInfo, pr: Pr | null | undefined) {
   return cn(
     "map-piece",
     bruised ? "map-skin-bruised" : !c.mounted ? "map-skin-unmounted" : "map-skin-peeled",
-    c.mounted && c.dirty && !bruised && "map-skin-modified",
-    pr?.state === "merged" && "map-skin-merged",
+    // Needs attention, then merged, then modified: one colour at a time.
+    c.mounted && c.dirty && !bruised && pr?.state !== "merged" && "map-skin-modified",
+    !bruised && pr?.state === "merged" && "map-skin-merged",
   );
 }
 
 /** One clove, tip pointing at `angle` degrees (0 is up), drawn at `length` px long. */
-export function ClovePiece({ length, angle, cut }: { length: number; angle: number; cut?: boolean }) {
+export function ClovePiece({ length, angle }: { length: number; angle: number }) {
   return (
     <svg
       viewBox="24 4 52 88"
@@ -293,20 +149,7 @@ export function ClovePiece({ length, angle, cut }: { length: number; angle: numb
     >
       <path className="clove-skin" d={CLOVE_PATH} strokeLinejoin="round" />
       <path className="clove-vein" d="M50 24 C46 44 46 64 50 80" fill="none" />
-      {cut && <path className="clove-cut" d="M37 56 L60 44" fill="none" strokeLinecap="round" />}
     </svg>
-  );
-}
-
-/** The small check a merged clone carries. */
-export function MergedBadge({ className, style }: { className?: string; style?: CSSProperties }) {
-  return (
-    <span
-      className={cn("map-merged-badge absolute flex size-3.5 items-center justify-center rounded-full", className)}
-      style={style}
-    >
-      <Check className="size-2.5" strokeWidth={3} />
-    </span>
   );
 }
 
@@ -329,7 +172,6 @@ export function WorktreeShelf({ worktrees, ctx }: { worktrees: OtherWorktree[]; 
           key={w.path}
           aria-label={`Plain worktree ${w.name}`}
           aria-pressed={ctx.pickedWorktree === w.path}
-          title={w.path}
           onClick={() => ctx.select({ kind: "worktree", path: w.path })}
           onDoubleClick={() => !w.missing && ctx.open(w.path)}
           className={cn(
@@ -346,26 +188,5 @@ export function WorktreeShelf({ worktrees, ctx }: { worktrees: OtherWorktree[]; 
         </button>
       ))}
     </fieldset>
-  );
-}
-
-/**
- * A clove's checkpoints, as thin skins around it: one ring per checkpoint up
- * to three, and past that a small count.
- */
-export function CheckpointSkins({ count }: { count: number }) {
-  if (count <= 0) return null;
-  const shown = Math.min(3, count);
-  return (
-    <span className="map-skins pointer-events-none absolute inset-0" aria-hidden="true">
-      {Array.from({ length: shown }, (_, i) => (
-        <span
-          key={i}
-          className="map-skin-layer absolute rounded-full"
-          style={{ inset: -(3 + i * 3.5), "--layer": i } as CSSProperties}
-        />
-      ))}
-      {count > 3 && <span className="map-skin-count absolute">{count}</span>}
-    </span>
   );
 }

@@ -12,7 +12,7 @@ clove new pr:123                 # check out pull request #123 as branch pr/123
 clove adopt ../old-worktree      # turn a plain git worktree into a clone on its branch
 
 # work
-clove ls                         # clones, branch, dirty/ahead/behind, own disk
+clove ls                         # clones, branch, dirty/ahead/behind, own disk; forks as a tree (--flat: one list)
 clove cd feat-login              # jump to a clone; `clove cd` alone goes back to the main checkout
 clove run feat-login -- pnpm test   # run inside the clone's dev environment
 clove diff                       # in a clone: its changes against the base, committed or not
@@ -22,9 +22,16 @@ clove setup                      # in a clone, after a pull: rerun the setup ste
 
 # clean up
 clove rm feat-login              # unmount, delete, and delete the branch unless it has unpushed work (--keep-branch keeps it)
+                                 # with forks: --with-forks removes them too (deepest first), --keep-forks leaves them; a terminal asks
 clove prune                      # remove clones whose PR is merged, and their branches
 clove log                        # what clove removed, when, why, and how to get the branch back
 clove stats                      # how fast clones come: median, p90, where the time goes, reruns
+
+# checkpoints and forks (see docs/design/checkpoints.md)
+clove checkpoint feat-login      # freeze it as it is now, uncommitted and ignored files included (~0.05s)
+clove checkpoints feat-login     # its checkpoints, and the disk each one holds
+clove rewind feat-login          # back to the newest one (~1.5s); `clove rewind feat-login before-rewind` undoes it
+clove fork feat-login a b c      # three new clones of its current state, on their own branches
 
 # maintain
 clove refresh                    # bring the golden image to the latest base (incremental)
