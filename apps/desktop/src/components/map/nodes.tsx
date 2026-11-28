@@ -1,9 +1,10 @@
 import { ArrowDown, ArrowUp, Check, GitBranch, Lock } from "lucide-react";
-import type { CSSProperties, KeyboardEvent, MouseEvent, ReactNode } from "react";
+import type { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent, ReactNode } from "react";
 import { CLOVE_PATH } from "@/components/glyph";
 import type { CloneInfo, OtherWorktree, Pr } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ageOf, cloneState, type LabelSpot, labelSize, type StatePart, worktreeState } from "./geometry";
+import type { Pull } from "./pull";
 
 /** What a radial menu is open on. */
 export type MenuTarget = { kind: "clone"; name: string } | { kind: "image" };
@@ -50,7 +51,21 @@ export type MapCtx = {
   /** How far the open clone's label rises (world units) to sit above its ring. */
   menuLift: { dx: number; dy: number } | undefined;
   menu: (target: MenuTarget, at: MenuAnchor, keyboard: boolean) => void;
+  /** A clove being pulled off a clone or out of the image. */
+  pull: Pull | null;
+  /** What just sprang back home ("image" or a clone's name). */
+  returning: string | null;
+  /** Ripped clones flying off, and where they were let go (world offset from home). */
+  flights: ReadonlyMap<string, { dx: number; dy: number }>;
+  startPull: (target: MenuTarget, event: PointerEvent<HTMLElement>) => void;
 };
+
+/** How far a clone sits from home: pulled, or flying off from where it was let go. */
+export const offsetOf = (ctx: MapCtx, name: string) => pullOn(ctx, name) ?? ctx.flights.get(name);
+
+/** The pull on this clone, if it's the one being pulled. */
+export const pullOn = (ctx: MapCtx, name: string) =>
+  ctx.pull?.target.kind === "clone" && ctx.pull.target.name === name ? ctx.pull : undefined;
 
 /** A clone's menu open on the map: every other clone dims while it's open. */
 const cloneMenu = (ctx: MapCtx) => (ctx.menuFor && ctx.menuFor !== "image" ? ctx.menuFor : undefined);
@@ -154,6 +169,7 @@ export function CloneNode({
 }) {
   const warning = !!(c.failed_steps.length || c.issue || c.operation);
   const origin = { x: x - size / 2, y: y - size / 2 };
+  const pull = pullOn(ctx, c.name);
   return (
     <button
       type="button"
@@ -162,6 +178,7 @@ export function CloneNode({
       aria-pressed={ctx.picked === c.name}
       title={c.branch ?? c.name}
       {...menuTrigger(ctx, { kind: "clone", name: c.name }, () => ctx.select({ kind: "clone", name: c.name }))}
+      onPointerDown={(event) => !leaving && ctx.startPull({ kind: "clone", name: c.name }, event)}
       onPointerEnter={() => ctx.setHovered(() => c.name)}
       onPointerLeave={() => ctx.setHovered((h) => (h === c.name ? null : h))}
       className={cn(
@@ -169,6 +186,9 @@ export function CloneNode({
         ctx.picked === c.name && "map-node-selected",
         ctx.menuFor === c.name && "map-menu-open",
         leaving && "map-leaving",
+        pull && "map-pulling",
+        pull?.torn && "map-pull-torn",
+        ctx.returning === c.name && "map-pull-return",
         isDimmed(ctx, c.golden_generation, c.name) && "map-dim",
         !c.mounted && "map-clone-unmounted",
         warning && "map-clone-warning",
@@ -181,6 +201,7 @@ export function CloneNode({
         width: size,
         height: size,
         transform: `translate(${origin.x}px, ${origin.y}px)`,
+        ...(pull && ({ "--strain": pull.strain } as CSSProperties)),
         ...style,
       }}
     >

@@ -28,6 +28,8 @@ const Toaster = ({ ...props }: ToasterProps) => {
           "--normal-text": "var(--popover-foreground)",
           "--normal-border": "var(--border)",
           "--border-radius": "10px",
+          // Op cards ride in toasts too (see OpsPanel).
+          "--width": "380px",
         } as React.CSSProperties
       }
       {...props}

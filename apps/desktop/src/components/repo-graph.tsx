@@ -1,5 +1,6 @@
 import { Minus, Plus, Scan, X } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { GoldenCard } from "@/components/golden-card";
 import { ageOf } from "@/components/map/geometry";
 import { MapInspector } from "@/components/map/inspector";
@@ -12,14 +13,16 @@ import {
   type Selection,
   WorktreeShelf,
 } from "@/components/map/nodes";
+import { type Pull, usePull } from "@/components/map/pull";
 import { CloneRadialMenu, ImageRadialMenu } from "@/components/map/radial-menu";
 import { RingsLayer, ringsLayout } from "@/components/map/rings";
 import { Button } from "@/components/ui/button";
 import { useMapCamera } from "@/hooks/use-map-camera";
-import { useOps } from "@/lib/ops";
+import { startOp, useOps } from "@/lib/ops";
 import { usePrefs } from "@/lib/prefs";
 import { openIn, usePrCheck, usePrs } from "@/lib/queries";
 import type { CloneInfo, OtherWorktree, RepoStatus } from "@/lib/types";
+import { setUi } from "@/lib/ui";
 import { cn } from "@/lib/utils";
 
 /** Room the worktree shelf takes at the bottom of the viewport. */
@@ -41,6 +44,35 @@ export function RepoGraph({
   const [selection, setSelection] = useState<Selection | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const [panel, setPanel] = useState<"image" | null>(null);
+  /**
+   * Clones ripped off the map. They leave it at once (flying off from where
+   * they were dropped) while the undo toast runs, and stay off until removed;
+   * Undo, or a removal that fails, brings them back.
+   */
+  const [ripped, setRipped] = useState<ReadonlySet<string>>(new Set());
+  const unrip = useCallback(
+    (name: string) =>
+      setRipped((r) => {
+        if (!r.has(name)) return r;
+        const next = new Set(r);
+        next.delete(name);
+        return next;
+      }),
+    [],
+  );
+  /** Where ripped cloves were let go, while they fly off from there. */
+  const [flights, setFlights] = useState<ReadonlyMap<string, { dx: number; dy: number }>>(new Map());
+  const dropFlight = useCallback(
+    (name: string) =>
+      setFlights((f) => {
+        if (!f.has(name)) return f;
+        const next = new Map(f);
+        next.delete(name);
+        return next;
+      }),
+    [],
+  );
+  const onMap = useMemo(() => clones.filter((c) => !ripped.has(c.name)), [clones, ripped]);
   /** The menu a press just closed, so clicking its node again toggles it shut. */
   const justClosed = useRef<{ key: string; at: number } | null>(null);
   /** The open radial menu: what it is on, anchored in world coordinates. */
@@ -89,6 +121,10 @@ export function RepoGraph({
     },
     open: (path) => void openIn(path, prefs.editor),
     // While closing, nothing is "open": a clone's label drops back as the ring fades.
+    pull: null,
+    returning: null,
+    flights: new Map(),
+    startPull: () => {},
     menuFor: radial && !radial.closing ? (radial.target.kind === "clone" ? radial.target.name : "image") : undefined,
     menuLift: undefined,
     menu: (target, at, keyboard) => {
@@ -112,14 +148,98 @@ export function RepoGraph({
 
   const layout = useMemo(() => {
     const labelOf = (c: CloneInfo) => cloneLabelSize(c, (n) => prs?.get(n)?.pr);
-    return ringsLayout(clones, newest, labelOf);
-  }, [clones, newest, prs]);
+    return ringsLayout(onMap, newest, labelOf);
+  }, [onMap, newest, prs]);
 
   const { viewport, camera, dragging, hand, fit, zoomBy, bindings } = useMapCamera(
     layout.width,
     layout.height,
     worktrees.length ? SHELF_INSET : 0,
   );
+
+  // Pull a clove off a clone to remove it, or out of the image for a new one.
+  /** A clove pulled out of the image, until its new-clone op is under way. */
+  const [sprouting, setSprouting] = useState(false);
+  const onTear = (p: Pull) => {
+    dismissRadial();
+    if (p.target.kind === "image") {
+      // A new clone on a generated name and branch, from the base: no questions.
+      setSprouting(true);
+      void startOp({ kind: "new", root: status.root, branch: null, detach: false })
+        .catch((e) => toast.error("Could not start a new clone", { description: String(e) }))
+        .finally(() => setSprouting(false));
+      return;
+    }
+    const name = p.target.name;
+    const clone = clones.find((c) => c.name === name);
+    if (!clone) return;
+    // Uncommitted work would be lost: that still takes the dialog's say-so.
+    if (clone.dirty) {
+      springBack(p);
+      return setUi({ remove: { root: status.root, clones: [clone] } });
+    }
+    // It flies off from where it was let go.
+    setFlights((f) => new Map(f).set(name, { dx: p.dx, dy: p.dy }));
+    window.setTimeout(() => dropFlight(name), 1500);
+    setRipped((r) => new Set(r).add(name));
+    let undone = false;
+    let done = false;
+    const go = () => {
+      if (undone || done) return;
+      done = true;
+      void startOp({ kind: "remove", root: status.root, name, delete_branch: true }).catch((e) => {
+        unrip(name);
+        toast.error(`Could not remove ${name}`, { description: String(e) });
+      });
+    };
+    toast(`Removing ${name}`, {
+      description: clone.branch ? `Its branch goes too, unless it has commits the base lacks.` : undefined,
+      duration: 5000,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          undone = true;
+          dropFlight(name);
+          unrip(name);
+        },
+      },
+      onAutoClose: go,
+      onDismiss: go,
+    });
+  };
+  const { pull, returning, start, swallowClick, springBack, setPull } = usePull({
+    scale: camera.scale,
+    toWorld: (sx, sy) => {
+      const box = viewport.current?.getBoundingClientRect();
+      if (!box) return undefined;
+      return { x: (sx - box.left - camera.x) / camera.scale, y: (sy - box.top - camera.y) / camera.scale };
+    },
+    onTear,
+  });
+  ctx.pull = pull;
+  ctx.returning = returning;
+  ctx.flights = flights;
+  ctx.startPull = start;
+  // A dropped clove waits for its dialog. Cancelled, it springs back; removed,
+  // it flies off from where it was dropped; a new clone grows from the image.
+  // A clove pulled out of the image waits for its new clone's op to start and
+  // finish, then goes as the real clone grows out of the image.
+  const heldImage = !!pull?.held && pull.target.kind === "image";
+  const growing = ops.some((o) => o.status === "running" && o.req.root === status.root && o.req.kind === "new");
+  useEffect(() => {
+    if (heldImage && !sprouting && !growing) setPull(null);
+  }, [heldImage, sprouting, growing, setPull]);
+
+  // A ripped clone stays off the map until it's gone; if its removal failed, it comes back.
+  useEffect(() => {
+    for (const name of ripped) {
+      const gone = !clones.some((c) => c.name === name);
+      const failed = ops.some(
+        (o) => o.req.kind === "remove" && o.req.root === status.root && o.req.name === name && o.status === "error",
+      );
+      if (gone || failed) unrip(name);
+    }
+  }, [ripped, clones, ops, status.root, unrip]);
 
   const empty = current === undefined && !clones.length;
   const menuTarget = radial?.target;
@@ -169,6 +289,7 @@ export function RepoGraph({
       <section
         ref={viewport}
         {...bindings}
+        onClickCapture={swallowClick}
         onPointerDown={(event) => {
           // Any press outside the ring closes it; remember which, so the click
           // that follows on the same node closes rather than reopens.

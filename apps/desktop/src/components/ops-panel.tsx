@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { Activity, Check, ChevronDown, Copy, Loader, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useHotkey } from "@/hooks/use-hotkey";
 import { useNow } from "@/hooks/use-now";
 import { api } from "@/lib/api";
@@ -14,29 +15,23 @@ import { barsFromSteps, Waterfall } from "./waterfall";
 /** How long a finished card stays, from when its op ended. */
 const DONE_FOR = 3000;
 
-/** Floating stack of live operations, bottom right of the main pane. */
+/**
+ * Live operations. Each runs as a sonner toast, so they stack with the other
+ * toasts (collapsed, fanned out on hover) instead of piling up; a finished
+ * one stays {@link DONE_FOR} ms (hover holds it), a failed one until closed.
+ * "Recent activity" lists them all here instead, dismissed ones included.
+ */
 export function OpsPanel() {
   const ops = useOps();
   const { activity, addRepo } = useUi();
-  const visible = (activity ? ops : ops.filter((o) => !o.dismissed)).slice(0, 4);
-  /** A card under the pointer stays until the pointer leaves. */
-  const [held, setHeld] = useState<string | null>(null);
-
-  // A finished card says done briefly, then goes; one just left gets a moment.
-  useEffect(() => {
-    const timers = ops
-      .filter((o) => o.status === "ok" && !o.dismissed && !activity && o.id !== held)
-      .map((o) => setTimeout(() => dismissOp(o.id), Math.max(1200, DONE_FOR - (Date.now() - (o.finishedAt ?? 0)))));
-    return () => {
-      for (const t of timers) clearTimeout(t);
-    };
-  }, [ops, activity, held]);
+  useOpToasts(ops, activity || !!addRepo);
+  const visible = ops.slice(0, 4);
 
   useHotkey({ key: "Escape" }, () => setUi({ activity: false }), activity);
 
   // Operations live in memory, so a fresh session has none: say so rather
   // than open nothing.
-  if (addRepo || (visible.length === 0 && !activity)) return null;
+  if (addRepo || !activity) return null;
   return (
     <div className="pointer-events-none absolute right-4 bottom-4 z-40 flex w-[380px] flex-col gap-2">
       {activity && (
@@ -55,7 +50,7 @@ export function OpsPanel() {
         </div>
       )}
       {visible.map((op) => (
-        <OpCard key={op.id} op={op} onHold={(on) => setHeld((h) => (on ? op.id : h === op.id ? null : h))} />
+        <OpCard key={op.id} op={op} />
       ))}
       {activity && visible.length === 0 && (
         <div className="pointer-events-auto flex gap-3 rounded-xl border bg-popover px-3.5 py-3 shadow-[0_8px_30px_-6px_rgb(0_0_0/0.18),0_2px_6px_-2px_rgb(0_0_0/0.08)] backdrop-blur-xl animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
@@ -77,7 +72,42 @@ export function OpsPanel() {
   );
 }
 
-export function OpCard({ op, embedded, onHold }: { op: Op; embedded?: boolean; onHold?: (held: boolean) => void }) {
+/** Keeps one sonner toast per op that isn't dismissed, in step with its status. */
+function useOpToasts(ops: Op[], hidden: boolean) {
+  const shown = useRef(new Map<string, Op["status"]>());
+  useEffect(() => {
+    const live = new Set<string>();
+    for (const op of ops) {
+      if (op.dismissed || hidden) continue;
+      live.add(op.id);
+      if (shown.current.get(op.id) === op.status) continue;
+      shown.current.set(op.id, op.status);
+      toast.custom(() => <LiveOpCard id={op.id} />, {
+        id: op.id,
+        duration: op.status === "ok" ? DONE_FOR : Number.POSITIVE_INFINITY,
+        onAutoClose: () => dismissOp(op.id),
+      });
+    }
+    for (const id of [...shown.current.keys()]) {
+      if (live.has(id)) continue;
+      toast.dismiss(id);
+      shown.current.delete(id);
+    }
+  }, [ops, hidden]);
+}
+
+/** An op's card inside its toast, following the op as it runs. */
+function LiveOpCard({ id }: { id: string }) {
+  const op = useOps().find((o) => o.id === id);
+  // As wide as the toast (sonner's --width), so stacked ones line up.
+  return op ? (
+    <div className="w-[var(--width)]">
+      <OpCard op={op} />
+    </div>
+  ) : null;
+}
+
+export function OpCard({ op, embedded }: { op: Op; embedded?: boolean }) {
   const running = op.status === "running";
   const now = useNow(running);
   const [open, setOpen] = useState(true);
@@ -100,8 +130,6 @@ export function OpCard({ op, embedded, onHold }: { op: Op; embedded?: boolean; o
 
   return (
     <div
-      onPointerEnter={() => onHold?.(true)}
-      onPointerLeave={() => onHold?.(false)}
       className={cn(
         "pointer-events-auto overflow-hidden",
         !embedded &&

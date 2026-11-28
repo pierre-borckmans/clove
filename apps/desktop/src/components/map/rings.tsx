@@ -14,7 +14,17 @@ import {
   nearestOn,
   spotToward,
 } from "./geometry";
-import { CloneNode, ClovePiece, isDimmed, type MapCtx, MergedBadge, menuTrigger, skinClasses } from "./nodes";
+import {
+  CloneNode,
+  ClovePiece,
+  isDimmed,
+  type MapCtx,
+  MergedBadge,
+  menuTrigger,
+  offsetOf,
+  pullOn,
+  skinClasses,
+} from "./nodes";
 import { useMotion } from "./use-motion";
 
 const RING_GAP = 46;
@@ -188,9 +198,13 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
             ry={r}
           />
         ))}
-        {nodes.map(({ id, values: [x, y], data: node, presence, leaving }) => {
-          // A leaving clove lets go of its edge as it flies off.
-          if (leaving) return null;
+        {nodes.map(({ id, values: [x0, y0], data: node, presence, leaving }) => {
+          // A leaving clove lets go of its edge as it flies off, and a torn one has.
+          const pull = pullOn(ctx, node.clone.name);
+          if (leaving || pull?.torn) return null;
+          // Pulled but holding: the edge stretches with it and thins.
+          const x = x0 + (pull?.dx ?? 0);
+          const y = y0 + (pull?.dy ?? 0);
           const dx = x - cx;
           const dy = y - cy;
           const len = Math.hypot(dx, dy);
@@ -207,9 +221,10 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
               key={id}
               d={`M ${cx + ux * CORE_RADIUS} ${cy + uy * CORE_RADIUS} Q ${cx + ux * mid - uy * bend} ${cy + uy * mid + ux * bend} ${x - ux * 18} ${y - uy * 18}`}
               fill="none"
-              style={{ "--appear": presence } as CSSProperties}
+              style={{ "--appear": presence, "--strain": pull?.strain ?? 0 } as CSSProperties}
               className={cn(
                 "map-edge",
+                pull && "map-edge-strained",
                 node.ring > 0 && "map-edge-old",
                 lit && "map-edge-active",
                 isDimmed(ctx, node.clone.golden_generation, node.clone.name) && "map-dim",
@@ -220,7 +235,8 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
         {nodes.map(
           ({ id, values, data: node, presence, leaving }) =>
             node.leader &&
-            !leaving && (
+            !leaving &&
+            !pullOn(ctx, node.clone.name) && (
               <line
                 key={`leader-${id}`}
                 x1={values[4]}
@@ -271,8 +287,10 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
         className={cn(
           "map-image map-image-current absolute flex size-[144px] flex-col items-center justify-center rounded-full text-center",
           ctx.imageGeneration === ctx.current && "map-node-selected",
+          ctx.pull?.target.kind === "image" && "map-image-pulled",
         )}
         style={{ left: cx - 72, top: cy - 72 }}
+        onPointerDown={(event) => ctx.current !== undefined && ctx.startPull({ kind: "image" }, event)}
         {...menuTrigger(
           ctx,
           { kind: "image" },
@@ -285,8 +303,12 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
         <span className="mt-2 text-[13px] font-medium">Golden image</span>
         <span className="mt-1 font-mono text-[10px] text-muted-foreground">generation {ctx.newest}</span>
       </button>
-      {nodes.map(({ id, values: [x0, y0, lx, ly], data: node, presence, leaving }) => {
+      <Sprout ctx={ctx} cx={cx} cy={cy} />
+      {nodes.map(({ id, values: [px, py, plx, ply], data: node, presence, leaving }) => {
         const pr = ctx.prOf(node.clone.name);
+        // Pulled: the clove, and its name with it, follow the pointer.
+        const off = offsetOf(ctx, node.clone.name);
+        const [x0, y0, lx, ly] = off ? [px + off.dx, py + off.dy, plx + off.dx, ply + off.dy] : [px, py, plx, ply];
         // A leaving clove tumbles off like a leaf: it spins and sways across
         // its path as it flies out.
         const flight = leaving ? leafFlight(node, 1 - presence) : null;
@@ -309,8 +331,10 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
             className={cn(node.ring > 0 && "map-clone-old", skinClasses(node.clone, pr))}
           >
             <span
-              className="map-clone-symbol flex size-[34px] items-center justify-center rounded-full"
+              className="map-clone-symbol map-clone-symbol-wrap flex size-[34px] items-center justify-center rounded-full"
               style={{
+                // Rose while pulled, and still rose as a ripped one flies off.
+                ...(off && pullTint(pullOn(ctx, node.clone.name)?.strain ?? 1)),
                 transform: flight
                   ? `rotate(${flight.spin}deg)`
                   : presence < 1
@@ -329,6 +353,62 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
           </CloneNode>
         );
       })}
+    </>
+  );
+}
+
+/** A pulled clove turns rose as it strains. Inline, so no skin rule outranks it. */
+function pullTint(strain: number): CSSProperties {
+  const p = Math.round(strain * 100);
+  return {
+    color: `color-mix(in oklch, var(--rose) ${p}%, var(--bottle))`,
+    background: `color-mix(in oklch, var(--rose) ${Math.round(strain * 22)}%, var(--bottle-soft))`,
+    boxShadow: `0 0 0 ${4 + strain * 4}px color-mix(in oklch, var(--rose) ${Math.round(strain * 30)}%, transparent)`,
+  };
+}
+
+/**
+ * A new clove being pulled out of the golden image: it grows from the image's
+ * edge as the pull strains, and an edge ties it to the image.
+ */
+function Sprout({ ctx, cx, cy }: { ctx: MapCtx; cx: number; cy: number }) {
+  const pull = ctx.pull;
+  if (pull?.target.kind !== "image") return null;
+  const x = pull.from.x + pull.dx;
+  const y = pull.from.y + pull.dy;
+  const dx = x - cx;
+  const dy = y - cy;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  // It sits at least on the image's rim, so it's seen coming out of it.
+  const rim = CORE_RADIUS - 8;
+  const out = Math.max(len, rim);
+  const sx = cx + ux * out;
+  const sy = cy + uy * out;
+  const grown = 0.35 + 0.65 * pull.strain;
+  return (
+    <>
+      <svg className="pointer-events-none absolute inset-0 size-full overflow-visible" aria-hidden="true">
+        {out > CORE_RADIUS + 4 && (
+          // The same sweep as a clone's edge (see the edges above), on the current ring's bend.
+          <path
+            className={cn("map-sprout-edge", pull.torn && "map-sprout-edge-free")}
+            fill="none"
+            d={`M ${cx + ux * CORE_RADIUS} ${cy + uy * CORE_RADIUS} Q ${cx + ux * ((CORE_RADIUS + out - 14) / 2) - uy * 8} ${cy + uy * ((CORE_RADIUS + out - 14) / 2) + ux * 8} ${sx - ux * 14} ${sy - uy * 14}`}
+          />
+        )}
+      </svg>
+      <span
+        className={cn("map-sprout map-piece map-skin-peeled absolute", pull.torn && "map-sprout-free")}
+        style={{ left: sx - 17, top: sy - 17, transform: `scale(${grown})` }}
+        aria-hidden="true"
+      >
+        <span className="map-sprout-symbol flex size-[34px] items-center justify-center rounded-full">
+          <ClovePiece length={30} angle={(Math.atan2(uy, ux) * 180) / Math.PI + 90} />
+        </span>
+        {pull.torn && <span className="map-sprout-hint">{pull.held ? "growing…" : "let go for a new clone"}</span>}
+      </span>
     </>
   );
 }

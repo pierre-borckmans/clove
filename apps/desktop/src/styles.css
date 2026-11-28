@@ -797,3 +797,75 @@ html:active-view-transition-type(fade)::view-transition-new(page) {
     transition: none;
   }
 }
+
+/* Pulling a clove off a clone (to remove it) or out of the golden image (for
+   a new one). --strain runs 0 to 1 as the pull nears tearing. */
+.map-clone.map-pulling {
+  z-index: 6;
+  cursor: grabbing;
+}
+/* The symbol's rose tint is inline (see rings.tsx): old clones' grey would win here. */
+.map-clone.map-pull-torn .map-clone-symbol-wrap {
+  animation: map-tear 220ms ease-out;
+}
+.map-clone.map-pull-torn .map-clone-name {
+  color: var(--rose);
+}
+/* Let go short of tearing: it springs home with a little overshoot. */
+.map-clone.map-pull-return {
+  transition:
+    transform 420ms cubic-bezier(0.3, 1.5, 0.5, 1),
+    opacity 200ms;
+}
+.map-edge.map-edge-strained {
+  stroke: color-mix(in oklch, var(--rose) calc(var(--strain, 0) * 100%), var(--bottle));
+  stroke-width: calc(1.6px - var(--strain, 0) * 1px);
+  stroke-dasharray: calc(1px + var(--strain, 0) * 5px) calc(var(--strain, 0) * 4px);
+}
+@keyframes map-tear {
+  0% {
+    scale: 1.35;
+  }
+  60% {
+    scale: 0.92;
+  }
+}
+.map-image-pulled {
+  cursor: grabbing;
+}
+.map-sprout {
+  z-index: 6;
+  width: 34px;
+  height: 34px;
+  pointer-events: none;
+  transition: transform 90ms;
+}
+.map-sprout-symbol {
+  background: var(--bottle-soft);
+  color: var(--bottle);
+  opacity: 0.75;
+}
+.map-sprout-free .map-sprout-symbol {
+  opacity: 1;
+  box-shadow: 0 0 0 6px var(--bottle-soft);
+  animation: map-tear 220ms ease-out;
+}
+.map-sprout-hint {
+  position: absolute;
+  top: 40px;
+  left: 50%;
+  translate: -50% 0;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--bottle);
+}
+.map-sprout-edge {
+  stroke: var(--bottle);
+  stroke-width: 1.4;
+  stroke-dasharray: 3 3;
+  opacity: 0.7;
+}
+.map-sprout-edge-free {
+  stroke-dasharray: none;
+  opacity: 0.9;
+}
