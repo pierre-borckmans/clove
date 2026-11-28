@@ -368,7 +368,7 @@ export function App() {
           id="detect"
           kicker="detected, then configurable"
           title={<>Your toolchain, {em("found on its own.")}</>}
-          copy="mise, direnv and nix, pnpm, bun, yarn, npm, uv and cargo, plus your local files. Anything else is a step in .clove.toml, shared with your team."
+          copy="mise, direnv and nix, pnpm, bun, yarn, npm, deno, uv, Poetry, Go, Gradle, Maven, Bundler, Composer, .NET, Flutter, Mix, SwiftPM, Zig and cargo, plus your local files. Anything else is a step in .clove.toml, shared with your team."
         >
           <Detect />
         </Beat>

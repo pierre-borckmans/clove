@@ -147,7 +147,7 @@ More in [internals](docs/internals.md).
 - **Cleans up after merged PRs,** squash merges included, by hand or automatically, with a history to get any branch back. → [Cleaning up](docs/cleanup.md)
 - **Built for coding agents:** one command teaches Claude Code, Codex, OpenCode and Pi to use clones. Claude Code and OpenCode use clones for native worktrees in repos clove manages. → [Coding agents](docs/agents.md)
 - **Stays fresh on its own:** incremental refreshes, only when a step's inputs change on the base. → [Staying fresh](docs/freshness.md)
-- **Detects your toolchain:** mise, direnv + nix, cargo, uv, pnpm, bun, yarn, npm, plus your own steps and local files like `.env`. → [Configuration](docs/configuration.md)
+- **Detects your toolchain:** mise, direnv + nix, pnpm, bun, yarn, npm, deno, uv, Poetry, PDM, Bundler, Composer, Go, Gradle, Maven, .NET, Dart/Flutter, Mix, SwiftPM, CocoaPods, Zig and cargo, plus your own steps and local files like `.env`. → [Configuration](docs/configuration.md)
 
 Also: [limits](docs/limits.md) and [internals](docs/internals.md) (how clones are stored on macOS and Linux).
 

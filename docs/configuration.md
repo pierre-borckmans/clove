@@ -2,7 +2,13 @@
 
 [← README](../README.md)
 
-- **clove detects steps from the repo:** mise, direnv (including nix-direnv's cache), cargo, uv, pnpm, bun, yarn and npm. Anything else (Go, Gradle, codegen) is a step you add.
+- **clove detects steps from the repo**, per directory:
+  - environments: mise, direnv (including nix-direnv's cache)
+  - JavaScript: pnpm, bun, yarn, npm or deno (the first lockfile found, in that order)
+  - Python: uv, Poetry or PDM (likewise)
+  - Ruby (Bundler), PHP (Composer), Go, Gradle or Maven (with a wrapper, or `mvn` installed), .NET (`packages.lock.json`), Dart or Flutter, Elixir (Mix), SwiftPM, CocoaPods, Zig
+  - Rust builds: cargo
+- Anything else (codegen, a build) is a step you add.
 - `clove config` shows what it found; `clove config --write` saves it to `.clove.toml` so the team gets the same setup.
 
 ```toml
@@ -15,6 +21,13 @@ setup = "pnpm install --prefer-offline --frozen-lockfile" # in each new clone...
 watch = ["pnpm-lock.yaml", "pnpm-workspace.yaml"]       # ...only if these changed
 
 [[step]]
+name = "api-deps"
+warm = "cd api && uv sync --frozen"
+setup = "cd api && uv sync --frozen"
+watch = ["api/uv.lock"]
+tool = "uv"                                             # optional, see below
+
+[[step]]
 name = "codegen"
 warm = "make generate"
 setup = "make generate"
@@ -23,7 +36,7 @@ watch = ["proto/"]
 
 **Nested projects** with their own lockfile (a `site/`, a Tauri app, a monorepo's packages kept outside its workspace) are warmed too:
 
-- **Dependency installs** (pnpm, bun, yarn, npm, uv): up to `nested_installs`, 10 by default. Clones share them, and each reruns only when its own lockfile changes. Above the limit none are, rather than an arbitrary few; `clove status` and `clove doctor` name them. Raise the limit, or add steps for the ones you work on. `0` turns nested installs off.
+- **Dependency installs** (everything above but environments and cargo): up to `nested_installs` per kind (JavaScript, Python, Go, JVM, ...), 10 by default. Clones share them, and each reruns only when its own lockfile changes. A kind with more nested projects than the limit gets none of them installed, rather than an arbitrary few, and the other kinds are unaffected; `clove status` and `clove doctor` name the skipped ones. Raise the limit, or add steps for the ones you work on. `0` turns nested installs off.
 - **Rust builds** (cargo): up to 3, since compiling is the costly part.
 
 ```toml
@@ -58,6 +71,7 @@ resolver = "claude"  # offered on conflicts, run in the clone with a prompt; "of
 
 - Steps run inside the repo's environment (`direnv exec` or `mise exec`).
 - `[[step]]` replaces the detected steps; `[[add_step]]` appends to them.
+- `tool` names the toolchain a step runs: `mise`, `direnv`, `pnpm`, `bun`, `yarn`, `npm`, `deno`, `uv`, `poetry`, `pdm`, `bundler`, `composer`, `go`, `gradle`, `maven`, `dotnet`, `flutter`, `dart`, `mix`, `swiftpm`, `cocoapods`, `zig` or `cargo`. Detected steps have it. It makes `clove doctor` check the tool is on PATH and applies what clove does for it: pnpm's shared store, Poetry's in-project venv, moving Python venvs into each clone before setup. Left out, it comes from the step's name for the original eight (`uv`, `uv-api`) or, for pnpm, from a command that runs it. `clove doctor` flags an id it doesn't know.
 - Settings layer in this order, last wins:
   1. `~/.config/clove/config.toml`: personal defaults for every repo
   2. `.clove.toml` in the repo: shared with the team
