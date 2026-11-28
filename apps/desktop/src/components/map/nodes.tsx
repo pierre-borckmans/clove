@@ -58,14 +58,20 @@ export type MapCtx = {
   /** Ripped clones flying off, and where they were let go (world offset from home). */
   flights: ReadonlyMap<string, { dx: number; dy: number }>;
   startPull: (target: MenuTarget, event: PointerEvent<HTMLElement>) => void;
+  /** Clones being rewound: their skins peel back. */
+  peeling: ReadonlySet<string>;
 };
 
 /** How far a clone sits from home: pulled, or flying off from where it was let go. */
 export const offsetOf = (ctx: MapCtx, name: string) => pullOn(ctx, name) ?? ctx.flights.get(name);
 
-/** The pull on this clone, if it's the one being pulled. */
+/** The pull on this clone, if it's the one being pulled off (not a fork's copy: the clone stays put). */
 export const pullOn = (ctx: MapCtx, name: string) =>
-  ctx.pull?.target.kind === "clone" && ctx.pull.target.name === name ? ctx.pull : undefined;
+  ctx.pull?.target.kind === "clone" && ctx.pull.target.name === name && !ctx.pull.fork ? ctx.pull : undefined;
+
+/** A fork's copy being pulled off this clone. */
+export const forkPullOn = (ctx: MapCtx, name: string) =>
+  ctx.pull?.target.kind === "clone" && ctx.pull.target.name === name && ctx.pull.fork ? ctx.pull : undefined;
 
 /** A clone's menu open on the map: every other clone dims while it's open. */
 const cloneMenu = (ctx: MapCtx) => (ctx.menuFor && ctx.menuFor !== "image" ? ctx.menuFor : undefined);
@@ -340,5 +346,26 @@ export function WorktreeShelf({ worktrees, ctx }: { worktrees: OtherWorktree[]; 
         </button>
       ))}
     </fieldset>
+  );
+}
+
+/**
+ * A clove's checkpoints, as thin skins around it: one ring per checkpoint up
+ * to three, and past that a small count.
+ */
+export function CheckpointSkins({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const shown = Math.min(3, count);
+  return (
+    <span className="map-skins pointer-events-none absolute inset-0" aria-hidden="true">
+      {Array.from({ length: shown }, (_, i) => (
+        <span
+          key={i}
+          className="map-skin-layer absolute rounded-full"
+          style={{ inset: -(3 + i * 3.5), "--layer": i } as CSSProperties}
+        />
+      ))}
+      {count > 3 && <span className="map-skin-count absolute">{count}</span>}
+    </span>
   );
 }

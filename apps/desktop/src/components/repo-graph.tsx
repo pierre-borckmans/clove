@@ -125,6 +125,11 @@ export function RepoGraph({
     returning: null,
     flights: new Map(),
     startPull: () => {},
+    peeling: new Set(
+      ops
+        .filter((o) => o.req.kind === "rewind" && o.req.root === status.root && o.status === "running")
+        .map((o) => (o.req.kind === "rewind" ? o.req.name : "")),
+    ),
     menuFor: radial && !radial.closing ? (radial.target.kind === "clone" ? radial.target.name : "image") : undefined,
     menuLift: undefined,
     menu: (target, at, keyboard) => {
@@ -160,8 +165,19 @@ export function RepoGraph({
   // Pull a clove off a clone to remove it, or out of the image for a new one.
   /** A clove pulled out of the image, until its new-clone op is under way. */
   const [sprouting, setSprouting] = useState(false);
+  /** A fork's copy let go, until its fork op is under way. */
+  const [forking, setForking] = useState(false);
   const onTear = (p: Pull) => {
     dismissRadial();
+    if (p.fork && p.target.kind === "clone") {
+      // Option-drag: the copy that tore free becomes a fork, on a generated name.
+      const from = p.target.name;
+      setForking(true);
+      void startOp({ kind: "fork", root: status.root, from })
+        .catch((e) => toast.error(`Could not fork ${from}`, { description: String(e) }))
+        .finally(() => setForking(false));
+      return;
+    }
     if (p.target.kind === "image") {
       // A new clone on a generated name and branch, from the base: no questions.
       setSprouting(true);
@@ -229,6 +245,12 @@ export function RepoGraph({
   useEffect(() => {
     if (heldImage && !sprouting && !growing) setPull(null);
   }, [heldImage, sprouting, growing, setPull]);
+  // A fork's copy waits the same way, for its fork op.
+  const heldFork = !!pull?.held && !!pull.fork;
+  const forkRunning = ops.some((o) => o.status === "running" && o.req.root === status.root && o.req.kind === "fork");
+  useEffect(() => {
+    if (heldFork && !forking && !forkRunning) setPull(null);
+  }, [heldFork, forking, forkRunning, setPull]);
 
   // A ripped clone stays off the map until it's gone; if its removal failed, it comes back.
   useEffect(() => {

@@ -361,6 +361,10 @@ pub fn background_check() {
 // ---- install source -----------------------------------------------------------
 
 fn brew_bin() -> Option<PathBuf> {
+    // Dev and demo runs never run brew.
+    if crate::service::disabled() {
+        return None;
+    }
     crate::util::which("brew").or_else(|| {
         [
             "/opt/homebrew/bin/brew",
@@ -378,6 +382,9 @@ pub fn brew_prefix() -> Option<PathBuf> {
     static PREFIX: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     PREFIX
         .get_or_init(|| {
+            if crate::service::disabled() {
+                return None;
+            }
             if let Some(p) = std::env::var_os("HOMEBREW_PREFIX").map(PathBuf::from)
                 && p.is_dir()
             {
@@ -480,6 +487,9 @@ pub fn upgrade(r: &dyn Reporter, opts: &UpgradeOptions) -> Result<Upgraded> {
 
 /// `app_quit`: None from a terminal; from the app, whether it quit in time.
 fn upgrade_inner(r: &dyn Reporter, app_quit: Option<bool>) -> Result<Upgraded> {
+    if crate::service::disabled() {
+        bail!("CLOVE_NO_SERVICE is set: upgrades are off in this run");
+    }
     let (source, exe) = cli_source();
     let latest = check(true);
     if source == Source::Manual {

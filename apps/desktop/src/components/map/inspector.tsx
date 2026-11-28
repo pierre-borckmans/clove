@@ -117,7 +117,7 @@ export function MapInspector({
             </div>
             <div className="mt-1 text-[11px] text-faint">
               {picked
-                ? `Created ${since(picked.created_at)} · ${bytes(picked.own_bytes ?? picked.image_bytes)} ${picked.own_bytes === undefined ? "image size" : "of unique data"}`
+                ? `Created ${since(picked.created_at)}${picked.forked_from ? ` · forked from ${picked.forked_from}` : ""} · ${bytes(picked.own_bytes ?? picked.image_bytes)} ${picked.own_bytes === undefined ? "image size" : "of unique data"}${picked.checkpoints ? ` · ${plural(picked.checkpoints, "checkpoint")}` : ""}`
                 : currentImage && status.golden
                   ? `Built ${ago(status.golden.age_secs)}${status.golden.behind ? ` · ${status.golden.behind} commits behind base` : status.golden.behind === null ? "" : " · up to date"}`
                   : generation === undefined

@@ -24,6 +24,11 @@ export type Pull = {
   torn: boolean;
   /** Out of the image and let go: it stays where it was dropped until its clone exists. */
   held?: boolean;
+  /**
+   * Option/Alt held on a clone: a copy tears free and the clone stays, so
+   * letting go forks it instead of removing it. Follows the key mid-pull.
+   */
+  fork?: boolean;
 };
 
 /** Before it tears, a clove only gives a little, like it's still attached. */
@@ -70,7 +75,16 @@ export function usePull({
       torn = torn ? d > MEND_PX : d > TEAR_PX;
       const k = torn ? 1 : give(d) / d;
       const s = live.current.scale;
-      last = { target, from, dx: (sx * k) / s, dy: (sy * k) / s, strain: torn ? 1 : Math.min(1, d / TEAR_PX), torn };
+      const fork = target.kind === "clone" && e.altKey;
+      last = {
+        target,
+        from,
+        dx: (sx * k) / s,
+        dy: (sy * k) / s,
+        strain: torn ? 1 : Math.min(1, d / TEAR_PX),
+        torn,
+        fork,
+      };
       setPull(last);
     };
     const end = (e: globalThis.PointerEvent) => {
@@ -80,10 +94,10 @@ export function usePull({
       window.removeEventListener("pointercancel", end);
       if (!last) return;
       if (last.torn && e.type === "pointerup") {
-        // A clove out of the image waits where it was dropped for its clone;
-        // one ripped off a clone is the caller's to fly off, so the next pull
-        // can start at once.
-        if (target.kind === "image") setPull({ ...last, held: true });
+        // A clove out of the image, or a fork's copy, waits where it was
+        // dropped for its clone; one ripped off a clone is the caller's to
+        // fly off, so the next pull can start at once.
+        if (target.kind === "image" || last.fork) setPull({ ...last, held: true });
         else setPull(null);
         live.current.onTear(last);
       } else {
@@ -97,6 +111,8 @@ export function usePull({
 
   const springBack = useCallback((p: Pull | null) => {
     if (!p) return;
+    // A fork's copy just goes: the clone it came off never moved.
+    if (p.fork) return setPull(null);
     const key = p.target.kind === "clone" ? p.target.name : "image";
     setReturning(key);
     setPull(null);

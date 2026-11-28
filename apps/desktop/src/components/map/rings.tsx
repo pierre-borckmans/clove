@@ -15,8 +15,10 @@ import {
   spotToward,
 } from "./geometry";
 import {
+  CheckpointSkins,
   CloneNode,
   ClovePiece,
+  forkPullOn,
   isDimmed,
   type MapCtx,
   MergedBadge,
@@ -25,6 +27,7 @@ import {
   pullOn,
   skinClasses,
 } from "./nodes";
+import type { Pull } from "./pull";
 import { useMotion } from "./use-motion";
 
 const RING_GAP = 46;
@@ -36,6 +39,36 @@ const STRETCH = 1.6;
 /** Where the core's rim is, for edges to start at. */
 const CORE_RADIUS = 78;
 const PAD = 30;
+/** How far a fork sits outside its parent's ring, per level (two at most). */
+const FORK_OUT = 24;
+
+/**
+ * A ring's clones, newest first, with each fork right after the clone it was
+ * forked from (oldest fork first), so lineages sit side by side on the ring.
+ * A fork whose parent isn't in the group is a root of its own.
+ */
+function lineageOrder(group: CloneInfo[]) {
+  const names = new Set(group.map((c) => c.name));
+  const kids = new Map<string, CloneInfo[]>();
+  const roots: CloneInfo[] = [];
+  for (const c of group) {
+    const p = c.forked_from;
+    if (p && p !== c.name && names.has(p)) kids.set(p, [...(kids.get(p) ?? []), c]);
+    else roots.push(c);
+  }
+  const out: { clone: CloneInfo; depth: number }[] = [];
+  const seen = new Set<string>();
+  const visit = (c: CloneInfo, depth: number) => {
+    if (seen.has(c.name)) return;
+    seen.add(c.name);
+    out.push({ clone: c, depth });
+    for (const k of (kids.get(c.name) ?? []).sort((a, b) => a.created_at - b.created_at)) visit(k, depth + 1);
+  };
+  for (const r of roots.sort((a, b) => b.created_at - a.created_at)) visit(r, 0);
+  // A loop of forks (can't happen, but names get reused): still placed.
+  for (const c of group) visit(c, 0);
+  return out;
+}
 
 /** Where a label may go: out along the clove's ray, sliding a little along the ring before moving further out. */
 function outwardSpots(x: number, y: number, ux: number, uy: number, w: number, h: number) {
@@ -57,8 +90,9 @@ export function ringsLayout(clones: CloneInfo[], newest: number, labelOf: (c: Cl
   // clones take the outer ring, each older generation one ring in.
   const slotOf = (age: number) => ringCount - 1 - age;
   const groups = Array.from({ length: ringCount }, (_, age) =>
-    clones.filter((c) => ringOf(c.golden_generation) === age).sort((a, b) => b.created_at - a.created_at),
+    lineageOrder(clones.filter((c) => ringOf(c.golden_generation) === age)),
   );
+  const onMap = new Set(clones.map((c) => c.name));
 
   // Each generation's arc is the room its clones need at its ring's radius:
   // SPACING px apart along the ring (measured on the short axis, the tighter
@@ -78,14 +112,28 @@ export function ringsLayout(clones: CloneInfo[], newest: number, labelOf: (c: Cl
   const cy = 0;
   // Generations follow each other clockwise from the top, newest first; spare
   // angle is shared out by clone count so no arc is left empty.
-  let cursor = -Math.PI / 2 + gap / 2;
+  // Forks hug their parent: spare angle goes only before the clones they came off.
+  const roots = groups.reduce((n, g) => n + g.filter((x) => x.depth === 0).length, 0);
+  let cursor = -Math.PI / 2 + gap / 2 - (roots ? spare / roots / 2 : 0);
   const placed = groups.flatMap((group, ring) => {
     const r = radiusOf(ring);
-    const step = SPACING / r + (clones.length ? spare / clones.length : 0);
-    return group.map((clone) => {
-      const angle = cursor + step / 2;
-      cursor += step;
-      return { clone, angle, ring, x: cx + Math.cos(angle) * r * STRETCH, y: cy + Math.sin(angle) * r };
+    const tight = SPACING / r;
+    return group.map(({ clone, depth }) => {
+      // A clone's share of the spare angle goes before it, so its forks follow it closely.
+      if (depth === 0 && roots) cursor += spare / roots;
+      const angle = cursor + tight / 2;
+      cursor += tight;
+      // A fork steps out past its parent, so its stem reads as a branch.
+      const out = Math.min(depth, 2) * FORK_OUT;
+      const parent = clone.forked_from && onMap.has(clone.forked_from) ? clone.forked_from : null;
+      return {
+        clone,
+        angle,
+        ring,
+        parent,
+        x: cx + Math.cos(angle) * (r * STRETCH + out),
+        y: cy + Math.sin(angle) * (r + out),
+      };
     });
   });
   const rings = Array.from({ length: ringCount }, (_, ring) => {
@@ -184,6 +232,9 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
   const rings = useMotion(target.rings);
   const nodes = useMotion<RingNode>(target.nodes);
   const [cx, cy] = core.values;
+  // Where each clove is this frame, for forks' stems to their parents.
+  const at = new Map(nodes.filter((n) => !n.leaving).map((n) => [n.id, n.values] as const));
+  const forkPull = ctx.pull?.fork && ctx.pull.target.kind === "clone" ? ctx.pull : null;
   return (
     <>
       <svg className="pointer-events-none absolute inset-0 size-full overflow-visible" aria-hidden="true">
@@ -216,14 +267,20 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
           const bend = 8 + node.ring * 5;
           const mid = (CORE_RADIUS + len - 18) / 2;
           const lit = ctx.picked === node.clone.name || ctx.hovered === node.clone.name;
+          // A fork grows from its parent clove, not from the image.
+          const from = node.parent ? at.get(node.parent) : undefined;
+          const d = from
+            ? stemPath(from[0], from[1], x, y)
+            : `M ${cx + ux * CORE_RADIUS} ${cy + uy * CORE_RADIUS} Q ${cx + ux * mid - uy * bend} ${cy + uy * mid + ux * bend} ${x - ux * 18} ${y - uy * 18}`;
           return (
             <path
               key={id}
-              d={`M ${cx + ux * CORE_RADIUS} ${cy + uy * CORE_RADIUS} Q ${cx + ux * mid - uy * bend} ${cy + uy * mid + ux * bend} ${x - ux * 18} ${y - uy * 18}`}
+              d={d}
               fill="none"
               style={{ "--appear": presence, "--strain": pull?.strain ?? 0 } as CSSProperties}
               className={cn(
                 "map-edge",
+                from && "map-stem",
                 pull && "map-edge-strained",
                 node.ring > 0 && "map-edge-old",
                 lit && "map-edge-active",
@@ -304,6 +361,15 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
         <span className="mt-1 font-mono text-[10px] text-muted-foreground">generation {ctx.newest}</span>
       </button>
       <Sprout ctx={ctx} cx={cx} cy={cy} />
+      {forkPull && forkPull.target.kind === "clone" && at.get(forkPull.target.name) && (
+        <ForkCopy
+          pull={forkPull}
+          home={at.get(forkPull.target.name) as readonly number[]}
+          angle={
+            nodes.find((n) => n.id === (forkPull.target.kind === "clone" ? forkPull.target.name : ""))?.data.angle ?? 0
+          }
+        />
+      )}
       {nodes.map(({ id, values: [px, py, plx, ply], data: node, presence, leaving }) => {
         const pr = ctx.prOf(node.clone.name);
         // Pulled: the clove, and its name with it, follow the pointer.
@@ -328,8 +394,14 @@ export function RingsLayer({ layout, ctx }: { layout: RingsLayout; ctx: MapCtx }
               // While it animates, the per-frame fade replaces the CSS transition.
               { "--appear": presence, transition: presence < 1 ? "none" : undefined } as CSSProperties
             }
-            className={cn(node.ring > 0 && "map-clone-old", skinClasses(node.clone, pr))}
+            className={cn(
+              node.ring > 0 && "map-clone-old",
+              skinClasses(node.clone, pr),
+              ctx.peeling.has(node.clone.name) && "map-peeling",
+              forkPullOn(ctx, node.clone.name) && "map-forking",
+            )}
           >
+            <CheckpointSkins count={node.clone.checkpoints ?? 0} />
             <span
               className="map-clone-symbol map-clone-symbol-wrap flex size-[34px] items-center justify-center rounded-full"
               style={{
@@ -408,6 +480,57 @@ function Sprout({ ctx, cx, cy }: { ctx: MapCtx; cx: number; cy: number }) {
           <ClovePiece length={30} angle={(Math.atan2(uy, ux) * 180) / Math.PI + 90} />
         </span>
         {pull.torn && <span className="map-sprout-hint">{pull.held ? "growing…" : "let go for a new clone"}</span>}
+      </span>
+    </>
+  );
+}
+
+/** A fork's stem from its parent clove: the image edges' gentle sweep, trimmed clear of both cloves. */
+function stemPath(px: number, py: number, x: number, y: number) {
+  const dx = x - px;
+  const dy = y - py;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const trim = Math.min(18, len / 3);
+  const bend = Math.min(14, len / 4);
+  const mx = (px + x) / 2 - uy * bend;
+  const my = (py + y) / 2 + ux * bend;
+  return `M ${px + ux * trim} ${py + uy * trim} Q ${mx} ${my} ${x - ux * trim} ${y - uy * trim}`;
+}
+
+/**
+ * A pale copy of a clove, pulled off it with Option/Alt held: it follows the
+ * pointer on a stem back to its clone, which stays put. Let go past tearing
+ * and it waits there for its fork to exist.
+ */
+function ForkCopy({ pull, home, angle }: { pull: Pull; home: readonly number[]; angle: number }) {
+  const [hx, hy] = home;
+  const x = hx + pull.dx;
+  const y = hy + pull.dy;
+  const grown = 0.55 + 0.45 * pull.strain;
+  return (
+    <>
+      <svg className="pointer-events-none absolute inset-0 size-full overflow-visible" aria-hidden="true">
+        {Math.hypot(pull.dx, pull.dy) > 20 && (
+          <path
+            className={cn("map-sprout-edge map-fork-stem", pull.torn && "map-sprout-edge-free")}
+            fill="none"
+            d={stemPath(hx, hy, x, y)}
+          />
+        )}
+      </svg>
+      <span
+        className={cn("map-sprout map-fork-copy map-piece map-skin-peeled absolute", pull.torn && "map-sprout-free")}
+        style={{ left: x - 17, top: y - 17, transform: `scale(${grown})` }}
+        aria-hidden="true"
+      >
+        <span className="map-sprout-symbol flex size-[34px] items-center justify-center rounded-full">
+          <ClovePiece length={30} angle={(angle * 180) / Math.PI + 90} />
+        </span>
+        <span className="map-sprout-hint">
+          {pull.held ? "forking…" : pull.torn ? "let go to fork" : "⌥ pull to fork"}
+        </span>
       </span>
     </>
   );

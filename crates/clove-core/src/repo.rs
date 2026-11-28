@@ -65,6 +65,9 @@ pub struct CloneMeta {
     /// HEAD when setup steps last ran; `clove setup` diffs against it.
     #[serde(default)]
     pub setup_commit: Option<String>,
+    /// The clone this one was forked from (`clove fork`), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<String>,
 }
 
 /// What `clove ls` shows for one clone.
@@ -103,6 +106,12 @@ pub struct CloneInfo {
     /// while git is asked again in the background (see `memo::serve_saved`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub status_pending: bool,
+    /// The clone this one was forked from, when it still says so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<String>,
+    /// How many checkpoints it has (`before-rewind` included).
+    #[serde(default)]
+    pub checkpoints: u32,
 }
 
 pub struct Clove {
@@ -195,6 +204,14 @@ impl Clove {
     }
     pub fn clone_dir(&self, name: &str) -> PathBuf {
         self.state.join("clones").join(name)
+    }
+    /// A clone's checkpoints (see `checkpoint`): meta, git state, and on
+    /// macOS the frozen image, one folder each.
+    pub fn checkpoints_dir(&self, name: &str) -> PathBuf {
+        self.clone_dir(name).join("checkpoints")
+    }
+    pub fn checkpoint_dir(&self, name: &str, id: &str) -> PathBuf {
+        self.checkpoints_dir(name).join(id)
     }
     /// Where clones appear: `clone_root`, unless the repo's Linux volume was
     /// mounted elsewhere (udisks picks /run/media/...), recorded in `state/mount`.

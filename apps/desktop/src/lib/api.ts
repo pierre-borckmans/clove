@@ -4,6 +4,7 @@ import type {
   AgentsState,
   AppId,
   Check,
+  Checkpoint,
   Cleanup,
   CloneDiff,
   CloneInfo,
@@ -80,6 +81,11 @@ export const api = {
   /** A file at `rev`, or as it is in the worktree when `rev` is null. */
   cloneFile: (root: string, name: string, rev: string | null, path: string) =>
     invoke<string>("clone_file", { root, name, rev, path }),
+  checkpoints: (root: string, name: string) => invoke<Checkpoint[]>("list_checkpoints", { root, name }),
+  /** Freezes a clone now; label null: cp-N. */
+  checkpoint: (root: string, name: string, label: string | null = null) =>
+    invoke<Checkpoint>("checkpoint_clone", { root, name, label }),
+  dropCheckpoint: (root: string, name: string, id: string) => invoke<null>("drop_checkpoint", { root, name, id }),
   shellStatus: () => invoke<ShellStatus>("shell_status"),
   shellInstall: () => invoke<ShellStatus>("shell_install"),
   startOp: (op: OpRequest) => invoke<string>("start_op", { op }),

@@ -1,23 +1,27 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
   Code,
   CopyPlus,
   FileDiff,
+  GitFork,
   GitPullRequestArrow,
   HardDrive,
+  History,
   Info,
   type LucideIcon,
   RefreshCw,
   Settings,
   SquareTerminal,
   Trash2,
+  Undo2,
   Unplug,
 } from "lucide-react";
 import { type CSSProperties, type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useOpenDiff } from "@/components/clone-list";
 import { startOp } from "@/lib/ops";
 import { APP_LABELS, usePrefs } from "@/lib/prefs";
-import { openIn, useMountToggle } from "@/lib/queries";
+import { checkpointNow, forkClone, openIn, useMountToggle } from "@/lib/queries";
 import type { CloneInfo, RepoStatus } from "@/lib/types";
 import { setUi } from "@/lib/ui";
 
@@ -31,6 +35,7 @@ const TONE = {
   grow: "var(--bottle)",
   disk: "var(--tone-teal)",
   remove: "var(--rose)",
+  time: "var(--sage)",
   neutral: "var(--muted-foreground)",
 };
 
@@ -39,6 +44,8 @@ export function useCloneActions(c: CloneInfo, root: string): RadialAction[] {
   const prefs = usePrefs();
   const mount = useMountToggle(root);
   const openDiff = useOpenDiff(root);
+  const qc = useQueryClient();
+  const n = c.checkpoints ?? 0;
   return [
     { label: "View changes", icon: FileDiff, tone: TONE.changes, run: () => openDiff(c), disabled: !c.mounted },
     {
@@ -53,6 +60,15 @@ export function useCloneActions(c: CloneInfo, root: string): RadialAction[] {
       tone: TONE.open,
       run: () => void openIn(c.path, prefs.editor),
     },
+    { label: "Checkpoint", icon: History, tone: TONE.time, run: () => void checkpointNow(qc, root, c.name) },
+    {
+      label: n ? `Rewind… (${n} checkpoint${n === 1 ? "" : "s"})` : "Rewind… (no checkpoints)",
+      icon: Undo2,
+      tone: TONE.time,
+      run: () => setUi({ rewind: { root, clone: c } }),
+      disabled: !n,
+    },
+    { label: "Fork (or ⌥-drag the clove)", icon: GitFork, tone: TONE.grow, run: () => forkClone(root, c.name) },
     { label: "Remove clone…", icon: Trash2, tone: TONE.remove, run: () => setUi({ remove: { root, clones: [c] } }) },
     {
       label: c.mounted ? "Unmount" : "Mount",

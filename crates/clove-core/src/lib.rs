@@ -11,6 +11,7 @@ pub mod agents;
 pub mod backend;
 pub mod brand;
 pub mod candidates;
+pub mod checkpoint;
 pub mod config;
 pub mod detect;
 pub mod diff;
@@ -41,6 +42,7 @@ pub mod watch;
 pub mod worktrees;
 
 pub use candidates::RepoCandidate;
+pub use checkpoint::{CheckpointInfo, CheckpointMeta, ForkOptions, RewindOptions, Rewound};
 pub use config::{Config, Exec, Step};
 pub use diff::CloneDiff;
 pub use events::{Event, Reporter, Silent, Timing};

@@ -1,8 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { api } from "./api";
 import { listen } from "./bridge";
+import { startOp } from "./ops";
 import { APP_LABELS } from "./prefs";
 import type { AppId, Layer, Removed, RepoRef } from "./types";
 import { setUi } from "./ui";
@@ -20,6 +21,7 @@ export const keys = {
   gc: (root: string) => ["gc", root] as const,
   cleanup: (root: string) => ["cleanup", root] as const,
   diff: (root: string, name: string) => ["diff", root, name] as const,
+  checkpoints: (root: string, name: string) => ["checkpoints", root, name] as const,
   config: (root: string) => ["config", root] as const,
   prs: (root: string) => ["prs", root] as const,
   service: ["service"] as const,
@@ -386,4 +388,34 @@ export function useCloneDiff(root: string | undefined, name: string) {
 /** Clone timings per repo (`clove stats --all-repos`). */
 export function useStats() {
   return useQuery({ queryKey: keys.stats, queryFn: () => api.stats(12), refetchInterval: POLL_MS });
+}
+
+/** A clone's checkpoints, oldest first. */
+export function useCheckpoints(root: string | undefined, name: string | undefined) {
+  return useQuery({
+    queryKey: keys.checkpoints(root ?? "", name ?? ""),
+    queryFn: () => api.checkpoints(root as string, name as string),
+    enabled: !!root && !!name,
+    staleTime: 0,
+  });
+}
+
+/** Freezes a clone as it is now (~50ms, so no op card): a toast says so. */
+export async function checkpointNow(qc: QueryClient, root: string, name: string) {
+  try {
+    const cp = await api.checkpoint(root, name);
+    toast.success("Checkpoint saved", {
+      description: `${name} · ${cp.id} · ${Math.round(cp.took_ms)}ms. Rewind… puts it back.`,
+    });
+  } catch (e) {
+    toast.error(`Could not checkpoint ${name}`, { description: String(e) });
+  } finally {
+    void qc.invalidateQueries({ queryKey: keys.clones(root) });
+    void qc.invalidateQueries({ queryKey: ["checkpoints", root, name] });
+  }
+}
+
+/** Forks a clone on a generated name (`<name>-a`, its branch `<branch>-a`). */
+export function forkClone(root: string, from: string) {
+  startOp({ kind: "fork", root, from }).catch((e) => toast.error(`Could not fork ${from}`, { description: String(e) }));
 }

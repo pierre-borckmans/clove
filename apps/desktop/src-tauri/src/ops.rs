@@ -68,6 +68,24 @@ pub enum OpRequest {
     Deinit {
         root: PathBuf,
     },
+    /// `clove fork`: a new clone from another's current state. No name: a
+    /// generated one (`<from>-a`, on `<from's branch>-a`).
+    Fork {
+        root: PathBuf,
+        from: String,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    /// `clove rewind`: back to a checkpoint (None: the newest made by hand).
+    Rewind {
+        root: PathBuf,
+        name: String,
+        #[serde(default)]
+        id: Option<String>,
+        /// Unmount even while processes use the clone.
+        #[serde(default)]
+        force: bool,
+    },
     /// `clove update`: onto the latest base, or finish or undo a stopped one.
     Update {
         root: PathBuf,
@@ -265,6 +283,36 @@ pub fn run(op: &OpRequest, r: &dyn clove_core::Reporter) -> anyhow::Result<serde
         OpRequest::Deinit { root } => {
             Clove::open(root)?.deinit(r)?;
             serde_json::Value::Null
+        }
+        OpRequest::Fork { root, from, name } => {
+            let c = Clove::open(root)?;
+            let info = match name.clone().filter(|s| !s.trim().is_empty()) {
+                Some(n) => c
+                    .fork(
+                        from,
+                        &clove_core::ForkOptions {
+                            names: vec![n],
+                            ..Default::default()
+                        },
+                        r,
+                    )?
+                    .pop(),
+                None => Some(c.fork_auto(from, r)?),
+            };
+            serde_json::to_value(info)?
+        }
+        OpRequest::Rewind {
+            root,
+            name,
+            id,
+            force,
+        } => {
+            let opts = clove_core::RewindOptions {
+                id: id.clone(),
+                force: *force,
+                no_save: false,
+            };
+            serde_json::to_value(Clove::open(root)?.rewind(name, &opts, r)?)?
         }
         OpRequest::Update {
             root,

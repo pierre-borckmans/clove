@@ -1,7 +1,7 @@
 //! macOS: one APFS disk image per golden generation and per clone. A clone
 //! is a `clonefile(2)` copy of the golden image file, mounted on its own.
 
-use super::sys_macos::{detach, is_mounted};
+use super::sys_macos::{detach, flush, is_mounted};
 use super::{Backend, Store};
 use crate::repo::Clove;
 use crate::util::{allocated_bytes, clonefile, private_bytes, run};
@@ -34,6 +34,18 @@ impl Image {
 
     fn clone_image(&self, c: &Clove, name: &str) -> PathBuf {
         c.clone_dir(name).join(self.0.file_name())
+    }
+
+    fn checkpoint_image(&self, c: &Clove, name: &str, id: &str) -> PathBuf {
+        c.checkpoint_dir(name, id).join(self.0.file_name())
+    }
+
+    /// The clone's image file, complete: flushed first when it is mounted.
+    fn settled_clone_image(&self, c: &Clove, name: &str, mount: &Path) -> Result<PathBuf> {
+        if is_mounted(mount) {
+            flush(mount)?;
+        }
+        Ok(self.clone_image(c, name))
     }
 
     fn spare_image(&self, c: &Clove) -> PathBuf {
@@ -160,6 +172,51 @@ impl Store for Image {
     fn clone_bytes(&self, c: &Clove, name: &str, _mount: &Path) -> (u64, u64) {
         let image = self.clone_image(c, name);
         (allocated_bytes(&image), private_bytes(&image))
+    }
+
+    fn checkpoint_create(&self, c: &Clove, name: &str, mount: &Path, id: &str) -> Result<()> {
+        let live = self.settled_clone_image(c, name, mount)?;
+        clonefile(&live, &self.checkpoint_image(c, name, id))
+    }
+
+    // One image per clone: swap the image file while it is detached. The old
+    // one stays aside until the checkpoint's copy is mounted, then goes.
+    fn checkpoint_restore(&self, c: &Clove, name: &str, mount: &Path, id: &str, force: bool) -> Result<()> {
+        let (live, saved) = (self.clone_image(c, name), self.checkpoint_image(c, name, id));
+        if !saved.is_file() {
+            bail!("checkpoint {id} has no image at {}", saved.display());
+        }
+        let aside = live.with_extension("rewinding");
+        detach(mount, force)?;
+        let _ = std::fs::remove_file(&aside);
+        std::fs::rename(&live, &aside).with_context(|| format!("move {} aside", live.display()))?;
+        let swapped = clonefile(&saved, &live).and_then(|()| self.attach(&live, mount));
+        if let Err(e) = swapped {
+            let _ = detach(mount, true);
+            let _ = std::fs::remove_file(&live);
+            let _ = std::fs::rename(&aside, &live);
+            let _ = self.attach(&live, mount);
+            return Err(e);
+        }
+        let _ = std::fs::remove_file(&aside);
+        Ok(())
+    }
+
+    fn checkpoint_rename(&self, _c: &Clove, _name: &str, _from: &str, _to: &str) -> Result<()> {
+        Ok(())
+    }
+
+    fn checkpoint_delete(&self, _c: &Clove, _name: &str, _id: &str) -> Result<()> {
+        Ok(())
+    }
+
+    fn checkpoint_bytes(&self, c: &Clove, name: &str, id: &str) -> u64 {
+        private_bytes(&self.checkpoint_image(c, name, id))
+    }
+
+    fn clone_fork(&self, c: &Clove, from: &str, from_mount: &Path, to: &str, _to_mount: &Path) -> Result<()> {
+        let live = self.settled_clone_image(c, from, from_mount)?;
+        clonefile(&live, &self.clone_image(c, to))
     }
 
     fn spare_create(&self, c: &Clove, g: u32) -> Result<bool> {

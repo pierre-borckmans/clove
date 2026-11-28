@@ -50,6 +50,11 @@ pub fn installed(shell: &str) -> bool {
 /// file and whether it changed.
 pub fn install(shell: &str) -> Result<(PathBuf, bool)> {
     let path = path(shell);
+    // Dev and demo runs leave the real rc file alone.
+    if crate::service::disabled() {
+        eprintln!("clove: CLOVE_NO_SERVICE is set, not editing {}", path.display());
+        return Ok((path, false));
+    }
     let current = std::fs::read_to_string(&path).unwrap_or_default();
     if current.contains("clove shell-init") {
         return Ok((path, false));

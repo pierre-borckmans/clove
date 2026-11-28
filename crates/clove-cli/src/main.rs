@@ -184,6 +184,55 @@ enum Cmd {
         #[arg(long, conflicts_with_all = ["abort", "all"])]
         resolve: bool,
     },
+    /// Freeze a clone as it is now (files, ignored ones too, index, HEAD) in
+    /// about a second. `clove rewind` puts it back.
+    Checkpoint {
+        /// Clone (`.` for the one you are in).
+        #[arg(add = ArgValueCompleter::new(complete::clones))]
+        clone: String,
+        /// Name for it (default: cp-1, cp-2, ...).
+        label: Option<String>,
+        /// Delete checkpoint <LABEL> instead.
+        #[arg(long, requires = "label")]
+        drop: bool,
+    },
+    /// List a clone's checkpoints: name, age, and the disk only each one holds.
+    Checkpoints {
+        /// Clone (default: the one you are in).
+        #[arg(add = ArgValueCompleter::new(complete::clones))]
+        clone: Option<String>,
+    },
+    /// Put a clone back to a checkpoint: files, index, HEAD, and its branch.
+    /// The state it replaces is kept as `before-rewind`.
+    Rewind {
+        /// Clone (`.` for the one you are in).
+        #[arg(add = ArgValueCompleter::new(complete::clones))]
+        clone: String,
+        /// Checkpoint (default: the newest you made).
+        label: Option<String>,
+        /// Unmount even if processes have files open in the clone.
+        #[arg(short, long)]
+        force: bool,
+        /// Don't keep the replaced state as `before-rewind`.
+        #[arg(long)]
+        no_save: bool,
+    },
+    /// New clones copied from another clone as it is now, uncommitted work
+    /// included, each on its own branch (default <branch>-<name>).
+    Fork {
+        /// Clone to copy (`.` for the one you are in).
+        #[arg(add = ArgValueCompleter::new(complete::clones))]
+        clone: String,
+        /// Names of the new clones.
+        #[arg(required = true)]
+        names: Vec<String>,
+        /// Branch for the fork (one fork only).
+        #[arg(short, long)]
+        branch: Option<String>,
+        /// Detached HEAD at the source's commit instead of a branch.
+        #[arg(long, conflicts_with = "branch")]
+        detach: bool,
+    },
     /// Golden image and clone summary for this repo.
     #[command(visible_alias = "info")]
     Status,
@@ -889,6 +938,161 @@ fn run(cli: Cli) -> Result<()> {
             let name = c.resolve(clone)?;
             let path = c.mount(&name)?;
             exec_in(&c, &name, &path, command)?;
+        }
+        Cmd::Checkpoint { clone, label, drop } => {
+            let c = repo(&cli)?;
+            let name = c.resolve(clone)?;
+            if *drop {
+                let id = label.as_deref().unwrap_or_default();
+                c.drop_checkpoint(&name, id)?;
+                if cli.json {
+                    return emit(&serde_json::json!({ "dropped": id }));
+                }
+                eprintln!("  {} {name}: dropped {id}", paint(DIM, "-"));
+                return Ok(());
+            }
+            if !cli.json {
+                eprintln!("{} {}", paint(GREEN, "checkpoint"), paint(BOLD, &name));
+            }
+            let cp = c.checkpoint(&name, label.as_deref(), r)?;
+            if cli.json {
+                return emit(&cp);
+            }
+            eprintln!(
+                "\n{} {} {}",
+                paint(GREEN, "●"),
+                paint(BOLD, format!("{name}@{}", cp.meta.id)),
+                paint(DIM, format!("saved in {}", secs(cp.meta.took_ms)))
+            );
+        }
+        Cmd::Checkpoints { clone } => {
+            let c = repo(&cli)?;
+            let name = c.resolve(clone.as_deref().unwrap_or("."))?;
+            let list = c.checkpoints(&name)?;
+            if cli.json {
+                return emit(&list);
+            }
+            if list.is_empty() {
+                eprintln!("{name} has no checkpoints; `clove checkpoint {name}` makes one");
+                return Ok(());
+            }
+            let now = clove_core::util::now_unix();
+            let mut t = Table::new(&["NAME", "AGE", "HEAD", "OWN", "TOOK"]);
+            for i in &list {
+                let head = match (&i.meta.branch, &i.meta.head) {
+                    (Some(b), Some(h)) => format!("{b} {}", &h[..h.len().min(8)]),
+                    (None, Some(h)) => h[..h.len().min(8)].to_string(),
+                    _ => "-".into(),
+                };
+                let id = if i.meta.auto {
+                    styled(DIM, &i.meta.id)
+                } else {
+                    cell(&i.meta.id)
+                };
+                t.row(vec![
+                    id,
+                    cell(clove_core::util::human_age(now.saturating_sub(i.meta.created_at))),
+                    cell(head),
+                    cell(clove_core::util::human_bytes(i.own_bytes)),
+                    cell(secs(i.meta.took_ms)),
+                ]);
+            }
+            t.print();
+        }
+        Cmd::Rewind {
+            clone,
+            label,
+            force,
+            no_save,
+        } => {
+            let c = repo(&cli)?;
+            let name = c.resolve(clone)?;
+            // Our own working directory would hold the volume.
+            let cwd = std::env::current_dir().ok();
+            let inside = cwd
+                .as_ref()
+                .zip(c.clone_meta(&name)?)
+                .is_some_and(|(d, m)| d.starts_with(&m.mount));
+            if inside {
+                std::env::set_current_dir(&c.root)?;
+            }
+            if !cli.json {
+                eprintln!("{} {}", paint(YELLOW, "rewind"), paint(BOLD, &name));
+            }
+            let opts = clove_core::RewindOptions {
+                id: label.clone(),
+                force: *force,
+                no_save: *no_save,
+            };
+            let done = c.rewind(&name, &opts, r)?;
+            if cli.json {
+                return emit(&done);
+            }
+            eprintln!(
+                "\n{} {} {}",
+                paint(GREEN, "●"),
+                paint(BOLD, format!("{name}@{}", done.to)),
+                paint(DIM, format!("restored in {}", secs(done.total_ms)))
+            );
+            if let Some((b, from)) = &done.branch_moved {
+                eprintln!(
+                    "  {} moved {b} back from {}",
+                    paint(DIM, "·"),
+                    &from[..from.len().min(8)]
+                );
+            }
+            if let Some(s) = &done.saved {
+                eprintln!("  {} undo with `clove rewind {name} {s}`", paint(DIM, "·"));
+            }
+            if inside || *force {
+                eprintln!(
+                    "  {} a shell inside the clone needs `cd $PWD` to see it",
+                    paint(DIM, "·")
+                );
+            }
+        }
+        Cmd::Fork {
+            clone,
+            names,
+            branch,
+            detach,
+        } => {
+            let c = repo(&cli)?;
+            let from = c.resolve(clone)?;
+            if !cli.json {
+                eprintln!(
+                    "{} {} {}",
+                    paint(GREEN, "fork"),
+                    paint(BOLD, &from),
+                    paint(DIM, format!("-> {}", names.join(", ")))
+                );
+            }
+            let opts = clove_core::ForkOptions {
+                names: names.clone(),
+                branch: branch.clone(),
+                detach: *detach,
+            };
+            let made = c.fork(&from, &opts, r)?;
+            if cli.json {
+                return emit(&made);
+            }
+            eprintln!();
+            for i in &made {
+                eprintln!(
+                    "{} {} {} {}",
+                    paint(GREEN, "●"),
+                    paint(BOLD, &i.name),
+                    paint(
+                        DIM,
+                        format!(
+                            "{} ready in {}",
+                            i.branch.as_deref().unwrap_or("detached"),
+                            secs(i.total_ms)
+                        )
+                    ),
+                    tilde(&i.path)
+                );
+            }
         }
         Cmd::Status => cmd_status(&cli)?,
         Cmd::Mount { clones, all_repos } => {

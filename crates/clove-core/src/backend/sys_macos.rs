@@ -54,6 +54,22 @@ pub fn detach(mount_point: &Path, force: bool) -> Result<()> {
     Ok(())
 }
 
+/// Commits everything written to the volume mounted at `mount_point` down
+/// to its image file: F_FULLFSYNC makes APFS write a checkpoint and flush the
+/// device, which the disk image driver passes to the backing file. Without
+/// it, a `clonefile` of a mounted image misses the last second of writes.
+pub fn flush(mount_point: &Path) -> Result<()> {
+    use std::os::fd::AsRawFd;
+    let dir = std::fs::File::open(mount_point).with_context(|| format!("open {}", mount_point.display()))?;
+    // SAFETY: fcntl on an fd we own; F_FULLFSYNC takes no argument.
+    let rc = unsafe { libc::fcntl(dir.as_raw_fd(), libc::F_FULLFSYNC) };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("flush {}", mount_point.display()));
+    }
+    Ok(())
+}
+
 fn statfs(path: &Path) -> Option<libc::statfs> {
     use std::os::unix::ffi::OsStrExt;
     let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;

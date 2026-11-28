@@ -14,6 +14,8 @@ export type UiState = {
   removeWorktree: { root: string; worktrees: OtherWorktree[] } | null;
   /** Turn a plain git worktree into a clone. */
   adopt: { root: string; worktree: OtherWorktree } | null;
+  /** Pick a checkpoint to rewind a clone to. */
+  rewind: { root: string; clone: CloneInfo } | null;
   activity: boolean;
   /** The update dialog. */
   upgrade: boolean;
@@ -26,6 +28,7 @@ let state: UiState = {
   remove: null,
   removeWorktree: null,
   adopt: null,
+  rewind: null,
   activity: false,
   upgrade: false,
 };

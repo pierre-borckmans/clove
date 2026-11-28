@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowDown,
@@ -10,8 +11,10 @@ import {
   FolderOpen,
   GitBranch,
   GitCommitHorizontal,
+  GitFork,
   GitPullRequestArrow,
   HardDrive,
+  History,
   Plus,
   Sparkles,
   SquareTerminal,
@@ -38,8 +41,10 @@ import { resolveInTerminal, resolverName, startOp, useOps } from "@/lib/ops";
 import { FILE_MANAGER, isMac } from "@/lib/platform";
 import { APP_LABELS, usePrefs } from "@/lib/prefs";
 import {
+  checkpointNow,
   copyPath,
   copyText,
+  forkClone,
   openIn,
   useMountToggle,
   usePrCheck,
@@ -467,6 +472,21 @@ function CloneRow({
               {c.operation}: conflicts
             </span>
           )}
+          {!!c.checkpoints && (
+            <button
+              type="button"
+              title={`${c.checkpoints} checkpoint${c.checkpoints === 1 ? "" : "s"}: rewind…`}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setUi({ rewind: { root, clone: c } });
+              }}
+              className="flex shrink-0 items-center gap-1 rounded-full bg-bottle-soft px-1.5 text-[11px] leading-[18px] text-bottle hover:brightness-95"
+            >
+              <History className="size-3" />
+              {c.checkpoints}
+            </button>
+          )}
           {c.removing_when_free && (
             <span className="shrink-0 rounded-full bg-foreground/[0.06] px-1.5 text-[11px] leading-[18px] text-muted-foreground">
               removing when free
@@ -496,6 +516,11 @@ function CloneRow({
               <GitCommitHorizontal className="size-3 shrink-0 text-faint" />
               <span className="truncate">detached at {c.head?.slice(0, 8)}</span>
             </>
+          )}
+          {c.forked_from && (
+            <span className="flex shrink-0 items-center gap-1 font-sans text-[11px] text-faint">
+              · <GitFork className="size-3" /> forked from {c.forked_from}
+            </span>
           )}
           {stale && (
             <Tooltip>
@@ -712,6 +737,7 @@ export function CloneMenuItems({ clone: c, root }: { clone: CloneInfo; root: str
   const mount = useMountToggle(root);
   const openDiff = useOpenDiff(root);
   const resolver = useRepoConfig(c.operation ? root : undefined).data?.config.update?.resolver;
+  const qc = useQueryClient();
   return (
     <>
       <DropdownMenuItem onSelect={() => void openIn(c.path, prefs.editor)}>
@@ -765,6 +791,18 @@ export function CloneMenuItems({ clone: c, root }: { clone: CloneInfo; root: str
           </DropdownMenuItem>
         )
       )}
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onSelect={() => void checkpointNow(qc, root, c.name)}>
+        <History /> Checkpoint
+      </DropdownMenuItem>
+      <DropdownMenuItem disabled={!c.checkpoints} onSelect={() => setUi({ rewind: { root, clone: c } })}>
+        <Undo2 /> Rewind…
+        {!!c.checkpoints && <DropdownMenuShortcut>{c.checkpoints}</DropdownMenuShortcut>}
+      </DropdownMenuItem>
+      <DropdownMenuItem onSelect={() => forkClone(root, c.name)}>
+        <GitFork /> Fork
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
       <DropdownMenuItem onSelect={() => mount.mutate({ name: c.name, mounted: c.mounted })}>
         {c.mounted ? <Unplug /> : <HardDrive />}
         {c.mounted ? "Unmount" : "Mount"}
