@@ -207,7 +207,7 @@ export function wireOps(qc: QueryClient, hooks: Hooks) {
       void api.repoConfig(root).then((cfg) => {
         const resolver = cfg.config.update?.resolver;
         toast.warning(`${op.subject}: ${upd.strategy} stopped on conflicts`, {
-          id: op.id,
+          id: `${op.id}:note`,
           duration: 30_000,
           description: `${upd.files.join(", ")}. Fix them and git add them, then Continue update from the clone's menu (or Abort).`,
           action: resolver
@@ -217,14 +217,14 @@ export function wireOps(qc: QueryClient, hooks: Hooks) {
       });
     } else if (op.status === "ok" && upd?.result === "updated" && (upd.hint || upd.failed_steps.length)) {
       toast.success(doneTitle(op), {
-        id: op.id,
+        id: `${op.id}:note`,
         description: [upd.failed_steps.length ? `setup failed: ${upd.failed_steps.join(", ")}` : "", upd.hint ?? ""]
           .filter(Boolean)
           .join(" · "),
       });
     } else if (op.status === "ok" && later) {
       toast.info(`${op.subject} is in use`, {
-        id: op.id,
+        id: `${op.id}:note`,
         description: `By ${later.join(", ")}. clove removes it as soon as ${later.length === 1 ? "it exits" : "they exit"}.`,
       });
     } else if (hooks.opCards) {
