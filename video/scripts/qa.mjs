@@ -1,5 +1,6 @@
 // Renders one still near the end of each scene, plus a contact sheet: out/qa/.
 //   node scripts/qa.mjs [scene ...]
+// CHROME=/path/to/chrome uses that browser instead of Remotion's headless shell.
 import { bundle } from "@remotion/bundler";
 import { renderStill, selectComposition } from "@remotion/renderer";
 import { execFileSync } from "node:child_process";
@@ -15,7 +16,7 @@ const only = process.argv.slice(2);
 if (!process.argv[2]) rmSync("out/qa", { recursive: true, force: true });
 mkdirSync("out/qa", { recursive: true });
 const serveUrl = await bundle({ entryPoint: "src/index.ts" });
-const composition = await selectComposition({ serveUrl, id: "Intro" });
+const composition = await selectComposition({ serveUrl, id: "Intro", browserExecutable: process.env.CHROME });
 let start = 0;
 const files = [];
 for (const { id } of script) {
@@ -23,7 +24,7 @@ for (const { id } of script) {
   const frame = start + frames - XFADE - 12;
   if (!only.length || only.includes(id)) {
     const output = `out/qa/${String(files.length).padStart(2, "0")}-${id}.png`;
-    await renderStill({ serveUrl, composition, frame, output });
+    await renderStill({ serveUrl, composition, frame, output, browserExecutable: process.env.CHROME });
     files.push(output);
     console.log(id, frame);
   }

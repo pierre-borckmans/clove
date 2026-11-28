@@ -4,6 +4,7 @@ import durations from "./durations.json";
 import script from "./script.json";
 import { Again, Clash, Cost, Detect, Empty, Fast, Features, Fresh, Golden, Hacks, Internals, Intro as IntroScene, Logo, Outro, Parallel, Steps, Surfaces, Worktree } from "./scenes";
 import { focusPull } from "./focus";
+import { Forks } from "./maps";
 import { Backdrop, LEAD, SceneLength } from "./ui";
 
 const FPS = 30;
@@ -27,6 +28,7 @@ const TAIL: Record<string, number> = {
   detect: 2.0,
   fresh: 2.0,
   surfaces: 2.0,
+  forks: 2.0,
   features: 2.2,
   outro: 3.4,
 };
@@ -47,6 +49,7 @@ const SCENES: Record<string, () => React.JSX.Element> = {
   detect: Detect,
   fresh: Fresh,
   surfaces: Surfaces,
+  forks: Forks,
   features: Features,
   outro: Outro,
 };

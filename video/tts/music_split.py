@@ -1,10 +1,19 @@
 """The tech bed in two pieces joined at "Meet clove", so the drop lands
 exactly there: A (calm build, ends on a riser) and B (starts on the drop).
 Key from ~/.elevenlabs_music_key, never printed. Output: tts/music/tech.mp3
-"""
-import json, os, subprocess, urllib.request
 
-KEY = open(os.path.expanduser("~/.elevenlabs_music_key")).read().strip()
+    python3 tts/music_split.py                      # new takes of A and B
+    python3 tts/music_split.py --reuse              # join the takes already in tts/music/
+    python3 tts/music_split.py --reuse --repeat 153.77:6
+        # ...and play the 6 bars before 153.77s twice, to make room for a
+        # scene added there (the forks scene) without a new take
+"""
+import argparse, json, os, subprocess, urllib.request
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--reuse", action="store_true", help="no API call: join tts/music/tech-a.mp3 and tech-b.mp3")
+ap.add_argument("--repeat", help="AT:BARS, repeat the BARS bars (122 bpm) that end at AT seconds")
+args = ap.parse_args()
 DROP = 71.6
 TOTAL = 175.73
 NEG = ["vocals", "singing", "spoken word", "heavy distortion", "harsh", "dubstep wobble"]
@@ -39,8 +48,10 @@ def gen(plan, out):
     open(out, "wb").write(urllib.request.urlopen(req, timeout=600).read())
 
 
-gen(A, "tts/music/tech-a.mp3")
-gen(B, "tts/music/tech-b.mp3")
+if not args.reuse:
+    KEY = open(os.path.expanduser("~/.elevenlabs_music_key")).read().strip()
+    gen(A, "tts/music/tech-a.mp3")
+    gen(B, "tts/music/tech-b.mp3")
 # A trimmed to exactly DROP seconds, B straight after, with a 40ms crossfade.
 subprocess.run(
     ["ffmpeg", "-y", "-loglevel", "error", "-i", "tts/music/tech-a.mp3", "-i", "tts/music/tech-b.mp3", "-filter_complex",
@@ -48,4 +59,16 @@ subprocess.run(
      "-b:a", "192k", "tts/music/tech.mp3"],
     check=True,
 )
-print("tech.mp3 written")
+if args.repeat:
+    at, bars = args.repeat.split(":")
+    at, span = float(at), int(bars) * 4 * 60 / 122
+    # [0, at) + [at - span, at) again + [at, end), with short crossfades at both seams.
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", "tts/music/tech.mp3", "-filter_complex",
+         f"[0]asplit=3[x][y][z];[x]atrim=0:{at + 0.04},asetpts=N/SR/TB[a];[y]atrim={at - span}:{at + 0.04},asetpts=N/SR/TB[b];"
+         f"[z]atrim={at}:,asetpts=N/SR/TB[c];[a][b]acrossfade=d=0.04:c1=tri:c2=tri[ab];[ab][c]acrossfade=d=0.04:c1=tri:c2=tri",
+         "-b:a", "192k", "tts/music/tech-long.mp3"],
+        check=True,
+    )
+    os.replace("tts/music/tech-long.mp3", "tts/music/tech.mp3")
+print("tech.mp3 written; copy it to public/music/ for the video")

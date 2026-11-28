@@ -10,6 +10,8 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
+import { Bulb, CLOVE_PATH, SKIN } from "./garlic";
+import { AppMap, PruneMap } from "./maps";
 import { Bar, c, cue, Glass, Kicker, Mark, mono, Out, sec, serif, Stage, Terminal, Typed, useIn, useRamp, useSceneLength, Words } from "./ui";
 
 const has = (name: string) => getStaticFiles().some((f) => f.name === name);
@@ -688,7 +690,12 @@ function CloneCard({ label, at, x, y }: { label: string; at: number; x: number; 
         transform: `translateX(${(1 - p) * -80}px) scale(${0.9 + 0.1 * p})`,
       }}
     >
-      <span>{label}</span>
+      <span style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <svg width={16} height={26} viewBox="24 4 52 88">
+          <path d={CLOVE_PATH} fill={SKIN.clean.fill} stroke={SKIN.clean.stroke} strokeWidth={5} />
+        </svg>
+        {label}
+      </span>
       <span style={{ color: c.bottle }}>+6 MB</span>
     </Glass>
   );
@@ -730,7 +737,9 @@ export function Golden() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <Mark size={46} delay={8} />
+          <svg width={64} height={64} style={{ overflow: "visible" }}>
+            <Bulb x={32} y={32} r={30} deepest={0} appear={card} />
+          </svg>
           <span style={{ fontFamily: serif, fontSize: 48 }}>golden image</span>
         </div>
         <div style={{ fontFamily: mono, fontSize: 19, color: c.muted, marginTop: 22, lineHeight: 1.95, whiteSpace: "nowrap" }}>
@@ -1260,11 +1269,6 @@ function TuiCell({ cell, w, h }: { cell: Cell; w: number; h: number }) {
   );
 }
 
-function AppShot({ name, width }: { name: string; width: number }) {
-  if (!has(`shots/${name}.png`)) return <Placeholder label={`app · ${name}`} w={width} h={width * 0.625} />;
-  return <Img src={staticFile(`shots/${name}.png`)} style={{ width, display: "block" }} />;
-}
-
 function Placeholder({ label, w, h }: { label: string; w: number; h: number }) {
   return (
     <div
@@ -1347,9 +1351,7 @@ export function Surfaces() {
         </Window>
       </Layer>
       <Layer at={appAt} label="The desktop app · macOS and Linux">
-        <Window title="clove">
-          <AppShot name="app-repo" width={1240} />
-        </Window>
+        <AppMap at={appAt} />
       </Layer>
     </Stage>
   );
@@ -1421,9 +1423,7 @@ export function Features() {
         until={d}
         kicker="clove prune · clove log"
         shot={
-          <Window title="clove">
-            <AppShot name="app-history" width={820} />
-          </Window>
+          <PruneMap at={b} />
         }
       >
         <Words text="Merged pull requests clean up after themselves." size={60} delay={b + 4} accent={["themselves."]} />
