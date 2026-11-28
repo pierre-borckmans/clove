@@ -63,7 +63,11 @@ export function UpgradeDialog() {
   } else if (s.available && latest) {
     title = `clove ${latest.version} is available`;
     lead = inPlace ? (
-      `You have ${s.current}. clove quits, upgrades with Homebrew, and opens again.`
+      cliSkew ? (
+        `You have ${s.current}, and the clove CLI is ${cliSkew}. clove quits, upgrades both to ${latest.version} with Homebrew, and opens again.`
+      ) : (
+        `You have ${s.current}. clove quits, upgrades it and the clove CLI with Homebrew, and opens again.`
+      )
     ) : (
       <>
         You have {s.current}.{" "}
@@ -117,7 +121,8 @@ export function UpgradeDialog() {
           </Notice>
         )}
 
-        {cliSkew && !s.restart_to && (
+        {/* An in-place update brings the CLI along, so the lead covers the skew. */}
+        {cliSkew && !s.restart_to && !(inPlace && s.available) && (
           <Notice tone="warn" icon={<TriangleAlert />}>
             The <span className="font-mono">clove</span> CLI is {cliSkew} and this app is {s.current}. The background
             service and agent hooks run the CLI, so keep them on the same version.
