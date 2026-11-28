@@ -70,6 +70,9 @@ enum Cmd {
         /// --json` stays the clones' list).
         #[arg(long)]
         worktrees: bool,
+        /// One flat list: forks not drawn as a tree under their parent.
+        #[arg(long)]
+        flat: bool,
     },
     /// Turn a plain git worktree into a clone on the same branch. The worktree
     /// must be clean; it is removed (`git worktree remove`) once the clone exists.
@@ -183,6 +186,55 @@ enum Cmd {
         /// default) without asking; on a clone already stopped, start it now.
         #[arg(long, conflicts_with_all = ["abort", "all"])]
         resolve: bool,
+    },
+    /// Freeze a clone as it is now (files, ignored ones too, index, HEAD) in
+    /// about a second. `clove rewind` puts it back.
+    Checkpoint {
+        /// Clone (`.` for the one you are in).
+        #[arg(add = ArgValueCompleter::new(complete::clones))]
+        clone: String,
+        /// Name for it (default: cp-1, cp-2, ...).
+        label: Option<String>,
+        /// Delete checkpoint <LABEL> instead.
+        #[arg(long, requires = "label")]
+        drop: bool,
+    },
+    /// List a clone's checkpoints: name, age, and the disk only each one holds.
+    Checkpoints {
+        /// Clone (default: the one you are in).
+        #[arg(add = ArgValueCompleter::new(complete::clones))]
+        clone: Option<String>,
+    },
+    /// Put a clone back to a checkpoint: files, index, HEAD, and its branch.
+    /// The state it replaces is kept as `before-rewind`.
+    Rewind {
+        /// Clone (`.` for the one you are in).
+        #[arg(add = ArgValueCompleter::new(complete::clones))]
+        clone: String,
+        /// Checkpoint (default: the newest you made).
+        label: Option<String>,
+        /// Unmount even if processes have files open in the clone.
+        #[arg(short, long)]
+        force: bool,
+        /// Don't keep the replaced state as `before-rewind`.
+        #[arg(long)]
+        no_save: bool,
+    },
+    /// New clones copied from another clone as it is now, uncommitted work
+    /// included, each on its own branch (default <branch>-<suffix>: the name minus the source clone's name prefix).
+    Fork {
+        /// Clone to copy (`.` for the one you are in).
+        #[arg(add = ArgValueCompleter::new(complete::clones))]
+        clone: String,
+        /// Names of the new clones.
+        #[arg(required = true)]
+        names: Vec<String>,
+        /// Branch for the fork (one fork only).
+        #[arg(short, long)]
+        branch: Option<String>,
+        /// Detached HEAD at the source's commit instead of a branch.
+        #[arg(long, conflicts_with = "branch")]
+        detach: bool,
     },
     /// Golden image and clone summary for this repo.
     #[command(visible_alias = "info")]
@@ -464,6 +516,13 @@ struct RemoveArgs {
     /// lock goes back if removal fails).
     #[arg(long)]
     unlock: bool,
+    /// A clone with forks: remove its forks too (deepest first). Without
+    /// this or --keep-forks, a terminal asks; a script or --json is refused.
+    #[arg(long, conflicts_with = "keep_forks")]
+    with_forks: bool,
+    /// A clone with forks: remove only it; its forks stay, as clones of the image.
+    #[arg(long)]
+    keep_forks: bool,
 }
 
 fn main() {
@@ -723,7 +782,11 @@ fn run(cli: Cli) -> Result<()> {
                 bail!("setup failed: {}", info.failed_steps.join(", "));
             }
         }
-        Cmd::List { fast, worktrees } => cmd_list(&cli, !fast, *worktrees)?,
+        Cmd::List {
+            fast,
+            worktrees,
+            flat,
+        } => cmd_list(&cli, !fast, *worktrees, *flat)?,
         Cmd::Adopt {
             worktree,
             name,
@@ -749,6 +812,7 @@ fn run(cli: Cli) -> Result<()> {
                 }
                 names
             };
+            let names = with_forks_decided(&c, names, a, cli.json)?;
             let mut removed_worktrees = vec![];
             for w in &plain {
                 if !cli.json {
@@ -801,6 +865,8 @@ fn run(cli: Cli) -> Result<()> {
                     if a.keep_branch {
                         args.push("--keep-branch".into());
                     }
+                    // Its forks were decided above (gone already, or staying).
+                    args.push("--keep-forks".into());
                     args.push(n.clone());
                     if shell::request_cd_then(&c.root, &args) {
                         eprintln!(
@@ -889,6 +955,161 @@ fn run(cli: Cli) -> Result<()> {
             let name = c.resolve(clone)?;
             let path = c.mount(&name)?;
             exec_in(&c, &name, &path, command)?;
+        }
+        Cmd::Checkpoint { clone, label, drop } => {
+            let c = repo(&cli)?;
+            let name = c.resolve(clone)?;
+            if *drop {
+                let id = label.as_deref().unwrap_or_default();
+                c.drop_checkpoint(&name, id)?;
+                if cli.json {
+                    return emit(&serde_json::json!({ "dropped": id }));
+                }
+                eprintln!("  {} {name}: dropped {id}", paint(DIM, "-"));
+                return Ok(());
+            }
+            if !cli.json {
+                eprintln!("{} {}", paint(GREEN, "checkpoint"), paint(BOLD, &name));
+            }
+            let cp = c.checkpoint(&name, label.as_deref(), r)?;
+            if cli.json {
+                return emit(&cp);
+            }
+            eprintln!(
+                "\n{} {} {}",
+                paint(GREEN, "●"),
+                paint(BOLD, format!("{name}@{}", cp.meta.id)),
+                paint(DIM, format!("saved in {}", secs(cp.meta.took_ms)))
+            );
+        }
+        Cmd::Checkpoints { clone } => {
+            let c = repo(&cli)?;
+            let name = c.resolve(clone.as_deref().unwrap_or("."))?;
+            let list = c.checkpoints(&name)?;
+            if cli.json {
+                return emit(&list);
+            }
+            if list.is_empty() {
+                eprintln!("{name} has no checkpoints; `clove checkpoint {name}` makes one");
+                return Ok(());
+            }
+            let now = clove_core::util::now_unix();
+            let mut t = Table::new(&["NAME", "AGE", "HEAD", "OWN", "TOOK"]);
+            for i in &list {
+                let head = match (&i.meta.branch, &i.meta.head) {
+                    (Some(b), Some(h)) => format!("{b} {}", &h[..h.len().min(8)]),
+                    (None, Some(h)) => h[..h.len().min(8)].to_string(),
+                    _ => "-".into(),
+                };
+                let id = if i.meta.auto {
+                    styled(DIM, &i.meta.id)
+                } else {
+                    cell(&i.meta.id)
+                };
+                t.row(vec![
+                    id,
+                    cell(clove_core::util::human_age(now.saturating_sub(i.meta.created_at))),
+                    cell(head),
+                    cell(clove_core::util::human_bytes(i.own_bytes)),
+                    cell(secs(i.meta.took_ms)),
+                ]);
+            }
+            t.print();
+        }
+        Cmd::Rewind {
+            clone,
+            label,
+            force,
+            no_save,
+        } => {
+            let c = repo(&cli)?;
+            let name = c.resolve(clone)?;
+            // Our own working directory would hold the volume.
+            let cwd = std::env::current_dir().ok();
+            let inside = cwd
+                .as_ref()
+                .zip(c.clone_meta(&name)?)
+                .is_some_and(|(d, m)| d.starts_with(&m.mount));
+            if inside {
+                std::env::set_current_dir(&c.root)?;
+            }
+            if !cli.json {
+                eprintln!("{} {}", paint(YELLOW, "rewind"), paint(BOLD, &name));
+            }
+            let opts = clove_core::RewindOptions {
+                id: label.clone(),
+                force: *force,
+                no_save: *no_save,
+            };
+            let done = c.rewind(&name, &opts, r)?;
+            if cli.json {
+                return emit(&done);
+            }
+            eprintln!(
+                "\n{} {} {}",
+                paint(GREEN, "●"),
+                paint(BOLD, format!("{name}@{}", done.to)),
+                paint(DIM, format!("restored in {}", secs(done.total_ms)))
+            );
+            if let Some((b, from)) = &done.branch_moved {
+                eprintln!(
+                    "  {} moved {b} back from {}",
+                    paint(DIM, "·"),
+                    &from[..from.len().min(8)]
+                );
+            }
+            if let Some(s) = &done.saved {
+                eprintln!("  {} undo with `clove rewind {name} {s}`", paint(DIM, "·"));
+            }
+            if inside || *force {
+                eprintln!(
+                    "  {} a shell inside the clone needs `cd $PWD` to see it",
+                    paint(DIM, "·")
+                );
+            }
+        }
+        Cmd::Fork {
+            clone,
+            names,
+            branch,
+            detach,
+        } => {
+            let c = repo(&cli)?;
+            let from = c.resolve(clone)?;
+            if !cli.json {
+                eprintln!(
+                    "{} {} {}",
+                    paint(GREEN, "fork"),
+                    paint(BOLD, &from),
+                    paint(DIM, format!("-> {}", names.join(", ")))
+                );
+            }
+            let opts = clove_core::ForkOptions {
+                names: names.clone(),
+                branch: branch.clone(),
+                detach: *detach,
+            };
+            let made = c.fork(&from, &opts, r)?;
+            if cli.json {
+                return emit(&made);
+            }
+            eprintln!();
+            for i in &made {
+                eprintln!(
+                    "{} {} {} {}",
+                    paint(GREEN, "●"),
+                    paint(BOLD, &i.name),
+                    paint(
+                        DIM,
+                        format!(
+                            "{} ready in {}",
+                            i.branch.as_deref().unwrap_or("detached"),
+                            secs(i.total_ms)
+                        )
+                    ),
+                    tilde(&i.path)
+                );
+            }
         }
         Cmd::Status => cmd_status(&cli)?,
         Cmd::Mount { clones, all_repos } => {
@@ -1596,7 +1817,7 @@ fn exec_in(c: &Clove, name: &str, path: &std::path::Path, command: &[String]) ->
     Err(err).with_context(|| format!("exec {prog}"))
 }
 
-fn cmd_list(cli: &Cli, status: bool, only_worktrees: bool) -> Result<()> {
+fn cmd_list(cli: &Cli, status: bool, only_worktrees: bool, flat: bool) -> Result<()> {
     let c = repo(cli)?;
     let others = c.other_worktrees(status)?;
     if only_worktrees {
@@ -1641,7 +1862,13 @@ fn cmd_list(cli: &Cli, status: bool, only_worktrees: bool) -> Result<()> {
     let mut broken = 0;
     let now = clove_core::util::now_unix();
     let cwd = std::env::current_dir().unwrap_or_default();
-    for i in &clones {
+    // Forks under their parent, as a tree; with no forks (or --flat), the plain list.
+    let order = if flat {
+        clones.iter().map(|c| (c, String::new())).collect()
+    } else {
+        fork_tree(&clones)
+    };
+    for (i, stem) in order {
         let here = cwd.starts_with(i.path.parent().unwrap_or(&i.path));
         let dot = if !i.mounted {
             styled(DIM, "○")
@@ -1678,7 +1905,15 @@ fn cmd_list(cli: &Cli, status: bool, only_worktrees: bool) -> Result<()> {
         } else {
             styled(YELLOW, changes.trim().to_string())
         };
-        let mut row = vec![dot, styled(BOLD, i.name.clone()), branch, changes];
+        let name = if stem.is_empty() {
+            styled(BOLD, i.name.clone())
+        } else {
+            (
+                format!("{}{}", paint(DIM, &stem), paint(BOLD, &i.name)),
+                stem.chars().count() + i.name.chars().count(),
+            )
+        };
+        let mut row = vec![dot, name, branch, changes];
         if !prs.is_empty() {
             let m = prs.get(&i.name);
             if m.is_some_and(|m| m.verdict == clove_core::Verdict::Prune) {
@@ -1724,6 +1959,135 @@ fn cmd_list(cli: &Cli, status: bool, only_worktrees: bool) -> Result<()> {
     }
     print_recent_auto_prunes(&c);
     Ok(())
+}
+
+/// Clones to remove once forks are decided: a named clone with forks takes
+/// them along (--with-forks, or yes at the prompt), leaves them
+/// (--keep-forks), or stops the command. Forks go before their parent,
+/// deepest first.
+fn with_forks_decided(c: &Clove, names: Vec<String>, a: &RemoveArgs, json: bool) -> Result<Vec<String>> {
+    let all = c.list(false)?;
+    let kids = |n: &str| -> Vec<&clove_core::CloneInfo> {
+        all.iter()
+            .filter(|k| k.forked_from.as_deref() == Some(n) && k.name != n)
+            .collect()
+    };
+    // Every fork under `n`, deepest first.
+    fn under<'a>(
+        n: &str,
+        kids: &dyn Fn(&str) -> Vec<&'a clove_core::CloneInfo>,
+        seen: &mut std::collections::HashSet<String>,
+        out: &mut Vec<String>,
+    ) {
+        for k in kids(n) {
+            if seen.insert(k.name.clone()) {
+                under(&k.name, kids, seen, out);
+                out.push(k.name.clone());
+            }
+        }
+    }
+    let mut out: Vec<String> = vec![];
+    for n in &names {
+        let mut forks = vec![];
+        under(
+            n,
+            &kids,
+            &mut std::collections::HashSet::from([n.clone()]),
+            &mut forks,
+        );
+        forks.retain(|f| !out.contains(f));
+        let extra: Vec<String> = forks.iter().filter(|f| !names.contains(f)).cloned().collect();
+        let take = if extra.is_empty() || a.with_forks {
+            true
+        } else if a.keep_forks {
+            false
+        } else if !json && std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
+            ask(
+                &format!(
+                    "{n} has {} fork{}. Remove {} too?",
+                    extra.len(),
+                    if extra.len() == 1 { "" } else { "s" },
+                    if extra.len() == 1 { "it" } else { "them" }
+                ),
+                &extra,
+                true,
+            )?
+        } else {
+            bail!(
+                "`{n}` has fork{}: {}. Pass --with-forks to remove {} too, or --keep-forks to keep {}",
+                if extra.len() == 1 { "" } else { "s" },
+                extra.join(", "),
+                if extra.len() == 1 { "it" } else { "them" },
+                if extra.len() == 1 { "it" } else { "them" },
+            );
+        };
+        // Named forks go before their parent either way.
+        for f in forks {
+            if (take || names.contains(&f)) && !out.contains(&f) {
+                out.push(f);
+            }
+        }
+        if !out.contains(n) {
+            out.push(n.clone());
+        }
+    }
+    Ok(out)
+}
+
+/// Clones in tree order, each with the connectors that draw it under its
+/// parent (`├─ `, `└─ `, and `│  ` for open branches above). Roots keep
+/// their order and get no prefix, so a repo without forks lists as before.
+fn fork_tree(clones: &[clove_core::CloneInfo]) -> Vec<(&clove_core::CloneInfo, String)> {
+    let known = |n: &str| clones.iter().any(|c| c.name == n);
+    // A fork's parent, when that parent is still listed.
+    let has_parent =
+        |c: &clove_core::CloneInfo| c.forked_from.as_deref().is_some_and(|p| known(p) && p != c.name);
+    let kids = |name: &str| -> Vec<&clove_core::CloneInfo> {
+        clones
+            .iter()
+            .filter(|c| c.forked_from.as_deref() == Some(name) && c.name != name)
+            .collect()
+    };
+    fn walk<'a>(
+        c: &'a clove_core::CloneInfo,
+        lead: &str,
+        last: Option<bool>,
+        kids: &dyn Fn(&str) -> Vec<&'a clove_core::CloneInfo>,
+        out: &mut Vec<(&'a clove_core::CloneInfo, String)>,
+        seen: &mut std::collections::HashSet<String>,
+    ) {
+        if !seen.insert(c.name.clone()) {
+            return;
+        }
+        let stem = match last {
+            None => String::new(),
+            Some(true) => format!("{lead}└─ "),
+            Some(false) => format!("{lead}├─ "),
+        };
+        out.push((c, stem));
+        let next = match last {
+            None => String::new(),
+            Some(true) => format!("{lead}   "),
+            Some(false) => format!("{lead}│  "),
+        };
+        let ks = kids(&c.name);
+        for (i, k) in ks.iter().enumerate() {
+            walk(k, &next, Some(i + 1 == ks.len()), kids, out, seen);
+        }
+    }
+    let mut out = Vec::with_capacity(clones.len());
+    let mut seen = std::collections::HashSet::new();
+    for c in clones.iter().filter(|c| !has_parent(c)) {
+        walk(c, "", None, &kids, &mut out, &mut seen);
+    }
+    // A cycle in forked_from (hand-edited metadata): list what's left flat.
+    for c in clones {
+        if !seen.contains(&c.name) {
+            seen.insert(c.name.clone());
+            out.push((c, String::new()));
+        }
+    }
+    out
 }
 
 /// Clones the service removed in the last day, so nobody wonders where they went.
@@ -3310,6 +3674,69 @@ fn home(cli: &Cli) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ci(name: &str, from: Option<&str>) -> clove_core::CloneInfo {
+        clove_core::CloneInfo {
+            name: name.into(),
+            path: std::path::PathBuf::from(format!("/w/app.clove/{name}/app")),
+            mounted: true,
+            branch: Some(name.replace('-', "/")),
+            head: None,
+            dirty: None,
+            ahead: None,
+            behind: None,
+            image_bytes: 0,
+            own_bytes: 0,
+            created_at: 0,
+            golden_generation: 1,
+            timings: vec![],
+            total_ms: 0.0,
+            failed_steps: vec![],
+            issue: None,
+            removing_when_free: false,
+            operation: None,
+            status_pending: false,
+            forked_from: from.map(String::from),
+            checkpoints: 0,
+        }
+    }
+
+    fn tree(clones: &[clove_core::CloneInfo]) -> Vec<String> {
+        fork_tree(clones)
+            .into_iter()
+            .map(|(c, stem)| format!("{stem}{}", c.name))
+            .collect()
+    }
+
+    #[test]
+    fn ls_without_forks_is_the_plain_list() {
+        let clones = [ci("b", None), ci("a", None), ci("c", None)];
+        assert_eq!(tree(&clones), ["b", "a", "c"]);
+    }
+
+    #[test]
+    fn ls_draws_forks_under_their_parent() {
+        let clones = [
+            ci("x", None),
+            ci("x-a", Some("x")),
+            ci("y", None),
+            ci("x-b", Some("x")),
+            ci("x-a-a", Some("x-a")),
+            // Its parent is gone (removed with --keep-forks): a root again.
+            ci("z-a", Some("z")),
+        ];
+        assert_eq!(
+            tree(&clones),
+            ["x", "├─ x-a", "│  └─ x-a-a", "└─ x-b", "y", "z-a"]
+        );
+    }
+
+    #[test]
+    fn rm_fork_flags_conflict() {
+        assert!(Cli::try_parse_from(["clove", "rm", "x", "--with-forks", "--keep-forks"]).is_err());
+        assert!(Cli::try_parse_from(["clove", "rm", "x", "--with-forks"]).is_ok());
+        assert!(Cli::try_parse_from(["clove", "ls", "--flat"]).is_ok());
+    }
 
     /// Agents learn clove from `clove guide`; a command missing there is one
     /// they won't use.

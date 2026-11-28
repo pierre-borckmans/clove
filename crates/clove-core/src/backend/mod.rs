@@ -21,7 +21,7 @@ compile_error!("clove supports macOS and Linux");
 #[cfg(target_os = "linux")]
 pub use sys_linux::{fs_type, is_mounted, users};
 #[cfg(target_os = "macos")]
-pub use sys_macos::{detach, fs_type, is_mounted, users};
+pub use sys_macos::{detach, flush, fs_type, is_mounted, users};
 
 use crate::repo::Clove;
 use anyhow::{Result, bail};
@@ -170,6 +170,22 @@ pub(crate) trait Store: Sync {
     fn clone_attached(&self, c: &Clove, name: &str, mount: &Path) -> bool;
     /// (bytes the clone references, bytes only it holds).
     fn clone_bytes(&self, c: &Clove, name: &str, mount: &Path) -> (u64, u64);
+
+    /// Checkpoint `id` of clone `name`: an O(1), frozen copy of its storage as
+    /// it is now, mounted or not. Writes still in the kernel are flushed first.
+    fn checkpoint_create(&self, c: &Clove, name: &str, mount: &Path, id: &str) -> Result<()>;
+    /// Makes checkpoint `id` the clone's storage again and mounts it. The old
+    /// storage is gone after. Refuses while the clone is busy, unless `force`.
+    fn checkpoint_restore(&self, c: &Clove, name: &str, mount: &Path, id: &str, force: bool) -> Result<()>;
+    /// Moves checkpoint storage from `from` to `to` (state dirs move separately).
+    fn checkpoint_rename(&self, c: &Clove, name: &str, from: &str, to: &str) -> Result<()>;
+    /// Deletes the checkpoint's storage outside its state dir (if any).
+    fn checkpoint_delete(&self, c: &Clove, name: &str, id: &str) -> Result<()>;
+    /// Bytes only this checkpoint holds: what dropping it frees.
+    fn checkpoint_bytes(&self, c: &Clove, name: &str, id: &str) -> u64;
+    /// O(1) copy of clone `from`, as it is now, as the storage of clone `to`
+    /// (not mounted yet). Like `clone_create`, from a clone instead of a golden.
+    fn clone_fork(&self, c: &Clove, from: &str, from_mount: &Path, to: &str, to_mount: &Path) -> Result<()>;
 
     /// Spare: a copy of generation `g` made and mounted ahead of time, so
     /// `new` only moves it into place. Ok(false) when the backend has none.

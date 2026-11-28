@@ -1034,6 +1034,8 @@ mod tests {
                     removing_when_free: false,
                     operation: None,
                     status_pending: false,
+                    forked_from: None,
+                    checkpoints: 0,
                 })
             })
             .unwrap();
@@ -1074,6 +1076,8 @@ mod tests {
             removing_when_free: false,
             operation: None,
             status_pending: false,
+            forked_from: None,
+            checkpoints: 0,
         }
     }
 

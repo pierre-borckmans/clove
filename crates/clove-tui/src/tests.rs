@@ -57,6 +57,8 @@ fn clone(name: &str, branch: Option<&str>, mounted: bool) -> CloneInfo {
         removing_when_free: false,
         operation: None,
         status_pending: false,
+        forked_from: None,
+        checkpoints: 0,
     }
 }
 
@@ -2785,4 +2787,363 @@ fn removing_marked_ones_you_are_in_leaves_first() {
         }
         e => panic!("{e:?}"),
     }
+}
+
+// ---- forks and checkpoints -----------------------------------------------
+
+fn fork(name: &str, from: &str, branch: &str, at: u64) -> CloneInfo {
+    let mut c = clone(name, Some(branch), true);
+    c.forked_from = Some(from.into());
+    c.created_at = NOW - 3600 + at;
+    c
+}
+
+/// feat-login with three forks (one a fork of a fork), spike-cache with four
+/// (folded: more than three), and the rest as in `clones()`.
+fn forked_clones() -> Vec<CloneInfo> {
+    let mut v = clones();
+    let mut a = fork("feat-login-a", "feat-login", "feat/login-a", 1);
+    a.checkpoints = 2;
+    v.push(a);
+    v.push(fork("feat-login-b", "feat-login", "feat/login-b", 2));
+    v.push(fork("feat-login-a-a", "feat-login-a", "feat/login-a-a", 3));
+    for (i, s) in ["a", "b", "c", "d"].iter().enumerate() {
+        v.push(fork(
+            &format!("spike-cache-{s}"),
+            "spike-cache",
+            &format!("spike/cache-{s}"),
+            10 + i as u64,
+        ));
+    }
+    v
+}
+
+fn listed(app: &App) -> Vec<String> {
+    app.visible().iter().map(|c| c.name.clone()).collect()
+}
+
+fn checkpoint(id: &str, ago: u64, auto: bool) -> clove_core::CheckpointInfo {
+    clove_core::CheckpointInfo {
+        meta: clove_core::CheckpointMeta {
+            id: id.into(),
+            clone: "feat-login-a".into(),
+            created_at: NOW - ago,
+            created_ms: 0,
+            head: None,
+            branch: None,
+            auto,
+            took_ms: 40.0,
+        },
+        own_bytes: 3 * 1024 * 1024,
+    }
+}
+
+#[test]
+fn forks_list_as_a_tree_under_their_parent() {
+    let mut app = app_with(true, forked_clones());
+    assert_eq!(
+        listed(&app),
+        [
+            "feat-login",
+            "feat-login-a",
+            "feat-login-a-a",
+            "feat-login-b",
+            "fix-race",
+            "spike-cache",
+            "pierre-onboarding-flow",
+            "detached"
+        ],
+        "forks under their parent; spike-cache's four are folded"
+    );
+    // The fork of a fork, with checkpoints: the detail says where it came from.
+    key(&mut app, KeyCode::Down);
+    let (s, _) = render(&mut app, 160, 26);
+    insta::assert_snapshot!(s);
+    assert!(s.contains("├─ feat-login-a"), "{s}");
+    assert!(s.contains("│  └─ feat-login-a-a"), "{s}");
+    assert!(s.contains("└─ feat-login-b"), "{s}");
+    assert!(s.contains("spike-cache +4 forks"), "{s}");
+    assert!(s.contains("forked  from feat-login"), "{s}");
+    assert!(s.contains("forks   1 fork"), "{s}");
+    assert!(s.contains("saved   2 checkpoints"), "{s}");
+    assert!(
+        s.contains("b rewind"),
+        "the rewind hint shows with checkpoints: {s}"
+    );
+    // A parent with no checkpoints: no rewind hint, no "0 checkpoints".
+    key(&mut app, KeyCode::Up);
+    let (s, _) = render(&mut app, 160, 26);
+    assert!(!s.contains("b rewind") && !s.contains("checkpoint"), "{s}");
+    assert!(!s.contains("forked  from"), "{s}");
+    assert!(s.contains("forks   3 forks"), "{s}");
+}
+
+#[test]
+fn a_repo_without_forks_or_checkpoints_renders_as_before() {
+    let mut app = app();
+    assert!(!app.has_forks());
+    assert!(app.tree().iter().all(|r| r.depth == 0 && r.forks == 0));
+    let (plain, _) = render(&mut app, 160, 26);
+    // A gone parent leaves a plain clone: still no tree.
+    let mut v = clones();
+    v[2].forked_from = Some("removed-long-ago".into());
+    let mut orphan = app_with(true, v);
+    let (s, _) = render(&mut orphan, 160, 26);
+    assert_eq!(s, plain);
+    // Checkpoints on a clone that isn't selected change nothing on screen.
+    let mut v = clones();
+    v[3].checkpoints = 2;
+    let mut saved = app_with(true, v);
+    let (s, _) = render(&mut saved, 160, 26);
+    assert_eq!(s, plain);
+    // Left, right and * do nothing without forks.
+    key(&mut app, KeyCode::Down);
+    for k in [KeyCode::Left, KeyCode::Right, KeyCode::Char('*')] {
+        key(&mut app, k);
+        assert_eq!(app.selected, 1);
+    }
+}
+
+#[test]
+fn left_right_and_star_fold_and_unfold_forks() {
+    let mut app = app_with(true, forked_clones());
+    let at = |app: &App| app.selected_clone().unwrap().name.clone();
+    // → on folded spike-cache unfolds it; ← folds it again.
+    while at(&app) != "spike-cache" {
+        key(&mut app, KeyCode::Down);
+    }
+    key(&mut app, KeyCode::Right);
+    assert!(listed(&app).contains(&"spike-cache-d".to_string()));
+    assert_eq!(at(&app), "spike-cache", "unfolding stays put");
+    // → again steps into its first fork; ← from a fork goes to its parent.
+    key(&mut app, KeyCode::Right);
+    assert_eq!(at(&app), "spike-cache-a");
+    key(&mut app, KeyCode::Left);
+    assert_eq!(at(&app), "spike-cache");
+    key(&mut app, KeyCode::Left);
+    assert!(!listed(&app).contains(&"spike-cache-a".to_string()));
+    let (s, _) = render(&mut app, 120, 24);
+    assert!(s.contains("spike-cache +4 forks"), "{s}");
+    // ← on an open parent folds it, though small.
+    key(&mut app, KeyCode::Home);
+    key(&mut app, KeyCode::Left);
+    assert_eq!(listed(&app).len(), 5);
+    let (s, _) = render(&mut app, 120, 24);
+    assert!(s.contains("feat-login +3 forks"), "{s}");
+    // * opens everything; again folds everything, keeping the selection.
+    key(&mut app, KeyCode::Char('*'));
+    assert_eq!(listed(&app).len(), 12);
+    let (s, _) = render(&mut app, 120, 24);
+    insta::assert_snapshot!(s);
+    while at(&app) != "feat-login-a-a" {
+        key(&mut app, KeyCode::Down);
+    }
+    key(&mut app, KeyCode::Char('*'));
+    assert_eq!(listed(&app).len(), 5);
+    assert_eq!(
+        at(&app),
+        "feat-login",
+        "a folded-away row hands the selection to its root"
+    );
+}
+
+#[test]
+fn c_checkpoints_a_clone_and_still_adopts_a_worktree() {
+    let mut app = app_with_worktrees();
+    let fx = key(&mut app, KeyCode::Char('c'));
+    let Some(Effect::Spawn { id, .. }) = fx.first().cloned() else {
+        panic!("{fx:?}")
+    };
+    assert!(matches!(&app.job(id).unwrap().task, Task::Checkpoint { name } if name == "feat-login"));
+    assert_eq!(app.busy("feat-login").unwrap().verb(), "checkpointing");
+    let mut cp = checkpoint("cp-1", 0, false);
+    cp.meta.clone = "feat-login".into();
+    app.on_msg(Msg::Done(id, Ok(Outcome::Checkpointed(cp))));
+    assert!(
+        app.toasts
+            .iter()
+            .any(|t| t.text == "checkpoint cp-1 of feat-login in 40ms"),
+        "{:?}",
+        app.toasts
+    );
+    // On a plain worktree, c is still "make it a clone".
+    key(&mut app, KeyCode::End);
+    key(&mut app, KeyCode::Char('c'));
+    assert!(matches!(app.modal, Some(Modal::Adopt(_))));
+}
+
+#[test]
+fn b_picks_a_checkpoint_and_offers_force_when_in_use() {
+    let mut app = app_with(true, forked_clones());
+    // No checkpoints: says how to make one.
+    key(&mut app, KeyCode::Char('b'));
+    assert!(app.modal.is_none());
+    assert!(app.toasts.iter().any(|t| t.text.contains("c makes one")));
+    key(&mut app, KeyCode::Down);
+    let fx = key(&mut app, KeyCode::Char('b'));
+    assert_eq!(
+        fx,
+        vec![Effect::LoadCheckpoints {
+            root: "/work/app".into(),
+            name: "feat-login-a".into()
+        }]
+    );
+    app.on_msg(Msg::Checkpoints {
+        root: "/work/app".into(),
+        name: "feat-login-a".into(),
+        result: Ok(vec![
+            checkpoint("before-rewind", 120, true),
+            checkpoint("cp-2", 600, false),
+            checkpoint("cp-1", 7200, false),
+        ]),
+    });
+    key(&mut app, KeyCode::Down);
+    app.toasts.clear();
+    let (s, _) = render(&mut app, 120, 28);
+    insta::assert_snapshot!("rewind_picker", s);
+    let fx = key(&mut app, KeyCode::Enter);
+    let Some(Effect::Spawn { id, .. }) = fx.first().cloned() else {
+        panic!("{fx:?}")
+    };
+    assert!(matches!(
+        &app.job(id).unwrap().task,
+        Task::Rewind { name, id, force: false } if name == "feat-login-a" && id == "cp-2"
+    ));
+    assert!(app.modal.is_none());
+    // Refused: in use. The dialog names who and offers force.
+    app.on_msg(Msg::Done(
+        id,
+        Err("the volume is busy: zsh (pid 4120), node (pid 4188); close it or pass --force".into()),
+    ));
+    let Some(Modal::Rewind(v)) = &app.modal else {
+        panic!("no in-use dialog: {:?}", app.toasts)
+    };
+    assert_eq!(
+        v.busy,
+        Some((
+            "cp-2".to_string(),
+            vec!["zsh (pid 4120)".to_string(), "node (pid 4188)".to_string()]
+        ))
+    );
+    assert!(app.toasts.iter().all(|t| t.kind != ToastKind::Err));
+    let (s, _) = render(&mut app, 120, 28);
+    insta::assert_snapshot!("rewind_in_use", s);
+    let fx = key(&mut app, KeyCode::Enter);
+    let Some(Effect::Spawn { id, .. }) = fx.first().cloned() else {
+        panic!("{fx:?}")
+    };
+    assert!(matches!(
+        &app.job(id).unwrap().task,
+        Task::Rewind { id, force: true, .. } if id == "cp-2"
+    ));
+}
+
+#[test]
+fn f_forks_with_a_prefilled_free_name() {
+    let mut app = app_with(true, forked_clones());
+    let fx = key(&mut app, KeyCode::Char('f'));
+    assert_eq!(fx, vec![Effect::LoadRefs]);
+    let Some(Modal::Fork(f)) = &app.modal else {
+        panic!("no fork form")
+    };
+    assert_eq!(f.name.text, "feat-login-c", "-a and -b are taken");
+    // Its branch exists already: the prefill moves on, as `clove fork` would.
+    let mut r = refs();
+    r.push(GitRef {
+        name: "feat/login-c".into(),
+        kind: RefKind::Local,
+    });
+    app.on_msg(Msg::Refs {
+        root: "/work/app".into(),
+        refs: r,
+        candidates: candidates(),
+    });
+    let Some(Modal::Fork(f)) = &app.modal else {
+        panic!()
+    };
+    assert_eq!(f.name.text, "feat-login-d");
+    let (s, _) = render(&mut app, 120, 28);
+    insta::assert_snapshot!("fork_form", s);
+    // A taken name is refused in place.
+    key(&mut app, KeyCode::Backspace);
+    typed(&mut app, "b");
+    key(&mut app, KeyCode::Enter);
+    assert!(matches!(app.modal, Some(Modal::Fork(_))));
+    assert!(app.toasts.iter().any(|t| t.text.contains("already exists")));
+    key(&mut app, KeyCode::Backspace);
+    typed(&mut app, "spike");
+    let fx = key(&mut app, KeyCode::Enter);
+    let Some(Effect::Spawn { id, .. }) = fx.first().cloned() else {
+        panic!("{fx:?}")
+    };
+    assert!(matches!(
+        &app.job(id).unwrap().task,
+        Task::Fork { from, name } if from == "feat-login" && name == "feat-login-spike"
+    ));
+    assert_eq!(app.busy("feat-login").unwrap().verb(), "forking");
+    // Done: the new fork is selected once it lists, its lineage unfolded.
+    let mut v = forked_clones();
+    let new = fork("feat-login-spike", "feat-login", "feat/login-spike", 30);
+    app.on_msg(Msg::Done(id, Ok(Outcome::Forked(new.clone()))));
+    v.push(new);
+    let n = v.len();
+    app.apply_data(data("/work/app", status(true, n), v));
+    assert_eq!(app.selected_clone().unwrap().name, "feat-login-spike");
+}
+
+#[test]
+fn removing_a_parent_offers_its_forks_deepest_first() {
+    let mut app = app_with(true, forked_clones());
+    key(&mut app, KeyCode::Char('d'));
+    let Some(Modal::Remove(f)) = &app.modal else {
+        panic!("no remove dialog")
+    };
+    assert_eq!(f.forks, ["feat-login-a-a", "feat-login-a", "feat-login-b"]);
+    assert!(f.remove_forks, "on by default");
+    let (s, _) = render(&mut app, 120, 30);
+    insta::assert_snapshot!("remove_with_forks", s);
+    let fx = key(&mut app, KeyCode::Enter);
+    let Some(Effect::Spawn { id, .. }) = fx.first().cloned() else {
+        panic!("{fx:?}")
+    };
+    match &app.job(id).unwrap().task {
+        Task::RemoveTree { name, forks, opts } => {
+            assert_eq!(name, "feat-login");
+            assert_eq!(forks, &["feat-login-a-a", "feat-login-a", "feat-login-b"]);
+            assert!(opts.delete_branch);
+        }
+        t => panic!("{t:?}"),
+    }
+    // Every row of the lineage shows it is going.
+    assert!(app.busy("feat-login-a-a").is_some() && app.busy("feat-login").is_some());
+    app.on_msg(Msg::Done(id, Ok(Outcome::Removed)));
+    assert!(
+        app.toasts
+            .iter()
+            .any(|t| t.text == "removed feat-login and its 3 forks"),
+        "{:?}",
+        app.toasts
+    );
+
+    // Unticked: the parent goes alone and its forks stay.
+    let mut app = app_with(true, forked_clones());
+    key(&mut app, KeyCode::Char('d'));
+    for _ in 0..3 {
+        key(&mut app, KeyCode::Up);
+    }
+    let Some(Modal::Remove(f)) = &app.modal else {
+        panic!()
+    };
+    assert_eq!(f.focused(), RemoveItem::Forks);
+    key(&mut app, KeyCode::Char(' '));
+    let (s, _) = render(&mut app, 120, 30);
+    assert!(
+        s.contains("[ ] also remove 3 forks") && s.contains("stay, as clones of their own"),
+        "{s}"
+    );
+    let fx = key(&mut app, KeyCode::Char('y'));
+    let Some(Effect::Spawn { id, .. }) = fx.first().cloned() else {
+        panic!("{fx:?}")
+    };
+    assert!(matches!(&app.job(id).unwrap().task, Task::Remove { name, .. } if name == "feat-login"));
 }

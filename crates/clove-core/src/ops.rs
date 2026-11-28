@@ -841,6 +841,7 @@ impl Clove {
             total_ms: started.elapsed().as_secs_f64() * 1000.0,
             failed_steps: failed,
             setup_commit,
+            forked_from: None,
         };
         write_json(&dir.join("meta.json"), &meta).map_err(cleanup)?;
         let info = self.info(&name, false).map_err(cleanup)?;
@@ -863,7 +864,7 @@ impl Clove {
     /// Called under the repo lock. The named slot becomes visible only with
     /// its request marker already in place. Keep the marker with the clone so
     /// late cancellation still works after metadata and stdout are written.
-    fn reserve_clone(&self, name: &str, request_id: Option<&str>) -> Result<()> {
+    pub(crate) fn reserve_clone(&self, name: &str, request_id: Option<&str>) -> Result<()> {
         let dir = self.clone_dir(name);
         std::fs::create_dir_all(self.state.join("clones"))?;
         let Some(id) = request_id else {
@@ -1154,6 +1155,7 @@ impl Clove {
         };
         timed(r, &mut timings, "delete image", || {
             drop_admin_registration(&self.clone_admin(name), &meta.path)?;
+            self.forget_checkpoints(name);
             store.clone_delete(self, name, &meta.mount)?;
             std::fs::remove_dir_all(self.clone_dir(name))?;
             let _ = std::fs::remove_dir(&meta.mount);
@@ -1418,6 +1420,8 @@ impl Clove {
             removing_when_free: self.clone_dir(name).join(PENDING_FILE).exists(),
             operation: crate::update::operation(&self.clone_admin(name)),
             status_pending,
+            forked_from: meta.forked_from,
+            checkpoints: self.checkpoint_count(name),
         })
     }
 
@@ -1759,6 +1763,7 @@ impl Clove {
                 if apply {
                     let _ = store.clone_detach(self, n, &meta.mount, true);
                     let _ = std::fs::remove_dir_all(self.clone_admin(n));
+                    self.forget_checkpoints(n);
                     let _ = store.clone_delete(self, n, &meta.mount);
                     let _ = std::fs::remove_dir_all(self.clone_dir(n));
                     let _ = std::fs::remove_dir(&meta.mount);
@@ -1895,7 +1900,7 @@ fn admin_registration_matches(dir: &Path, wt: &Path) -> bool {
             .is_ok_and(|gitdir| Path::new(gitdir.trim()) == wt.join(".git"))
 }
 
-fn drop_admin_registration(dir: &Path, wt: &Path) -> Result<()> {
+pub(crate) fn drop_admin_registration(dir: &Path, wt: &Path) -> Result<()> {
     if admin_registration_matches(dir, wt) {
         remove_reservation_dir(dir)?;
     }
@@ -1923,7 +1928,7 @@ pub(crate) fn kept_branch(branch: &str, base: &str, e: &anyhow::Error) -> String
     }
 }
 
-fn lock_reason(name: &str) -> String {
+pub(crate) fn lock_reason(name: &str) -> String {
     format!("clove clone: remove it with `clove rm {name}` (git can't unmount or delete its disk image)")
 }
 
@@ -1937,7 +1942,7 @@ fn stop_fsmonitor(wt: &Path) {
 
 /// Stops what would hold a clone's volume with nobody to close it: git's
 /// fsmonitor and daemons started from the clone (see `stop_orphan_daemons`).
-fn stop_daemons(wt: &Path, mount: &Path) {
+pub(crate) fn stop_daemons(wt: &Path, mount: &Path) {
     stop_fsmonitor(wt);
     backend::stop_orphan_daemons(mount, std::time::Duration::from_secs(5));
 }

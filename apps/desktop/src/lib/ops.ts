@@ -9,7 +9,7 @@ import { api } from "./api";
 import { listen } from "./bridge";
 import { ms } from "./format";
 import { getPrefs } from "./prefs";
-import type { CloneInfo, OpEvent, OpFinished, OpRequest, OpStarted, UpdateResult } from "./types";
+import type { CloneInfo, OpEvent, OpFinished, OpRequest, OpStarted, Rewound, UpdateResult } from "./types";
 
 export type StepState = {
   name: string;
@@ -80,6 +80,10 @@ export function describe(req: OpRequest): { title: string; subject: string } {
       return { title: "Make a clone", subject: repoName(req.path) };
     case "deinit":
       return { title: "Delete golden image", subject: repo };
+    case "fork":
+      return { title: "Fork clone", subject: req.from };
+    case "rewind":
+      return { title: req.force ? "Rewind (forced)" : "Rewind clone", subject: `${req.name} to ${req.id ?? "latest"}` };
     case "update":
       return {
         title: req.step === "continue" ? "Finish update" : req.step === "abort" ? "Abort update" : "Update clone",
@@ -222,6 +226,17 @@ export function wireOps(qc: QueryClient, hooks: Hooks) {
           .filter(Boolean)
           .join(" · "),
       });
+    } else if (op.status === "error" && op.req.kind === "rewind" && !op.req.force && busyUsers(op.error)) {
+      // Rewinding unmounts the clone: say who holds it, and offer to go anyway.
+      // That toast is the whole story, so the failed op card goes.
+      const req = op.req;
+      forgetOp(op.id);
+      toast.warning(`${req.name} is in use`, {
+        id: `${op.id}:note`,
+        duration: 20_000,
+        description: `By ${busyUsers(op.error)}. Rewinding anyway unmounts it under them: a shell inside then needs \`cd $PWD\`, and editors may lose unsaved buffers.`,
+        action: { label: "Rewind anyway", onClick: () => void startOp({ ...req, force: true }) },
+      });
     } else if (op.status === "ok" && later) {
       toast.info(`${op.subject} is in use`, {
         id: `${op.id}:note`,
@@ -242,6 +257,12 @@ export function wireOps(qc: QueryClient, hooks: Hooks) {
       toast.error(`${op.title} failed`, { id: op.id, description: op.error, duration: 10_000 });
     }
   });
+}
+
+/** The processes in clove's "the volume is busy: zsh (pid 1), …; close it or pass --force". */
+export function busyUsers(error: string | undefined): string | null {
+  const m = error?.match(/volume is busy: (.*?)(?:; close it or pass --force)?$/);
+  return m ? m[1] : null;
 }
 
 /** "Claude" for `claude --model opus` (clove_core::update::resolver_name). */
@@ -276,6 +297,14 @@ export function doneTitle(op: Op): string {
     }
     case "deinit":
       return `Deleted the golden image of ${op.subject}`;
+    case "fork": {
+      const c = op.result as CloneInfo | null;
+      return `Forked ${op.req.from} into ${c?.name ?? "a new clone"}`;
+    }
+    case "rewind": {
+      const w = op.result as Rewound | null;
+      return `${op.req.name} is back at ${w?.to ?? op.req.id ?? "its checkpoint"}`;
+    }
     case "update": {
       const u = op.result as UpdateResult | null;
       if (!u) return `${op.subject} is back where it was`;

@@ -97,9 +97,16 @@ quiet in them for an hour. If a clone you used is gone:
 Commands on a removed clone also say who removed it and how to get the
 branch back.
 
+## Checkpoints and forks (experimental)
+
+    clove checkpoint <clone> [name]   # freeze files (ignored too), index, HEAD in ~0.1s
+    clove checkpoints <clone>         # list them, with the disk each one holds
+    clove rewind <clone> [name]       # put one back (~1.5s); undo: `clove rewind <clone> before-rewind`
+    clove fork <clone> a b c          # new clones of its current state, uncommitted work included
+
 ## Other commands
 
-    clove status                   # golden image age, clones, disk use
+    clove status                  # golden image age, clones, disk use
     clove refresh                  # rebuild the golden image now (the service does it on its own)
     clove adopt <path>             # turn a clean plain git worktree into a clone
     clove mount / clove unmount    # after a reboot the service remounts clones at login
@@ -867,7 +874,21 @@ pub struct InstallReport {
     pub opencode_skipped: bool,
 }
 
+/// `CLOVE_NO_AGENT_HOOKS=1`: leave every agent's files alone (dev and demo runs).
+pub fn hooks_disabled() -> bool {
+    crate::util::env_flag("CLOVE_NO_AGENT_HOOKS")
+}
+
 pub fn install_with_report() -> Result<InstallReport> {
+    if hooks_disabled() {
+        eprintln!("clove: CLOVE_NO_AGENT_HOOKS is set, skipping agent install");
+        return Ok(InstallReport {
+            changed: vec![],
+            skipped: vec![],
+            has_targets: false,
+            opencode_skipped: false,
+        });
+    }
     install_report_with(&Env::from_env(OpencodeProbeMode::Refresh)?)
 }
 
@@ -882,6 +903,10 @@ fn install_report_with(env: &Env) -> Result<InstallReport> {
 }
 
 pub fn remove() -> Result<Vec<Target>> {
+    if hooks_disabled() {
+        eprintln!("clove: CLOVE_NO_AGENT_HOOKS is set, skipping agent removal");
+        return Ok(vec![]);
+    }
     Ok(apply_with(&Env::from_env(OpencodeProbeMode::Skip)?, false)?.changed)
 }
 

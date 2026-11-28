@@ -324,6 +324,7 @@ mod tests {
                 total_ms: 0.0,
                 failed_steps: vec![],
                 setup_commit: None,
+                forked_from: None,
             },
         )
         .unwrap();

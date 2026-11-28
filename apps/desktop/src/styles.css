@@ -267,6 +267,11 @@ html[data-shell="native"].dark {
   --diffs-bg-buffer-override: color-mix(in oklab, var(--foreground) 3%, var(--card));
 }
 
+/* Map text sits still: no subpixel shimmer while things around it move. */
+.map-scene text {
+  text-rendering: geometricPrecision;
+}
+
 /* The repository map uses the same surfaces and palette as the native shell. */
 .map-viewport {
   background-image: radial-gradient(
@@ -276,169 +281,13 @@ html[data-shell="native"].dark {
   );
   background-size: 18px 18px;
 }
-.map-edge,
-.map-leader {
-  opacity: var(--appear, 1);
-}
-.map-edge {
-  stroke: color-mix(in oklab, var(--bottle) 28%, var(--border));
-  stroke-width: 1.4;
-  transition:
-    stroke 180ms,
-    stroke-width 180ms,
-    opacity 200ms;
-}
-.map-edge-active {
-  stroke: var(--bottle);
-  stroke-width: 2;
-}
-.map-image-symbol {
-  color: var(--bottle);
-  background: var(--card);
-  border: 1.5px solid var(--bottle);
-  box-shadow:
-    0 0 0 6px var(--background),
-    0 0 0 7px var(--bottle-soft);
-}
-.map-image-old .map-image-symbol {
-  color: var(--muted-foreground);
-  border-color: var(--border);
-  border-style: dashed;
-  box-shadow: 0 0 0 5px var(--background);
-}
-/* --appear (0 to 1) is set while a clone animates in or out of the map. */
-.map-clone {
-  opacity: var(--appear, 1);
-  transition: opacity 200ms;
-}
-.map-clone-symbol {
-  color: var(--bottle);
-  background: transparent;
-  transition:
-    background-color 150ms,
-    color 150ms,
-    box-shadow 150ms;
-}
-.map-clone-unmounted .map-clone-symbol {
-  border-style: dashed;
-  border-color: var(--faint-foreground);
-  color: var(--faint-foreground);
-}
-.map-clone-warning .map-clone-symbol {
-  border-color: var(--amber);
-  color: var(--amber);
-}
-.map-clone:hover .map-clone-symbol,
-.map-clone.map-node-selected .map-clone-symbol {
-  background: var(--bottle-soft);
-  color: var(--bottle);
-  box-shadow: 0 0 0 4px var(--bottle-soft);
-}
-.map-clone-name,
-.map-clone-state {
-  background: var(--background);
-}
-.map-clone-state {
-  padding-inline: 3px;
-}
-/* A label rises above its clove's open menu and drops back (see .map-menu-open). */
-.map-clone .map-leaf-label {
-  transition: transform 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.map-clone .map-clone-name {
-  transition:
-    background-color 300ms,
-    color 300ms,
-    box-shadow 300ms;
-}
-/* Back from a menu, the state line waits for its label to land, then fades in. */
-.map-clone .map-clone-state {
-  transition: opacity 180ms ease-out 140ms;
-}
-.map-clone.map-node-selected .map-clone-name {
-  background: var(--bottle-soft);
-  color: var(--bottle);
-}
-.map-image:focus-visible,
-.map-clone:focus-visible {
-  outline: none;
-}
-.map-image:focus-visible .map-image-symbol,
-.map-clone:focus-visible .map-clone-symbol {
-  outline: 3px solid var(--ring);
-  outline-offset: 5px;
-}
-.map-node-selected.map-image .map-image-symbol {
-  background: var(--bottle-soft);
-}
 
 /* Radial image families: the current image is the core; earlier images are
    numbered seeds on the inner orbit, with their own independent branches. */
-.map-orbit {
-  fill: none;
-  stroke: color-mix(in oklab, var(--bottle) 10%, transparent);
-  stroke-width: 1;
-  stroke-dasharray: 2 7;
-}
-.map-orbit {
-  stroke: color-mix(in oklab, var(--bottle) 18%, transparent);
-  stroke-dasharray: none;
-}
-.map-orbit-old {
-  stroke: color-mix(in oklab, var(--foreground) 15%, transparent);
-  stroke-dasharray: 2 5;
-}
+
 .map-edge-old {
   stroke: color-mix(in oklab, var(--foreground) 24%, transparent);
   stroke-dasharray: 3 4;
-}
-.map-orbit.map-orbit-focus {
-  stroke: color-mix(in oklab, var(--bottle) 45%, transparent);
-  stroke-dasharray: none;
-}
-.map-dim {
-  opacity: calc(0.28 * var(--appear, 1));
-}
-.map-edge-old.map-edge-active {
-  stroke: var(--muted-foreground);
-}
-.map-clone-old:not(.map-clone-warning):not(.map-clone-unmounted) .map-clone-symbol {
-  color: color-mix(in oklab, var(--bottle) 55%, var(--muted-foreground));
-}
-.map-ring-label {
-  padding: 1px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--background);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--muted-foreground);
-  white-space: nowrap;
-  transition:
-    border-color 150ms,
-    color 150ms;
-}
-.map-ring-label:hover,
-.map-ring-label.map-node-selected {
-  border-color: color-mix(in oklab, var(--bottle) 40%, var(--border));
-  color: var(--foreground);
-}
-.map-image-current {
-  background: var(--card);
-  border: 1px solid color-mix(in oklab, var(--bottle) 38%, var(--border));
-  box-shadow:
-    0 0 0 9px var(--background),
-    0 0 0 10px var(--bottle-soft),
-    0 10px 35px color-mix(in oklab, var(--bottle) 10%, transparent);
-}
-.map-image.map-image-current .map-image-symbol,
-.map-image-current.map-node-selected .map-image-symbol {
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-.map-image-current.map-node-selected {
-  background: radial-gradient(circle at 50% 25%, var(--bottle-soft), var(--card) 80%);
 }
 
 /* The map fades in when it opens (its camera is already fitted by then). */
@@ -455,69 +304,63 @@ html[data-shell="native"].dark {
   touch-action: none;
   overscroll-behavior: none;
 }
-.map-viewport button {
-  cursor: pointer;
-}
-.map-viewport[data-hand] button {
-  cursor: grab;
-}
-.map-viewport[data-panning],
-.map-viewport[data-panning] button {
-  cursor: grabbing;
-}
-.map-clone-unmounted .clove-petal-body {
-  fill-opacity: 0.04;
-  stroke-dasharray: 4 3;
-}
-.map-node-selected .clove-petal-body {
-  fill-opacity: 0.45;
-}
 
-/* Clones as cloves. Skin states: papery when unmounted, peeled
-   (cream) when mounted, an amber cut when modified, bruised when something
-   failed, faded with a check once merged. */
+/* Clones as cloves. Each skin state sets the clove's colours: peeled
+   (cream) when mounted, amber when modified, rose (bruised) when something
+   failed, muted sage once merged, dashed and faint when unmounted.
+   An older image only desaturates them (see .map-age), so colour means state. */
+.map-piece {
+  --clove-fill: var(--skin-fill);
+  --clove-stroke: var(--skin);
+}
+.map-piece.map-skin-peeled {
+  --clove-fill: var(--cream);
+  --clove-stroke: var(--peel);
+}
+/* Modified: a saturated amber, far from the pale cream of a clean clove. */
+.map-piece.map-skin-peeled.map-skin-modified {
+  --clove-fill: oklch(0.8 0.15 70);
+  --clove-stroke: oklch(0.56 0.14 62);
+}
+.dark .map-piece.map-skin-peeled.map-skin-modified {
+  --clove-fill: oklch(0.72 0.15 68);
+  --clove-stroke: oklch(0.87 0.13 75);
+}
+.map-piece.map-skin-unmounted {
+  --clove-fill: color-mix(in oklab, var(--skin-fill) 70%, transparent);
+}
+/* Merged: a green fill. Brand green only ever strokes (selection, lit
+   stems), so a filled green clove reads as merged, not selected. */
+.map-piece.map-skin-merged {
+  --clove-fill: oklch(0.8 0.13 150);
+  --clove-stroke: oklch(0.55 0.12 145);
+}
+.dark .map-piece.map-skin-merged {
+  --clove-fill: oklch(0.7 0.13 150);
+  --clove-stroke: oklch(0.86 0.1 140);
+}
+.map-piece.map-skin-bruised {
+  --clove-fill: oklch(0.8 0.1 18);
+  --clove-stroke: var(--rose);
+}
+.dark .map-piece.map-skin-bruised {
+  --clove-fill: oklch(0.66 0.12 18);
+}
 .map-piece .clove-skin {
-  fill: var(--skin-fill);
-  stroke: var(--skin);
+  fill: var(--clove-fill);
+  stroke: var(--clove-stroke);
   stroke-width: 4;
   transition:
     stroke 150ms,
     fill 150ms;
 }
 .map-piece .clove-vein {
-  stroke: var(--skin);
+  stroke: var(--clove-stroke);
   stroke-width: 2;
   opacity: 0.6;
 }
-.map-skin-peeled .clove-skin {
-  fill: var(--cream);
-  stroke: var(--peel);
-}
-.map-skin-peeled .clove-vein {
-  stroke: var(--peel);
-}
 .map-skin-unmounted .clove-skin {
-  fill: color-mix(in oklab, var(--skin-fill) 70%, transparent);
   stroke-dasharray: 7 5;
-}
-.map-skin-bruised .clove-skin {
-  fill: color-mix(in oklab, var(--rose) 28%, var(--cream));
-  stroke: var(--rose);
-}
-.map-skin-bruised .clove-vein {
-  stroke: var(--rose);
-}
-.map-piece .clove-cut {
-  stroke: var(--amber);
-  stroke-width: 7;
-}
-.map-skin-merged .map-piece-svg {
-  opacity: 0.45;
-}
-.map-merged-badge {
-  background: var(--bottle);
-  color: var(--background);
-  box-shadow: 0 0 0 1.5px var(--background);
 }
 .map-piece:hover .clove-skin {
   stroke: color-mix(in oklab, var(--bottle) 60%, var(--peel));
@@ -528,22 +371,6 @@ html[data-shell="native"].dark {
 }
 .map-piece.map-node-selected .map-piece-svg {
   filter: drop-shadow(0 0 5px color-mix(in oklab, var(--bottle) 45%, transparent));
-}
-.map-piece:focus-visible {
-  outline: none;
-}
-.map-piece:focus-visible .clove-skin {
-  stroke: var(--ring);
-  stroke-width: 7;
-}
-
-.map-leader {
-  stroke: color-mix(in oklab, var(--foreground) 22%, transparent);
-  stroke-width: 1;
-  transition: stroke 150ms;
-}
-.map-leader-active {
-  stroke: var(--bottle);
 }
 /* The shelf of plain worktrees, pinned under the map. */
 .map-shelf {
@@ -665,27 +492,6 @@ html[data-shell="native"].dark {
     scale: 0.4;
   }
 }
-/* A clove flying off leaves its label behind, hidden. */
-.map-clone.map-leaving .map-leaf-label {
-  /* Hidden, not just transparent: it must not catch the pointer either. */
-  visibility: hidden;
-}
-/* While its menu is open, a clone's own label rises above the ring (an inline
-   transform) and wears the title's pill; its state line steps aside. */
-.map-clone.map-menu-open {
-  z-index: 5;
-}
-.map-clone.map-menu-open .map-clone-name {
-  background: var(--popover);
-  color: var(--bottle);
-  box-shadow:
-    0 0 0 1px var(--border),
-    0 4px 14px oklch(0 0 0 / 0.14);
-}
-.map-clone.map-menu-open .map-clone-state {
-  opacity: 0;
-  transition: opacity 120ms;
-}
 
 /* Screen changes (router view transitions): only the main pane is captured,
    so the sidebar and title bar stay still. The diff slides over its repo and
@@ -798,74 +604,502 @@ html:active-view-transition-type(fade)::view-transition-new(page) {
   }
 }
 
-/* Pulling a clove off a clone (to remove it) or out of the golden image (for
-   a new one). --strain runs 0 to 1 as the pull nears tearing. */
-.map-clone.map-pulling {
-  z-index: 6;
+/* The map is one SVG scene (map/svg-map.tsx). Its frame loop writes every
+   position and size, and --appear (0 to 1) for things fading in or out; CSS
+   here is only colour, hover and focus. */
+.map-scene {
+  font-family: var(--font-sans);
+}
+.map-viewport [role="button"] {
+  cursor: pointer;
+  outline: none;
+}
+.map-viewport[data-hand] [role="button"] {
+  cursor: grab;
+}
+.map-viewport[data-panning],
+.map-viewport[data-panning] [role="button"] {
   cursor: grabbing;
 }
-/* The symbol's rose tint is inline (see rings.tsx): old clones' grey would win here. */
-.map-clone.map-pull-torn .map-clone-symbol-wrap {
-  animation: map-tear 220ms ease-out;
+.map-node,
+.map-label,
+.map-edge,
+.map-leader,
+.map-root,
+.map-bulb-badge,
+.map-ghost,
+.map-sprout-edge {
+  opacity: var(--appear, 1);
 }
-.map-clone.map-pull-torn .map-clone-name {
-  color: var(--rose);
+.map-node.map-dim,
+.map-label.map-dim,
+.map-edge.map-dim,
+.map-leader.map-dim,
+.map-root.map-dim,
+.map-bulb-badge.map-dim {
+  opacity: calc(0.28 * var(--appear, 1));
 }
-/* Let go short of tearing: it springs home with a little overshoot. */
-.map-clone.map-pull-return {
-  transition:
-    transform 420ms cubic-bezier(0.3, 1.5, 0.5, 1),
-    opacity 200ms;
+.map-edge {
+  fill: none;
+  stroke: color-mix(in oklab, var(--bottle) 28%, var(--border));
+  stroke-width: 1.4;
+}
+.map-edge.map-edge-old {
+  stroke: color-mix(in oklab, var(--foreground) 24%, transparent);
+  stroke-dasharray: 3 4;
+}
+.map-edge.map-edge-active {
+  stroke: var(--bottle);
+  stroke-width: 2;
+}
+.map-edge.map-edge-old.map-edge-active {
+  stroke: var(--muted-foreground);
+}
+.map-edge.map-stem {
+  stroke-width: 1.2;
 }
 .map-edge.map-edge-strained {
   stroke: color-mix(in oklch, var(--rose) calc(var(--strain, 0) * 100%), var(--bottle));
-  stroke-width: calc(1.6px - var(--strain, 0) * 1px);
-  stroke-dasharray: calc(1px + var(--strain, 0) * 5px) calc(var(--strain, 0) * 4px);
+  stroke-width: calc(1.6px + var(--strain, 0) * 0.4px);
+  /* Fibres separating: dash 6 / gap 1 as the pull starts, 4 / 4 in the release zone. */
+  stroke-dasharray: calc(6px - var(--strain, 0) * 2px) calc(1px + var(--strain, 0) * 3px);
 }
-@keyframes map-tear {
-  0% {
-    scale: 1.35;
-  }
-  60% {
-    scale: 0.92;
-  }
+/* Let go in the zone: the snapped stem springs back to its root, still red. */
+.map-edge.map-edge-recoil {
+  stroke: var(--rose);
+  stroke-width: 1.4px;
 }
-.map-image-pulled {
+/* In the release zone: fully red and taut; letting go rips it off. */
+.map-edge.map-edge-strained.map-edge-torn {
+  stroke: var(--rose);
+  stroke-width: 1.4px;
+}
+/* Leaders: dotted, with a dot at the name, so they never read as stems. */
+.map-leader line {
+  stroke: color-mix(in oklab, var(--foreground) 22%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 1 2.5;
+  stroke-linecap: round;
+}
+.map-leader circle {
+  fill: color-mix(in oklab, var(--foreground) 30%, transparent);
+}
+
+/* The golden image. */
+
+.map-focus-ring {
+  fill: none;
+  stroke: var(--ring);
+  stroke-width: 3;
+  opacity: 0;
+}
+.map-viewport[data-kbd] .map-clone:focus > .map-focus-ring {
+  opacity: 1;
+}
+
+/* A clone's clove and its halo (hover, selected, pulled). */
+.map-clone-halo {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 8;
+}
+.map-clone:hover .map-clone-halo {
+  stroke: var(--bottle-soft);
+}
+.map-clone.map-node-selected .map-clone-halo {
+  stroke: color-mix(in oklab, var(--bottle) 55%, transparent);
+  stroke-width: 2.5;
+}
+.map-clone.map-pulling {
   cursor: grabbing;
 }
-.map-sprout {
-  z-index: 6;
-  width: 34px;
-  height: 34px;
-  pointer-events: none;
-  transition: transform 90ms;
+.map-clone.map-forking {
+  cursor: copy;
 }
-.map-sprout-symbol {
-  background: var(--bottle-soft);
-  color: var(--bottle);
+
+/* Checkpoints: thin skins around a clove, outermost faintest. */
+.map-clone .map-skin-layer path {
+  fill: none;
+  stroke: color-mix(in oklab, var(--peel) calc(70% - var(--layer, 0) * 18%), var(--muted-foreground));
+  stroke-width: 1;
+  stroke-linejoin: round;
+  opacity: calc(0.85 - var(--layer, 0) * 0.2);
+}
+.map-clone.map-clone-unmounted .map-skin-layer path {
+  stroke: color-mix(in oklab, var(--faint-foreground) calc(70% - var(--layer, 0) * 15%), transparent);
+  stroke-dasharray: 3 2;
+}
+.map-skin-count rect {
+  fill: var(--background);
+  stroke: color-mix(in oklab, var(--bottle) 45%, transparent);
+}
+.map-skin-count text {
+  fill: var(--bottle);
+  font-size: 9px;
+}
+/* Folded forks: small cloves huddled behind their parent. */
+.map-bulb-huddle {
   opacity: 0.75;
 }
-.map-sprout-free .map-sprout-symbol {
+.map-bulb-badge rect {
+  fill: var(--background);
+  stroke: color-mix(in oklab, var(--bottle) 50%, transparent);
+}
+.map-bulb-badge text {
+  fill: var(--bottle);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.map-bulb-badge:hover rect {
+  fill: var(--bottle-soft);
+}
+.map-bulb-badge.map-bulb-open text {
+  fill: var(--muted-foreground);
+}
+.map-bulb-badge.map-bulb-open rect {
+  stroke: var(--border);
+}
+
+/* Names and state lines. */
+.map-label {
+  pointer-events: none;
+}
+.map-clone-name-bg,
+.map-clone-state-bg {
+  fill: var(--background);
+}
+.map-clone-name {
+  fill: var(--foreground);
+  font-size: 12px;
+  font-weight: 500;
+}
+.map-label .map-clone-state text {
+  fill: var(--muted-foreground);
+  font-size: 10.5px;
+}
+.map-tone-amber {
+  fill: var(--amber);
+}
+.map-tone-sage {
+  fill: var(--sage);
+}
+.map-tone-rose {
+  fill: var(--rose);
+}
+.map-label.map-node-selected .map-clone-name-bg {
+  fill: var(--bottle-soft);
+}
+.map-label.map-node-selected .map-clone-name {
+  fill: var(--bottle);
+}
+.map-label.map-menu-open .map-clone-state,
+.map-label.map-leaving .map-clone-state {
+  opacity: 0;
+}
+.map-label.map-menu-open .map-clone-name-bg {
+  fill: var(--card);
+  stroke: var(--border);
+}
+.map-label.map-pull-torn .map-clone-name {
+  fill: var(--rose);
+}
+
+/* Clones of older images: paler, greyer and papery, one step per image,
+   whatever their state colour; less colour means older, more means changed. */
+.map-piece.map-age {
+  --age-paper: oklch(0.74 0.008 90);
+}
+.dark .map-piece.map-age {
+  --age-paper: oklch(0.58 0.008 90);
+}
+.map-piece.map-age .clove-skin {
+  fill: color-mix(in oklab, var(--clove-fill) calc(100% - var(--age) * 24%), var(--age-paper));
+  stroke: color-mix(in oklab, var(--clove-stroke) calc(100% - var(--age) * 26%), var(--age-paper));
+}
+.map-piece.map-age .clove-vein {
+  stroke-dasharray: 3 2;
+}
+.map-piece.map-age.map-age-3 .clove-skin {
+  stroke-dasharray: 5 2;
+}
+.map-age-1 {
+  --age: 1;
+}
+.map-age-2 {
+  --age: 2;
+}
+.map-age-3 {
+  --age: 3;
+}
+
+/* A pulled copy (Option-drag fork) or sprout (out of the image). */
+.map-ghost {
+  pointer-events: none;
+}
+.map-ghost-halo {
+  fill: var(--bottle-soft);
+  opacity: 0.75;
+}
+.map-ghost.map-ghost-free .map-ghost-halo {
   opacity: 1;
-  box-shadow: 0 0 0 6px var(--bottle-soft);
-  animation: map-tear 220ms ease-out;
+  stroke: var(--bottle-soft);
+  stroke-width: 12;
+}
+.map-ghost.map-fork-copy .map-piece-svg {
+  opacity: 0.55;
+}
+.map-ghost.map-fork-copy.map-ghost-free .map-piece-svg {
+  opacity: 0.85;
+}
+.map-ghost.map-fork-copy .map-ghost-halo {
+  stroke: color-mix(in oklab, var(--bottle) 60%, transparent);
+  stroke-dasharray: 2 2;
+  stroke-width: 1;
 }
 .map-sprout-hint {
-  position: absolute;
-  top: 40px;
-  left: 50%;
-  translate: -50% 0;
-  white-space: nowrap;
+  fill: var(--bottle);
   font-size: 11px;
-  color: var(--bottle);
 }
 .map-sprout-edge {
+  fill: none;
   stroke: var(--bottle);
   stroke-width: 1.4;
   stroke-dasharray: 3 3;
+}
+.map-sprout-edge.map-sprout-edge-free {
+  stroke-dasharray: none;
+}
+
+/* The bulb, in line art: ink strokes on a plain fill, no glow. Light: cream
+   with ink; dark: a warm fill a touch lighter than the page, with cream ink. */
+.map-scene {
+  --bulb-fill: var(--cream);
+  --bulb-ink: color-mix(in oklab, var(--foreground) 70%, transparent);
+}
+.dark .map-scene text {
+  text-rendering: geometricPrecision;
+}
+.map-scene {
+  --bulb-fill: color-mix(in oklab, var(--cream) 9%, var(--background));
+  --bulb-ink: color-mix(in oklab, var(--cream) 75%, transparent);
+}
+.map-scene .map-bulb-outline {
+  fill: var(--bulb-fill);
+  stroke: var(--bulb-ink);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+}
+/* Picked (or its menu open): the bulb's own outline, a touch thicker and greener; no extra shape. */
+.map-image.map-node-selected .map-bulb-outline {
+  stroke-width: 1.9;
+  fill: color-mix(in oklab, var(--bottle) 6%, var(--bulb-fill));
+  stroke: color-mix(in oklab, var(--bottle) 45%, var(--bulb-ink));
+}
+.map-scene .map-bulb-line {
+  fill: none;
+  stroke: var(--bulb-ink);
+  stroke-width: 0.7;
+  stroke-linecap: round;
+  opacity: 0.3;
+}
+
+.map-scene .map-bulb-label text {
+  paint-order: stroke;
+  stroke: var(--background);
+  stroke-width: 5px;
+  stroke-linejoin: round;
+}
+.map-scene .map-bulb-label .map-bulb-name {
+  fill: var(--foreground);
+  font-size: 13px;
+  font-weight: 500;
+}
+.map-scene .map-bulb-label .map-bulb-gen {
+  fill: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+/* Refreshing: the drawing breathes (the frame loop scales it) and its ink brightens with --breath. */
+.map-scene .map-bulb-refreshing .map-bulb-outline,
+.map-scene .map-bulb-refreshing .map-bulb-line {
+  stroke: color-mix(in oklab, var(--bulb-ink) calc(100% - var(--breath, 0) * 45%), var(--bottle));
+}
+.repo-map .map-bulb-empty {
+  opacity: 0.35;
+}
+.repo-map .map-scene.map-bulb-empty .map-bulb-outline {
+  stroke-dasharray: 4 4;
+}
+
+/* Generations: the rim is the current image's; older ones are contours
+   inside it, deeper and dashed. Each is a button; lit (hovered, focused,
+   picked, or its clove hovered) it turns green and shows its number. */
+.map-scene .map-layer-buttons .map-bulb-contour {
+  fill: none;
+  stroke: var(--bulb-ink);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-dasharray: 4 3;
   opacity: 0.7;
 }
-.map-sprout-edge-free {
+.map-scene .map-layer-buttons .map-layer-rim .map-bulb-contour {
+  stroke: transparent;
   stroke-dasharray: none;
-  opacity: 0.9;
+}
+.map-scene .map-layer-buttons .map-layer-lit .map-bulb-contour {
+  stroke: var(--bottle);
+  stroke-width: 2;
+  opacity: 1;
+}
+
+.map-scene .map-bulb-contour-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 9;
+  pointer-events: stroke;
+}
+.map-scene .map-layer-tag {
+  pointer-events: none;
+}
+.map-scene .map-layer-tag.map-layer-tag > rect {
+  fill: var(--bulb-fill);
+  stroke: var(--bottle);
+  stroke-width: 1;
+}
+.map-scene .map-layer-tag.map-layer-tag > text {
+  fill: var(--bulb-ink);
+  font-size: 9px;
+  font-weight: 600;
+}
+.map-scene .map-node-selected .map-layer-tag rect {
+  fill: color-mix(in oklab, var(--bottle) 18%, var(--bulb-fill));
+}
+.map-root-tip {
+  fill: var(--bulb-ink);
+}
+.map-root.map-root-lit .map-root-tip {
+  fill: var(--bottle);
+}
+
+/* The clove mark at the bulb's heart: quiet, brighter when the bulb is hovered (its menu is a click away). */
+.map-scene .map-bulb-mark {
+  pointer-events: none;
+  opacity: 0.3;
+}
+.map-scene .map-bulb-mark path:first-child {
+  stroke: var(--bulb-ink);
+}
+.map-scene .map-bulb-mark path:last-child {
+  fill: var(--bulb-ink);
+}
+.map-scene .map-image:hover .map-bulb-mark {
+  opacity: 0.55;
+}
+
+/* A refresh: a new skin forms round the bulb (the frame loop sweeps its dash). */
+.map-scene .map-bulb-forming {
+  fill: none;
+  stroke: color-mix(in oklab, var(--bottle) 75%, transparent);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  pointer-events: none;
+  opacity: var(--appear, 0);
+}
+.map-scene .map-bulb-forming.map-bulb-forming-failed {
+  stroke: var(--rose);
+}
+.map-scene .map-bulb-label .map-bulb-failed {
+  fill: var(--rose);
+}
+
+/* An empty map's invite: a pale ghost clove nudging out of the bulb, and a quiet caption. */
+.map-scene .map-invite {
+  pointer-events: none;
+}
+.map-scene .map-invite-stem {
+  fill: none;
+  stroke: color-mix(in oklab, var(--bottle) 55%, transparent);
+  stroke-width: 1.2;
+  stroke-dasharray: 3 3;
+}
+.map-scene .map-invite-halo {
+  fill: none;
+  stroke: color-mix(in oklab, var(--bottle) 45%, transparent);
+  stroke-dasharray: 3 3;
+}
+.map-scene .map-invite .map-invite-clove .map-piece-svg {
+  opacity: 0.45;
+}
+.map-scene .map-invite .map-invite-clove .clove-skin {
+  fill: var(--cream);
+  stroke: var(--peel);
+  stroke-width: 3;
+  stroke-dasharray: 6 5;
+}
+.map-scene .map-invite-caption {
+  text-rendering: geometricPrecision;
+  fill: var(--muted-foreground);
+  font-size: 11px;
+}
+.map-scene .map-invite-caption .map-invite-title {
+  fill: var(--foreground);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* No browser focus outlines anywhere on the map; keyboard focus (data-kbd,
+   set by Tab or arrows, cleared by any press) gets one shaped indicator. */
+.map-viewport,
+.map-viewport *:focus {
+  outline: none;
+}
+.map-viewport[data-kbd]:focus {
+  box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--ring) 50%, transparent);
+}
+.map-viewport[data-kbd] .map-scene .map-image:focus .map-bulb-outline {
+  stroke: var(--ring);
+  stroke-width: 2.6;
+}
+.map-viewport[data-kbd] .map-bulb-badge:focus rect {
+  fill: var(--bottle-soft);
+}
+.map-viewport[data-kbd] .map-bulb-badge:focus rect {
+  stroke: var(--ring);
+  stroke-width: 2;
+}
+.map-viewport[data-kbd] .map-scene .map-layer-buttons .map-layer-button:focus .map-bulb-contour {
+  stroke: var(--ring);
+  stroke-width: 2.5;
+  opacity: 1;
+}
+.map-viewport[data-kbd] .map-scene .map-image:focus .map-bulb-mark {
+  opacity: 0.55;
+}
+
+/* The details drawer over the map's bottom: slides up while something is
+   picked, down when nothing is; switching items cross-fades in place. */
+.map-drawer {
+  transition:
+    transform 250ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s linear 0s;
+}
+.map-drawer.map-drawer-closed {
+  transform: translateY(100%);
+  visibility: hidden;
+  transition:
+    transform 220ms cubic-bezier(0.4, 0, 1, 1),
+    visibility 0s linear 220ms;
+}
+.map-drawer-content {
+  animation: map-drawer-fade 180ms ease-out;
+}
+@keyframes map-drawer-fade {
+  from {
+    opacity: 0;
+  }
+}
+.map-shelf {
+  transform: translateY(calc(-1 * var(--drawer-covered, 0px)));
+  transition: transform 250ms cubic-bezier(0.22, 1, 0.36, 1);
 }

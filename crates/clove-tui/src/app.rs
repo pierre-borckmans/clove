@@ -2,6 +2,7 @@
 //! [`Effect`]s for the runtime to perform, so tests drive this directly.
 
 use crate::fmt;
+use crate::lineage::{self, Folds, TreeRow};
 use crate::model::*;
 use crate::panes::{self, Panes, SplitId};
 use clove_core::repo::sanitize_name;
@@ -54,6 +55,11 @@ pub enum Effect {
     /// Ask for the latest release: from the hourly cache unless `force`.
     CheckUpgrade {
         force: bool,
+    },
+    /// Read a clone's checkpoints for the rewind picker.
+    LoadCheckpoints {
+        root: PathBuf,
+        name: String,
     },
 }
 
@@ -163,6 +169,8 @@ pub struct App {
     pub upgrade_checked_ms: Option<u64>,
     /// The version an upgrade from here installed: this process is older.
     pub upgraded_to: Option<String>,
+    /// Fork lineages opened or closed by hand, per repo.
+    pub folds: HashMap<PathBuf, Folds>,
 }
 
 impl App {
@@ -219,6 +227,7 @@ impl App {
             diff_prefs: Default::default(),
             seen_removal: HashMap::new(),
             settings_height: 10,
+            folds: HashMap::new(),
         }
     }
 
@@ -244,19 +253,33 @@ impl App {
         self.current().is_some_and(|d| d.status.golden.is_some())
     }
 
+    /// The clones listed, in list order: forks under their parent, folded
+    /// lineages without theirs.
     pub fn visible(&self) -> Vec<&CloneInfo> {
+        self.tree().into_iter().map(|r| r.clone).collect()
+    }
+
+    /// The clone rows with their place in the fork tree.
+    pub fn tree(&self) -> Vec<TreeRow<'_>> {
         let Some(d) = self.current() else {
             return vec![];
         };
-        let q = self.filter.to_lowercase();
-        d.clones
-            .iter()
-            .filter(|c| {
-                q.is_empty()
-                    || c.name.to_lowercase().contains(&q)
-                    || c.branch.as_deref().is_some_and(|b| b.to_lowercase().contains(&q))
-            })
-            .collect()
+        let empty = Folds::default();
+        let folds = self.folds.get(&d.root).unwrap_or(&empty);
+        lineage::tree_rows(&d.clones, &self.filter.to_lowercase(), folds)
+    }
+
+    /// Some clone of the current repo has a fork listed: the list draws a tree.
+    pub fn has_forks(&self) -> bool {
+        self.current()
+            .is_some_and(|d| lineage::Forest::new(&d.clones).has_forks())
+    }
+
+    /// Forks of clone `name` at any depth, deepest first.
+    pub fn forks_of(&self, name: &str) -> Vec<String> {
+        self.current()
+            .map(|d| lineage::Forest::new(&d.clones).forks_of(name))
+            .unwrap_or_default()
     }
 
     pub fn selected_clone(&self) -> Option<&CloneInfo> {
@@ -315,7 +338,7 @@ impl App {
     pub fn busy(&self, name: &str) -> Option<&Job> {
         let root = self.repo()?.root.clone();
         self.running()
-            .find(|j| j.repo == root && j.target() == Some(name))
+            .find(|j| j.repo == root && (j.target() == Some(name) || j.forks().iter().any(|f| f == name)))
     }
 
     /// A running init/refresh on the current repo.
@@ -724,7 +747,27 @@ impl App {
                     }
                     _ => {}
                 }
-                toasts.push((ToastKind::Err, format!("{}: {first}", job_title(&task))));
+                // A rewind refused because the clone is in use: say who, offer force.
+                let busy = match &task {
+                    Task::Rewind {
+                        name,
+                        id,
+                        force: false,
+                    } => crate::worker::busy_users(&e).map(|who| (name.clone(), id.clone(), who)),
+                    _ => None,
+                };
+                match busy {
+                    Some((name, id, who)) if self.modal.is_none() => {
+                        self.modal = Some(Modal::Rewind(RewindView {
+                            name,
+                            list: None,
+                            cursor: 0,
+                            busy: Some((id, who)),
+                            focus_cancel: false,
+                        }));
+                    }
+                    _ => toasts.push((ToastKind::Err, format!("{}: {first}", job_title(&task)))),
+                }
                 Err(first)
             }
             Ok(Outcome::Golden(m)) => {
@@ -767,8 +810,55 @@ impl App {
                 Ok(s)
             }
             Ok(Outcome::Removed) => {
-                let s = format!("removed {}", job.subject());
+                let s = match job.forks().len() {
+                    0 => format!("removed {}", job.subject()),
+                    1 => format!("removed {} and its fork", job.subject()),
+                    n => format!("removed {} and its {n} forks", job.subject()),
+                };
                 toasts.push((ToastKind::Ok, s.clone()));
+                Ok(s)
+            }
+            Ok(Outcome::Checkpointed(cp)) => {
+                let s = format!(
+                    "checkpoint {} of {} in {}",
+                    cp.meta.id,
+                    cp.meta.clone,
+                    fmt::secs(cp.meta.took_ms)
+                );
+                toasts.push((ToastKind::Ok, s.clone()));
+                Ok(s)
+            }
+            Ok(Outcome::Rewound(rw)) => {
+                let mut s = format!("{} is back at {}", rw.clone, rw.to);
+                if rw.saved.is_some() {
+                    s.push_str("; b, then before-rewind, undoes it");
+                }
+                toasts.push((ToastKind::Ok, s.clone()));
+                Ok(s)
+            }
+            Ok(Outcome::Forked(info)) => {
+                job.path = Some(info.path.clone());
+                let from = job.target().unwrap_or("").to_string();
+                let s = format!("forked {from} as {} in {}", info.name, fmt::secs(info.total_ms));
+                toasts.push((ToastKind::Ok, s.clone()));
+                self.pending_select = Some(info.name.clone());
+                // Unfold the lineage the fork lands in, so it shows.
+                let mut up: Vec<String> = vec![from.clone()];
+                if let Some(d) = self.data.get(&repo) {
+                    let f = lineage::Forest::new(&d.clones);
+                    let mut p = f.parent(&from);
+                    while let Some(n) = p {
+                        if up.iter().any(|u| u == n) {
+                            break;
+                        }
+                        up.push(n.to_string());
+                        p = f.parent(n);
+                    }
+                }
+                let folds = self.folds.entry(repo.clone()).or_default();
+                for n in &up {
+                    folds.set(n, true);
+                }
                 Ok(s)
             }
             Ok(Outcome::Mounted(p)) => {
@@ -1070,6 +1160,26 @@ impl App {
                 self.refs_root = Some(root);
                 self.refs = refs;
                 self.candidates = candidates;
+                // A prefilled fork name may now clash with a branch: pick again.
+                if let Some(Modal::Fork(f)) = &self.modal
+                    && f.auto.as_deref() == Some(f.name.text.as_str())
+                {
+                    let auto = self.fork_name(&f.from, f.branch.as_deref());
+                    if let Some(Modal::Fork(f)) = &mut self.modal {
+                        f.name.set(&auto);
+                        f.auto = Some(auto);
+                    }
+                }
+                vec![]
+            }
+            Msg::Checkpoints { root, name, result } => {
+                if let Some(Modal::Rewind(v)) = &mut self.modal
+                    && v.name == name
+                    && self.repos.get(self.repo_idx).is_some_and(|r| r.root == root)
+                {
+                    v.cursor = 0;
+                    v.list = Some(result);
+                }
                 vec![]
             }
             Msg::Event(id, ev) => {
@@ -1327,7 +1437,13 @@ impl App {
             KeyCode::Char('A') | KeyCode::Char('+') => return self.open_add_repo(),
             KeyCode::Enter => return self.cd_selected(),
             KeyCode::Char('o') => return self.open_selected(),
+            KeyCode::Char('c') if self.selected_clone().is_some() => return self.checkpoint_selected(),
             KeyCode::Char('c') => self.open_adopt(),
+            KeyCode::Char('b') => return self.open_rewind(),
+            KeyCode::Char('f') => return self.open_fork(),
+            KeyCode::Left => self.fork_key(false),
+            KeyCode::Right => self.fork_key(true),
+            KeyCode::Char('*') => self.toggle_all_forks(),
             KeyCode::Char('/') => {
                 self.filtering = true;
             }
@@ -1481,6 +1597,283 @@ impl App {
         }
     }
 
+    // ---- forks and checkpoints -------------------------------------------
+
+    /// ← folds the selected clone's forks, else goes to its parent; → unfolds
+    /// them, else goes to its first fork.
+    fn fork_key(&mut self, right: bool) {
+        let rows = self.tree();
+        let Some(row) = rows.get(self.selected) else {
+            return;
+        };
+        let name = row.clone.name.clone();
+        let (forks, open, parent) = (row.forks, row.open, row.parent.map(str::to_string));
+        let next_is_kid = rows
+            .get(self.selected + 1)
+            .is_some_and(|r| r.parent == Some(name.as_str()));
+        let Some(root) = self.root() else { return };
+        let filtered = !self.filter.is_empty();
+        match (right, forks > 0, open) {
+            (false, true, true) if !filtered => self.folds.entry(root).or_default().set(&name, false),
+            (false, _, _) => {
+                if let Some(p) = parent {
+                    self.select_clone(&p);
+                }
+            }
+            (true, true, false) => self.folds.entry(root).or_default().set(&name, true),
+            (true, true, true) if next_is_kid => self.selected += 1,
+            _ => {}
+        }
+    }
+
+    /// `*`: unfolds every lineage, or folds them all when all are open.
+    fn toggle_all_forks(&mut self) {
+        let Some(d) = self.current() else { return };
+        let keep = self.selected_clone().map(|c| c.name.clone());
+        let empty = Folds::default();
+        let folds = self.folds.get(&d.root).unwrap_or(&empty);
+        let f = lineage::Forest::new(&d.clones);
+        let parents: Vec<String> = d
+            .clones
+            .iter()
+            .filter(|c| !f.kids(&c.name).is_empty())
+            .map(|c| c.name.clone())
+            .collect();
+        if parents.is_empty() {
+            return;
+        }
+        let all_open = parents.iter().all(|p| !f.folded(p, folds));
+        let root = d.root.clone();
+        let folds = self.folds.entry(root).or_default();
+        for p in &parents {
+            folds.set(p, !all_open);
+        }
+        if let Some(n) = keep {
+            self.select_clone(&n);
+        }
+    }
+
+    /// Selects clone `name`, or its nearest listed ancestor when folded away.
+    fn select_clone(&mut self, name: &str) {
+        let Some(d) = self.current() else { return };
+        let f = lineage::Forest::new(&d.clones);
+        let mut chain = vec![name.to_string()];
+        let mut p = f.parent(name);
+        while let Some(n) = p {
+            if chain.iter().any(|c| c == n) {
+                break;
+            }
+            chain.push(n.to_string());
+            p = f.parent(n);
+        }
+        let vis: Vec<String> = self.visible().iter().map(|c| c.name.clone()).collect();
+        if let Some(i) = chain.iter().find_map(|n| vis.iter().position(|v| v == n)) {
+            self.selected = i;
+        }
+    }
+
+    /// `c` on a clone: a checkpoint of it as it is now.
+    fn checkpoint_selected(&mut self) -> Vec<Effect> {
+        let Some(c) = self.selected_clone().cloned() else {
+            return vec![];
+        };
+        if self.busy(&c.name).is_some() {
+            return vec![];
+        }
+        self.spawn(Task::Checkpoint { name: c.name }, After::Nothing)
+    }
+
+    /// `b`: pick a checkpoint of the selected clone to rewind it to.
+    fn open_rewind(&mut self) -> Vec<Effect> {
+        let Some(root) = self.root() else { return vec![] };
+        let Some(c) = self.selected_clone().cloned() else {
+            return vec![];
+        };
+        if self.busy(&c.name).is_some() {
+            return vec![];
+        }
+        if c.checkpoints == 0 {
+            self.toast(
+                ToastKind::Info,
+                format!("{} has no checkpoints: c makes one", c.name),
+            );
+            return vec![];
+        }
+        self.modal = Some(Modal::Rewind(RewindView {
+            name: c.name.clone(),
+            list: None,
+            cursor: 0,
+            busy: None,
+            focus_cancel: false,
+        }));
+        vec![Effect::LoadCheckpoints { root, name: c.name }]
+    }
+
+    /// `f`: name a fork of the selected clone, prefilled with the next free
+    /// `<name>-a`..`z` (as `clove fork` picks it).
+    fn open_fork(&mut self) -> Vec<Effect> {
+        let Some(c) = self.selected_clone().cloned() else {
+            return vec![];
+        };
+        if self.busy(&c.name).is_some() {
+            return vec![];
+        }
+        if self.refs_root != self.root() {
+            self.refs.clear();
+        }
+        let auto = self.fork_name(&c.name, c.branch.as_deref());
+        self.modal = Some(Modal::Fork(ForkForm {
+            from: c.name,
+            branch: c.branch,
+            name: Input::new(&auto),
+            auto: Some(auto),
+        }));
+        vec![Effect::LoadRefs]
+    }
+
+    /// The first `<from>-<a..z, 2..99>` that names no clone and whose branch
+    /// isn't taken (by the refs known so far).
+    pub fn fork_name(&self, from: &str, branch: Option<&str>) -> String {
+        let suffixes = (b'a'..=b'z')
+            .map(|c| (c as char).to_string())
+            .chain((2..100).map(|n| n.to_string()));
+        for s in suffixes {
+            let name = format!("{from}-{s}");
+            let b = match branch {
+                Some(b) => format!("{b}-{s}"),
+                None => name.clone(),
+            };
+            if !self.clone_exists(&name) && !self.local_branch(&b) {
+                return name;
+            }
+        }
+        format!("{from}-fork")
+    }
+
+    fn clone_exists(&self, name: &str) -> bool {
+        self.current()
+            .is_some_and(|d| d.clones.iter().any(|c| c.name == name))
+    }
+
+    fn local_branch(&self, b: &str) -> bool {
+        self.refs_root == self.root() && self.refs.iter().any(|r| r.kind == RefKind::Local && r.name == b)
+    }
+
+    /// What the fork form will make: (name · branch, or an error).
+    pub fn fork_preview(&self, f: &ForkForm) -> Result<String, String> {
+        let name = f.name.text.trim();
+        if name.is_empty() {
+            return Err("name the fork".into());
+        }
+        let clean = sanitize_name(name);
+        if clean != name {
+            return Err(format!(
+                "clone names take letters, digits, `.`, `_` and `-` (try `{clean}`)"
+            ));
+        }
+        if self.clone_exists(name) {
+            return Err(format!("clone `{name}` already exists"));
+        }
+        let branch = match &f.branch {
+            Some(b) => format!("{b}-{}", clove_core::checkpoint::fork_suffix(&f.from, name)),
+            None => name.to_string(),
+        };
+        if self.local_branch(&branch) {
+            return Err(format!("branch `{branch}` already exists"));
+        }
+        Ok(format!(
+            "{name} on new branch {branch} · a copy of {}, uncommitted files too",
+            f.from
+        ))
+    }
+
+    fn fork_key_input(&mut self, mut f: ForkForm, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
+        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        let i = &mut f.name;
+        match k.code {
+            KeyCode::Esc => return (None, vec![]),
+            KeyCode::Enter => {
+                if let Err(e) = self.fork_preview(&f) {
+                    self.toast(ToastKind::Err, e);
+                    return (Some(Modal::Fork(f)), vec![]);
+                }
+                let task = Task::Fork {
+                    from: f.from.clone(),
+                    name: f.name.text.trim().to_string(),
+                };
+                return (None, self.spawn(task, After::Nothing));
+            }
+            KeyCode::Left => i.left(),
+            KeyCode::Right => i.right(),
+            KeyCode::Home => i.home(),
+            KeyCode::End => i.end(),
+            KeyCode::Backspace => i.backspace(),
+            KeyCode::Delete => i.delete(),
+            KeyCode::Char('a') if ctrl => i.home(),
+            KeyCode::Char('e') if ctrl => i.end(),
+            KeyCode::Char('u') if ctrl => i.set(""),
+            KeyCode::Char('w') if ctrl => i.delete_word(),
+            KeyCode::Char(c) if !ctrl && !c.is_whitespace() => i.insert(c),
+            _ => return (Some(Modal::Fork(f)), vec![]),
+        }
+        f.auto = None;
+        (Some(Modal::Fork(f)), vec![])
+    }
+
+    fn rewind_key(&mut self, mut v: RewindView, k: KeyEvent) -> (Option<Modal>, Vec<Effect>) {
+        if let Some((id, _)) = v.busy.clone() {
+            return match k.code {
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => (None, vec![]),
+                KeyCode::Left
+                | KeyCode::Right
+                | KeyCode::Tab
+                | KeyCode::BackTab
+                | KeyCode::Up
+                | KeyCode::Down => {
+                    v.focus_cancel = !v.focus_cancel;
+                    (Some(Modal::Rewind(v)), vec![])
+                }
+                KeyCode::Enter | KeyCode::Char(' ') if v.focus_cancel => (None, vec![]),
+                KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('y') => {
+                    let task = Task::Rewind {
+                        name: v.name.clone(),
+                        id,
+                        force: true,
+                    };
+                    (None, self.spawn(task, After::Nothing))
+                }
+                _ => (Some(Modal::Rewind(v)), vec![]),
+            };
+        }
+        let n = match &v.list {
+            Some(Ok(l)) => l.len(),
+            _ => 0,
+        };
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('b') => return (None, vec![]),
+            KeyCode::Up | KeyCode::Char('k') => v.cursor = v.cursor.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => v.cursor = (v.cursor + 1).min(n.saturating_sub(1)),
+            KeyCode::Home => v.cursor = 0,
+            KeyCode::End => v.cursor = n.saturating_sub(1),
+            KeyCode::Enter | KeyCode::Char('y') => {
+                let Some(Ok(list)) = &v.list else {
+                    return (Some(Modal::Rewind(v)), vec![]);
+                };
+                let Some(cp) = list.get(v.cursor) else {
+                    return (Some(Modal::Rewind(v)), vec![]);
+                };
+                let task = Task::Rewind {
+                    name: v.name.clone(),
+                    id: cp.meta.id.clone(),
+                    force: false,
+                };
+                return (None, self.spawn(task, After::Nothing));
+            }
+            _ => {}
+        }
+        (Some(Modal::Rewind(v)), vec![])
+    }
+
     fn open_new(&mut self) -> Vec<Effect> {
         if self.current().is_none() {
             return vec![];
@@ -1546,6 +1939,8 @@ impl App {
             changes: w.changes.clone(),
             changes_total: w.changes_total,
             batch: vec![],
+            forks: vec![],
+            remove_forks: false,
         }
     }
 
@@ -1562,6 +1957,8 @@ impl App {
             delete_branch: true,
             force: c.dirty == Some(true),
             inside: c.path.parent().is_some_and(|m| self.start_dir.starts_with(m)),
+            forks: self.forks_of(&c.name),
+            remove_forks: true,
             ..Default::default()
         }
     }
@@ -1574,7 +1971,11 @@ impl App {
         };
         for c in &d.clones {
             if self.marked(&Mark::Clone(c.name.clone())) && self.busy(&c.name).is_none() {
-                v.push(self.clone_form(c));
+                // Marked rows go as marked: forks only when marked too.
+                v.push(RemoveForm {
+                    forks: vec![],
+                    ..self.clone_form(c)
+                });
             }
         }
         for w in &d.worktrees {
@@ -1858,6 +2259,8 @@ impl App {
             Modal::New(f) => self.new_form_key(f, k),
             Modal::Remove(f) => self.remove_form_key(f, k),
             Modal::Adopt(f) => self.adopt_key(f, k),
+            Modal::Rewind(v) => self.rewind_key(v, k),
+            Modal::Fork(f) => self.fork_key_input(f, k),
             Modal::Gc(g) => self.gc_key(g, k),
             Modal::Doctor(d) => self.doctor_key(d, k),
             Modal::Removals(v) => self.removals_key(v, k),
@@ -2057,6 +2460,9 @@ impl App {
                     if f.unlock {
                         args.push("--unlock".into());
                     }
+                    if f.batch.is_empty() && f.remove_forks {
+                        args.extend(f.forks.iter().cloned());
+                    }
                     args.extend(targets.iter().map(|t| {
                         if t.worktree {
                             t.path.to_string_lossy().to_string()
@@ -2080,15 +2486,24 @@ impl App {
                             unlock: f.unlock && t.forceable,
                         }
                     } else {
-                        Task::Remove {
-                            name: t.name.clone(),
-                            opts: RemoveOptions {
-                                force: f.force,
-                                delete_branch: f.delete_branch,
-                                branch_merged: false,
-                                unlock: false,
-                                ..Default::default()
-                            },
+                        let opts = RemoveOptions {
+                            force: f.force,
+                            delete_branch: f.delete_branch,
+                            branch_merged: false,
+                            unlock: false,
+                            ..Default::default()
+                        };
+                        if t.remove_forks && !t.forks.is_empty() {
+                            Task::RemoveTree {
+                                name: t.name.clone(),
+                                opts,
+                                forks: t.forks.clone(),
+                            }
+                        } else {
+                            Task::Remove {
+                                name: t.name.clone(),
+                                opts,
+                            }
                         }
                     };
                     fx.extend(self.spawn(task, After::Nothing));
@@ -2644,7 +3059,10 @@ fn job_title(t: &Task) -> String {
         Task::Init => "init".into(),
         Task::Refresh => "refresh".into(),
         Task::New(_) => "new".into(),
-        Task::Remove { name, .. } => format!("remove {name}"),
+        Task::Remove { name, .. } | Task::RemoveTree { name, .. } => format!("remove {name}"),
+        Task::Checkpoint { name } => format!("checkpoint {name}"),
+        Task::Rewind { name, .. } => format!("rewind {name}"),
+        Task::Fork { from, .. } => format!("fork {from}"),
         Task::RemoveWorktree { name, .. } => format!("remove worktree {name}"),
         Task::Adopt { name, .. } => format!("adopt {name}"),
         Task::Mount { name } => format!("mount {name}"),

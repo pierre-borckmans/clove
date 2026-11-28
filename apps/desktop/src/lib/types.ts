@@ -86,6 +86,35 @@ export type CloneInfo = {
   operation?: "rebase" | "merge";
   /** dirty/ahead/behind are the last known values while git is asked again. */
   status_pending?: boolean;
+  /** The clone this one was forked from (`clove fork`). */
+  forked_from?: string;
+  /** How many checkpoints it has, `before-rewind` included. Missing in old mocks. */
+  checkpoints?: number;
+};
+
+/** A frozen copy of a clone (`clove_core::CheckpointInfo`). */
+export type Checkpoint = {
+  id: string;
+  clone: string;
+  created_at: number;
+  created_ms: number;
+  head: string | null;
+  branch: string | null;
+  /** Made by a rewind (`before-rewind`), not asked for. */
+  auto: boolean;
+  took_ms: number;
+  /** Disk only this checkpoint holds: what dropping it frees. */
+  own_bytes: number;
+};
+
+/** What a rewind did (`clove_core::Rewound`). */
+export type Rewound = {
+  clone: string;
+  to: string;
+  saved: string | null;
+  branch_moved: [string, string] | null;
+  timings: Timing[];
+  total_ms: number;
 };
 
 /** A plain git worktree clove didn't make (clove_core::OtherWorktree). */
@@ -181,6 +210,8 @@ export type OpRequest =
   | { kind: "remove_worktree"; root: string; path: string; delete_branch?: boolean; force?: boolean; unlock?: boolean }
   | { kind: "adopt"; root: string; path: string; name?: string | null }
   | { kind: "deinit"; root: string }
+  | { kind: "fork"; root: string; from: string; name?: string | null }
+  | { kind: "rewind"; root: string; name: string; id?: string | null; force?: boolean }
   | { kind: "update"; root: string; name: string; step?: "run" | "continue" | "abort"; autostash?: boolean };
 
 /** What `clove update` did (clove_core::update::Update). */

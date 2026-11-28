@@ -39,9 +39,6 @@ export function GoldenCard({ status }: { status: RepoStatus }) {
   }
 
   const behind = g.behind ?? 0;
-  const total = g.timings.reduce((a, t) => a + t.ms, 0);
-  const warm = g.timings.filter((t) => t.step.startsWith("warm "));
-  const rest = total - warm.reduce((a, t) => a + t.ms, 0);
 
   return (
     <section className="overflow-hidden rounded-xl border bg-card shadow-[0_1px_2px_0_rgb(0_0_0/0.03)]">
@@ -117,61 +114,72 @@ export function GoldenCard({ status }: { status: RepoStatus }) {
       </div>
 
       <div className="border-t px-4 py-3">
-        <div className="mb-2 flex items-baseline justify-between">
-          <span className="text-[12px] text-muted-foreground">
-            Steps <span className="text-faint">· {status.steps_detected ? "detected" : "from .clove.toml"}</span>
-          </span>
-          {total > 0 && (
-            <span className="text-[12px] text-muted-foreground">
-              built in <span className="font-mono tabular-nums text-foreground/80">{ms(total)}</span>
-            </span>
-          )}
-        </div>
-        {total > 0 && (
-          <div className="mb-3 flex h-1.5 gap-px overflow-hidden rounded-full bg-foreground/[0.05]">
-            {warm.map((t, i) => (
-              <Tooltip key={t.step}>
-                <TooltipTrigger asChild>
-                  <span
-                    className={cn("h-full first:rounded-l-full", STEP_SHADES[i % STEP_SHADES.length])}
-                    style={{ width: `${(t.ms / total) * 100}%` }}
-                  />
-                </TooltipTrigger>
-                <TooltipContent>
-                  {t.step} · {ms(t.ms)}
-                </TooltipContent>
-              </Tooltip>
-            ))}
-            <span
-              className="h-full flex-1 bg-foreground/[0.12]"
-              title={`checkout, fetch and image work · ${ms(rest)}`}
-            />
-          </div>
-        )}
-        <div className="flex flex-wrap gap-1.5">
-          {warm.map((t, i) => (
-            <StepChip
-              key={t.step}
-              shade={STEP_SHADES[i % STEP_SHADES.length]}
-              name={t.step.replace(/^warm /, "")}
-              time={ms(t.ms)}
-              detail={status.steps.find((s) => `warm ${s.name}` === t.step)}
-            />
-          ))}
-          {status.steps
-            .filter((s) => !g.timings.some((t) => t.step === `warm ${s.name}`))
-            .map((s) => (
-              <StepChip key={s.name} shade="bg-foreground/25" name={s.name} detail={s} />
-            ))}
-          {status.steps.length === 0 && (
-            <span className="text-[12.5px] text-muted-foreground">
-              No steps. Clones get the checkout only; add <code className="font-mono">[[step]]</code> to{" "}
-              <code className="font-mono">.clove.toml</code>.
-            </span>
-          )}
-        </div>
+        <GoldenSteps status={status} />
       </div>
     </section>
+  );
+}
+
+/** The image's warm steps: a time bar and a chip per step (the card, and the map's drawer). */
+export function GoldenSteps({ status }: { status: RepoStatus }) {
+  const g = status.golden;
+  if (!g) return null;
+  const total = g.timings.reduce((a, t) => a + t.ms, 0);
+  const warm = g.timings.filter((t) => t.step.startsWith("warm "));
+  const rest = total - warm.reduce((a, t) => a + t.ms, 0);
+  return (
+    <>
+      <div className="mb-2 flex items-baseline justify-between">
+        <span className="text-[12px] text-muted-foreground">
+          Steps <span className="text-faint">· {status.steps_detected ? "detected" : "from .clove.toml"}</span>
+        </span>
+        {total > 0 && (
+          <span className="text-[12px] text-muted-foreground">
+            built in <span className="font-mono tabular-nums text-foreground/80">{ms(total)}</span>
+          </span>
+        )}
+      </div>
+      {total > 0 && (
+        <div className="mb-3 flex h-1.5 gap-px overflow-hidden rounded-full bg-foreground/[0.05]">
+          {warm.map((t, i) => (
+            <Tooltip key={t.step}>
+              <TooltipTrigger asChild>
+                <span
+                  className={cn("h-full first:rounded-l-full", STEP_SHADES[i % STEP_SHADES.length])}
+                  style={{ width: `${(t.ms / total) * 100}%` }}
+                />
+              </TooltipTrigger>
+              <TooltipContent>
+                {t.step} · {ms(t.ms)}
+              </TooltipContent>
+            </Tooltip>
+          ))}
+          <span className="h-full flex-1 bg-foreground/[0.12]" title={`checkout, fetch and image work · ${ms(rest)}`} />
+        </div>
+      )}
+      <div className="flex flex-wrap gap-1.5">
+        {warm.map((t, i) => (
+          <StepChip
+            key={t.step}
+            shade={STEP_SHADES[i % STEP_SHADES.length]}
+            name={t.step.replace(/^warm /, "")}
+            time={ms(t.ms)}
+            detail={status.steps.find((s) => `warm ${s.name}` === t.step)}
+          />
+        ))}
+        {status.steps
+          .filter((s) => !g.timings.some((t) => t.step === `warm ${s.name}`))
+          .map((s) => (
+            <StepChip key={s.name} shade="bg-foreground/25" name={s.name} detail={s} />
+          ))}
+        {status.steps.length === 0 && (
+          <span className="text-[12.5px] text-muted-foreground">
+            No steps. Clones get the checkout only; add <code className="font-mono">[[step]]</code> to{" "}
+            <code className="font-mono">.clove.toml</code>.
+          </span>
+        )}
+      </div>
+    </>
   );
 }
 

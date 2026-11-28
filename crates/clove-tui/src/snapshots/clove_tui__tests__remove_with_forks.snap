@@ -1,0 +1,34 @@
+---
+source: crates/clove-tui/src/tests.rs
+expression: s
+---
+╭ clove ───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ app  /work/app                                                                                12 clones · 11 mounted │
+│ golden  ● gen 3 · a1b2c3d4e5 · 2h old · ↓4 behind origin/main · 1.3G                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ repos ─────────────╮╭ clones 12 ─────────────────────────────────────────────────────────────────────────────────────╮
+│ ▌ app         12 ● ││   NAM╭ remove feat-login ─────────────────────────────────────────╮AGE    SIZE  PATH           │
+│   mono         2 ● ││ ● fea│                                                            │ 5m     14M  …eat-login/app │
+│   web       set up ││ ● ├─ │  feat-login  on feat/login                                 │59m     14M  …t-login-a/app │
+│ + add repo         ││ ● │  │  /work/app.clove/feat-login/app                            │59m     14M  …login-a-a/app │
+│                    ││ ● └─ │                                                            │59m     14M  …t-login-b/app │
+│                    ││ ● fix│  ! uncommitted changes will be discarded                   │ 3h    230M  …/fix-race/app │
+│                    ││ ○ spi│  · its 3 forks go first:                                   │ 3h     14M  …ike-cache/app │
+│                    ││ ● pie│    feat-login-a-a                                          │ 4d     14M  …ding-flow/app │
+│                    ││ ● det│    feat-login-a                                            │ 3h     14M  …/detached/app │
+│                    ││      │    feat-login-b                                            │                            │
+│                    ││      │  · 2 commits not on origin/main: branch kept if unpushed   │                            │
+│                    ││      │                                                            │                            │
+│                    ││      │    [x] also remove 3 forks                                 │                            │
+│                    ││      │    [x] also delete branch feat/login                       │                            │
+│                    ││      │    [x] force: discard changes, eject if busy               │                            │
+│                    ││      │                                                            │                            │
+│                    ││      │                               discard & remove    cancel   │                            │
+│                    ││      │                                                            │                            │
+│ ────────────────── ││      ╰────────────────────────────────────────────────────────────╯                            │
+│ s settings         ││                                                                                                │
+│ g cleanup          ││                                                                                                │
+│ D doctor           ││                                                                                                │
+│ S service          ││                                                                                                │
+╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ↑↓ move  ⏎ remove  esc cancel

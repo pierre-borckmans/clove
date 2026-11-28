@@ -2,6 +2,7 @@
 
 import type {
   Check,
+  Checkpoint,
   CloneInfo,
   GoldenStatus,
   MergeCheck,
@@ -186,9 +187,87 @@ export function seed(): Map<string, MockRepo> {
         dirty: true,
         ahead: 0,
         image_bytes: 48 * MB,
-        age: 4 * 60,
+        age: 50 * 60,
         head: "8f3c2a1e9b7d",
+        checkpoints: 2,
       }),
+      // A fork of the one above (`clove fork`), trying another approach.
+      clone("mono", {
+        name: "feat-onboarding-checklist-a",
+        own_bytes: 3 * MB,
+        branch: "feat/onboarding-checklist-a",
+        dirty: true,
+        ahead: 1,
+        image_bytes: 48 * MB,
+        age: 6 * 60,
+        head: "2b9e41c07a5d",
+        forked_from: "feat-onboarding-checklist",
+      }),
+      // Four more tries at the same checklist: five forks in all.
+      ...(["b", "c", "d", "e"] as const).map((x, i) =>
+        clone("mono", {
+          name: `feat-onboarding-checklist-${x}`,
+          own_bytes: (2 + i) * MB,
+          branch: `feat/onboarding-checklist-${x}`,
+          dirty: i % 2 === 0,
+          ahead: 1,
+          image_bytes: 48 * MB,
+          age: (5 - i) * 60,
+          head: "2b9e41c07a5d",
+          forked_from: "feat-onboarding-checklist",
+        }),
+      ),
+      // Modified, on the previous image: amber, a little muted.
+      clone("mono", {
+        name: "hotfix-cache-headers",
+        own_bytes: 5 * MB,
+        branch: "hotfix/cache-headers",
+        dirty: true,
+        ahead: 1,
+        behind: 9,
+        image_bytes: 64 * MB,
+        age: 22 * 3600,
+        golden_generation: 13,
+        head: "6e7f8091a2b3",
+      }),
+      // A long name: its label is cut to fit, and shows in full on hover.
+      clone("mono", {
+        name: "spike-search-indexer-rewrite-with-incremental-segments",
+        own_bytes: 12 * MB,
+        branch: "spike/search-indexer-rewrite-with-incremental-segments",
+        ahead: 6,
+        image_bytes: 64 * MB,
+        age: 70 * 60,
+        head: "4d5e6f708192",
+      }),
+      // Two forks of a clone made from the previous image: they age with it.
+      ...(["a", "b"] as const).map((x, i) =>
+        clone("mono", {
+          name: `chore-bump-vite-${x}`,
+          own_bytes: (3 + i) * MB,
+          branch: `chore/bump-vite-${x}`,
+          ahead: 3,
+          behind: 11,
+          image_bytes: 1.2 * GB,
+          age: (20 - i) * 3600,
+          golden_generation: 13,
+          head: "0d1e2f3a4b5c",
+          forked_from: "chore-bump-vite",
+        }),
+      ),
+      // A chain three forks deep: each one forked from the last.
+      ...(["fix-cache-stampede-a", "fix-cache-stampede-a-a", "fix-cache-stampede-a-a-a"] as const).map((name, i) =>
+        clone("mono", {
+          name,
+          own_bytes: (4 + i) * MB,
+          branch: `fix/cache-stampede${"-a".repeat(i + 1)}`,
+          ahead: 2 + i,
+          image_bytes: 96 * MB,
+          age: (30 - i * 8) * 60,
+          head: "a90e3f1c7d22",
+          forked_from: i ? `fix-cache-stampede${"-a".repeat(i)}` : "fix-cache-stampede",
+        }),
+      ),
       clone("mono", {
         name: "review-pr-1432",
         own_bytes: 9 * MB,
@@ -309,6 +388,7 @@ export function seed(): Map<string, MockRepo> {
       { name: "main", kind: "local", age: 3600, subject: "Merge pull request #1440 from feat/ledger-export" },
       { name: "origin/main", kind: "remote", age: 1800, subject: "fix(api): retry idempotent writes on 503" },
       { name: "feat/onboarding-checklist", kind: "local", age: 240, subject: "wip: checklist steps" },
+      { name: "feat/onboarding-checklist-a", kind: "local", age: 300, subject: "try: steps as a wizard" },
       { name: "fix/cache-stampede", kind: "local", age: 2400, subject: "fix(cache): single-flight on miss" },
       { name: "feat/billing-v2", kind: "local", age: 9000, subject: "feat(billing): proration preview" },
       { name: "chore/bump-vite", kind: "local", age: 93_600, subject: "chore: vite 8" },
@@ -458,3 +538,25 @@ export const CARGO_OUTPUT = [
   "   Compiling api v0.1.0 (/Users/ada/src/mono/crates/api)",
   "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 41.20s",
 ];
+
+/** Checkpoints per clone, oldest first: `${root}\0${name}`. */
+export function seedCheckpoints(): Map<string, Checkpoint[]> {
+  const cp = (clone: string, id: string, age: number, head: string, own: number, auto = false): Checkpoint => ({
+    id,
+    clone,
+    created_at: now() - age,
+    created_ms: 0,
+    head,
+    branch: "feat/onboarding-checklist",
+    auto,
+    took_ms: 46,
+    own_bytes: own,
+  });
+  const name = "feat-onboarding-checklist";
+  return new Map([
+    [
+      `/Users/ada/src/mono\0${name}`,
+      [cp(name, "green-tests", 40 * 60, "c0ffee12ab34", 21 * MB), cp(name, "cp-2", 9 * 60, "8f3c2a1e9b7d", 2 * MB)],
+    ],
+  ]);
+}

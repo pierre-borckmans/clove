@@ -902,8 +902,9 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect, inline_wts: bool) {
     }
     let clones: Vec<CloneInfo> = app.visible().into_iter().cloned().collect();
     let all_wts: Vec<OtherWorktree> = app.visible_worktrees().into_iter().cloned().collect();
+    let tree = tree_marks(app);
     // Columns line up across both panels.
-    let cols = columns(&clones, &all_wts, inner.width as usize);
+    let cols = columns(&clones, &all_wts, &tree, inner.width as usize);
     let wts = if inline_wts { all_wts } else { vec![] };
     if !inline_wts && clones.is_empty() {
         let msg = if app.filter.is_empty() {
@@ -934,7 +935,47 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect, inline_wts: bool) {
         );
         return;
     }
-    draw_table(f, app, area, inner, &clones, &wts, cols);
+    draw_table(f, app, area, inner, &clones, &wts, &tree, cols);
+}
+
+/// Where a clone sits in the fork tree: connectors before its name, and
+/// `+N forks` after a folded parent's.
+struct TreeMark {
+    gutter: String,
+    note: Option<String>,
+}
+
+impl TreeMark {
+    fn note_text(&self) -> String {
+        self.note.as_ref().map(|n| format!(" {n}")).unwrap_or_default()
+    }
+}
+
+/// One per listed clone, or none when no clone here has a fork: the list
+/// then looks as it always did.
+fn tree_marks(app: &App) -> Vec<TreeMark> {
+    if !app.has_forks() {
+        return vec![];
+    }
+    app.tree()
+        .iter()
+        .map(|r| TreeMark {
+            gutter: r.gutter(),
+            note: r.folded_note(),
+        })
+        .collect()
+}
+
+/// A clone's name cell in the tree: (gutter, name, note) cut to `w` columns
+/// together; the note goes first when they don't fit.
+fn tree_name(m: &TreeMark, name: &str, w: usize) -> (String, String, String) {
+    let gw = width(&m.gutter);
+    let mut note = m.note_text();
+    if gw + width(name) + width(&note) > w && gw + 4 + width(&note) > w {
+        note.clear();
+    }
+    let room = w.saturating_sub(gw + width(&note));
+    (m.gutter.clone(), trunc(name, room), note)
 }
 
 /// Plain git worktrees in their own panel under the clones. Selection runs on
@@ -942,6 +983,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect, inline_wts: bool) {
 fn draw_worktrees(f: &mut Frame, app: &mut App, area: Rect) {
     let clones: Vec<CloneInfo> = app.visible().into_iter().cloned().collect();
     let wts: Vec<OtherWorktree> = app.visible_worktrees().into_iter().cloned().collect();
+    let tree = tree_marks(app);
     let total = app.current().map(|d| d.worktrees.len()).unwrap_or(0);
     let count = if app.filter.is_empty() {
         format!(" {total}")
@@ -962,7 +1004,7 @@ fn draw_worktrees(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(block, area);
     app.panels.push(area);
     app.hits.push((inner, Hit::ScrollList));
-    let cols = columns(&clones, &wts, inner.width as usize);
+    let cols = columns(&clones, &wts, &tree, inner.width as usize);
     let mut head = format!(
         "  {}  {}  {}",
         pad("NAME", cols.name),
@@ -1011,14 +1053,22 @@ struct Cols {
     path: usize,
 }
 
-fn columns(clones: &[CloneInfo], wts: &[OtherWorktree], w: usize) -> Cols {
+fn columns(clones: &[CloneInfo], wts: &[OtherWorktree], tree: &[TreeMark], w: usize) -> Cols {
+    // The tree's connectors and notes widen the name column, up to a point.
+    let extra = |i: usize| {
+        tree.get(i)
+            .map(|m| width(&m.gutter) + width(&m.note_text()))
+            .unwrap_or(0)
+    };
+    let max_extra = (0..clones.len()).map(extra).max().unwrap_or(0).min(12);
     let name = clones
         .iter()
-        .map(|c| width(&c.name))
+        .enumerate()
+        .map(|(i, c)| width(&c.name) + extra(i))
         .chain(wts.iter().map(|w| width(&w.name)))
         .max()
         .unwrap_or(4)
-        .clamp(4, 26);
+        .clamp(4, 26 + max_extra);
     let branch = clones
         .iter()
         .map(|c| c.branch.as_deref().map(width).unwrap_or(10))
@@ -1061,6 +1111,7 @@ enum ListLine<'a> {
     Worktree(usize, &'a OtherWorktree),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_table(
     f: &mut Frame,
     app: &mut App,
@@ -1068,6 +1119,7 @@ fn draw_table(
     inner: Rect,
     clones: &[CloneInfo],
     wts: &[OtherWorktree],
+    tree: &[TreeMark],
     cols: Cols,
 ) {
     let gap = "  ";
@@ -1142,8 +1194,9 @@ fn draw_table(
                 continue;
             }
             ListLine::Clone(vi, c) => {
-                put(f, r, clone_row(app, c, &cols));
-                row_tips(app, c, &cols, r);
+                let m = tree.get(*vi);
+                put(f, r, clone_row(app, c, &cols, m));
+                row_tips(app, c, &cols, r, m);
                 if app.marked(&Mark::Clone(c.name.clone())) {
                     mark_gutter(f, r);
                 }
@@ -1175,7 +1228,7 @@ fn mark_gutter(f: &mut Frame, r: Rect) {
     }
 }
 
-fn clone_row<'a>(app: &App, c: &CloneInfo, cols: &Cols) -> Line<'a> {
+fn clone_row<'a>(app: &App, c: &CloneInfo, cols: &Cols, tree: Option<&TreeMark>) -> Line<'a> {
     let gap = || Span::raw("  ");
     let busy = app.busy(&c.name);
     let dot = match (busy, c.mounted) {
@@ -1198,13 +1251,21 @@ fn clone_row<'a>(app: &App, c: &CloneInfo, cols: &Cols) -> Line<'a> {
             muted(),
         ),
     };
-    let mut spans = vec![
-        dot,
-        Span::styled(pad(&c.name, cols.name), name_style),
-        gap(),
-        branch,
-        gap(),
-    ];
+    let mut spans = vec![dot];
+    match tree {
+        None => spans.push(Span::styled(pad(&c.name, cols.name), name_style)),
+        Some(m) => {
+            let (gutter, name, note) = tree_name(m, &c.name, cols.name);
+            let used = width(&gutter) + width(&name) + width(&note);
+            spans.extend([
+                Span::styled(gutter, border()),
+                Span::styled(name, name_style),
+                Span::styled(note, muted()),
+                Span::raw(" ".repeat(cols.name.saturating_sub(used))),
+            ]);
+        }
+    }
+    spans.extend([gap(), branch, gap()]);
     spans.extend(changes(app, c, cols.changes));
     let age = fmt::age(app.now_unix.saturating_sub(c.created_at));
     spans.push(gap());
@@ -1224,7 +1285,7 @@ fn clone_row<'a>(app: &App, c: &CloneInfo, cols: &Cols) -> Line<'a> {
 
 /// Tooltips over a clone row's cells: the full text of cut ones, and what
 /// the dot and the CHANGES badges mean.
-fn row_tips(app: &mut App, c: &CloneInfo, cols: &Cols, r: Rect) {
+fn row_tips(app: &mut App, c: &CloneInfo, cols: &Cols, r: Rect, tree: Option<&TreeMark>) {
     let dot = Rect::new(r.x, r.y, 1, 1).intersection(r);
     let mut x = r.x + 2;
     let mut cell = |w: usize| {
@@ -1248,7 +1309,20 @@ fn row_tips(app: &mut App, c: &CloneInfo, cols: &Cols, r: Rect) {
         (None, false) => Tip::new("Not mounted: m mounts it."),
     };
     tip(app, dot, Some(dot_tip));
-    tip(app, name, cut(&c.name, cols.name).1);
+    match tree {
+        None => tip(app, name, cut(&c.name, cols.name).1),
+        Some(m) => {
+            let (gutter, shown, note) = tree_name(m, &c.name, cols.name);
+            let gw = width(&gutter) as u16;
+            let at = Rect::new(name.x + gw, name.y, width(&shown) as u16, 1).intersection(name);
+            let t = if !note.is_empty() {
+                Some(Tip::new(format!("{}{note}", c.name)).note("→ unfolds them"))
+            } else {
+                (shown != c.name).then(|| Tip::new(c.name.clone()))
+            };
+            tip(app, at, t);
+        }
+    }
     if let Some(b) = &c.branch {
         tip(app, branch, cut(b, cols.branch).1);
     }
@@ -1783,6 +1857,34 @@ fn draw_detail(f: &mut Frame, app: &mut App, area: Rect) {
         ));
     }
     lines.push(kv("from", golden));
+    // Lineage and checkpoints, only when there are some.
+    if let Some(p) = &c.forked_from {
+        let (p, t) = cut(p, vw.saturating_sub(5));
+        tips.add(lines.len(), 2, t);
+        lines.push(kv("forked", vec![Span::styled("from ", muted()), Span::raw(p)]));
+    }
+    let forks = app.forks_of(&c.name).len();
+    if forks > 0 {
+        lines.push(kv(
+            "forks",
+            vec![Span::raw(format!(
+                "{forks} fork{}",
+                if forks == 1 { "" } else { "s" }
+            ))],
+        ));
+    }
+    if c.checkpoints > 0 {
+        let n = c.checkpoints;
+        lines.push(kv(
+            "saved",
+            vec![
+                Span::raw(format!("{n} checkpoint{}", if n == 1 { "" } else { "s" })),
+                sep(),
+                Span::styled("b", key()),
+                Span::styled(" rewinds", muted()),
+            ],
+        ));
+    }
     let (path, path_tip) = cut_left(&fmt::tilde(&c.path), vw);
     tips.add(lines.len(), 1, path_tip);
     lines.push(kv("path", vec![Span::raw(path)]));
@@ -1825,6 +1927,21 @@ fn hints(app: &App) -> Vec<Hint> {
             ("esc", "cancel", Esc),
         ],
         Some(Modal::ResolveOffer(_)) => vec![("y", "resolve", Char('y')), ("esc", "no", Esc)],
+        Some(Modal::Fork(_)) => vec![("⏎", "fork", Enter), ("esc", "cancel", Esc)],
+        Some(Modal::Rewind(v)) if v.busy.is_some() => vec![
+            if v.focus_cancel {
+                ("⏎", "cancel", Enter)
+            } else {
+                ("⏎", "force rewind", Enter)
+            },
+            ("←→", "move", Right),
+            ("esc", "cancel", Esc),
+        ],
+        Some(Modal::Rewind(_)) => vec![
+            ("↑↓", "pick", Down),
+            ("⏎", "rewind", Enter),
+            ("esc", "cancel", Esc),
+        ],
         Some(Modal::Adopt(a)) => vec![
             if a.focus_cancel {
                 ("⏎", "cancel", Enter)
@@ -1838,7 +1955,7 @@ fn hints(app: &App) -> Vec<Hint> {
             let mut v = vec![("↑↓", "move", Down)];
             if matches!(
                 f.focused(),
-                RemoveItem::DeleteBranch | RemoveItem::Unlock | RemoveItem::Force
+                RemoveItem::Forks | RemoveItem::DeleteBranch | RemoveItem::Unlock | RemoveItem::Force
             ) {
                 v.push(("space", "toggle", Char(' ')));
             }
@@ -1968,6 +2085,12 @@ fn hints(app: &App) -> Vec<Hint> {
                     ]);
                 } else {
                     v.push(("U", "update", Char('U')));
+                }
+                if c.checkpoints > 0 {
+                    v.push(("b", "rewind", Char('b')));
+                }
+                if app.tree().get(app.selected).is_some_and(|r| r.forks > 0) {
+                    v.push(("←→", "forks", Right));
                 }
                 v.extend([
                     ("r", "refresh", Char('r')),
@@ -2139,6 +2262,8 @@ fn hint_tip(k: &str, label: &str) -> Option<&'static str> {
             "hand the conflicts to the resolver (update.resolver, claude by default), in this terminal"
         }
         ("X", "abort") => "undo the stopped update: the branch goes back where it was",
+        ("b", "rewind") => "put the clone back to one of its checkpoints",
+        ("←→", "forks") => "fold or unfold its forks (* all of them)",
         ("r", "refresh") => "refresh the golden image to the latest base",
         ("o", "open") => "open the clone in $EDITOR",
         ("/", "filter") => "filter clones by name or branch",
@@ -2229,6 +2354,8 @@ fn draw_modal(f: &mut Frame, app: &mut App, area: Rect, list: Rect) {
         Modal::Help => draw_help(f, app, area),
         Modal::Remove(r) => draw_remove(f, app, area, &r),
         Modal::Adopt(a) => draw_adopt(f, app, area, &a),
+        Modal::Rewind(v) => draw_rewind(f, app, area, &v),
+        Modal::Fork(form) => draw_fork(f, app, area, &form),
         Modal::ResolveOffer(o) => draw_resolve_offer(f, app, area, &o),
         Modal::Gc(g) => draw_gc(f, app, area, &g),
         Modal::Doctor(d) => draw_doctor(f, app, area, d),
@@ -2422,7 +2549,7 @@ fn ref_tag(app: &App, name: &str, focus: usize) -> &'static str {
 }
 
 fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
-    let sections: [(&str, &[(&str, &str)]); 4] = [
+    let sections: [(&str, &[(&str, &str)]); 5] = [
         (
             "clones",
             &[
@@ -2435,9 +2562,17 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
                 ("o", "open in $EDITOR"),
                 ("v", "see its changes (diff)"),
                 ("t", "how fast clones come (timings)"),
-                ("c", "make a plain git worktree a clone"),
                 ("/", "filter by name or branch"),
                 ("↑↓ jk", "move · wheel scrolls"),
+            ],
+        ),
+        (
+            "checkpoints and forks",
+            &[
+                ("c", "checkpoint · worktree: make a clone"),
+                ("b", "rewind to a checkpoint"),
+                ("f", "fork: a new clone, a copy of it now"),
+                ("← → *", "fold / unfold forks · * all"),
             ],
         ),
         (
@@ -2612,6 +2747,29 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
             ))),
         }
     }
+    if !r.forks.is_empty() {
+        let n = r.forks.len();
+        let what = format!("{n} fork{}", if n == 1 { "" } else { "s" });
+        let s = if r.remove_forks {
+            format!("· its {what} go first:")
+        } else {
+            format!("· its {what} stay, as clones of their own:")
+        };
+        lines.push(Line::from(Span::styled(s, muted())));
+        const SHOWN: usize = 6;
+        for name in r.forks.iter().take(SHOWN) {
+            lines.push(Line::from(vec![
+                Span::styled("  ", muted()),
+                Span::styled(trunc(name, iw.saturating_sub(2)), Style::new()),
+            ]));
+        }
+        if n > SHOWN {
+            lines.push(Line::from(Span::styled(
+                format!("  and {} more", n - SHOWN),
+                muted(),
+            )));
+        }
+    }
     if let Some(a) = r.ahead.filter(|a| *a > 0) {
         // `-d` keeps a branch holding commits that are neither in the base
         // nor pushed, so deleting it never loses them.
@@ -2657,6 +2815,19 @@ fn draw_remove(f: &mut Frame, app: &mut App, area: Rect, r: &RemoveForm) {
         (cursor, mark, if focused == item { bold() } else { Style::new() })
     };
     let mut toggles = vec![];
+    if !r.forks.is_empty() {
+        toggles.push((lines.len(), RemoveItem::Forks));
+        let (cursor, mark, st) = check(RemoveItem::Forks, r.remove_forks);
+        let n = r.forks.len();
+        lines.push(Line::from(vec![
+            cursor,
+            mark,
+            Span::styled(
+                format!("also remove {n} fork{}", if n == 1 { "" } else { "s" }),
+                st,
+            ),
+        ]));
+    }
     if let Some(b) = &r.branch {
         toggles.push((lines.len(), RemoveItem::DeleteBranch));
         let (cursor, mark, st) = check(RemoveItem::DeleteBranch, r.delete_branch);
@@ -3025,6 +3196,183 @@ fn draw_adopt(f: &mut Frame, app: &mut App, area: Rect, a: &AdoptForm) {
             Rect::new(bx + b1w + 2, by, b2w, 1),
             Hit::Key(KeyCode::Esc, KeyModifiers::NONE),
         ));
+    }
+}
+
+/// The fork form: a name, prefilled, and what it will make.
+fn draw_fork(f: &mut Frame, app: &mut App, area: Rect, form: &ForkForm) {
+    let w: u16 = 64;
+    let iw = (w - 6) as usize;
+    let mut lines = vec![];
+    let prefix = "name ❯ ";
+    let pw = width(prefix);
+    let (shown, _) = cut_left(&form.name.text, iw.saturating_sub(pw + 1));
+    lines.push(Line::from(vec![
+        Span::styled(prefix, key()),
+        Span::styled(shown, bold()),
+    ]));
+    lines.push(Line::from(""));
+    match app.fork_preview(form) {
+        Ok(p) => {
+            for (i, l) in fmt::wrap(&p, iw.saturating_sub(2)).into_iter().enumerate() {
+                let lead = if i == 0 { "→ " } else { "  " };
+                lines.push(Line::from(vec![
+                    Span::styled(lead, fg(BOTTLE)),
+                    Span::styled(l, muted()),
+                ]));
+            }
+        }
+        Err(e) => {
+            for l in fmt::wrap(&format!("✗ {e}"), iw) {
+                lines.push(Line::from(Span::styled(l, fg(RED))));
+            }
+        }
+    }
+    let h = lines.len() as u16 + 4;
+    let rect = centered(area, w, h);
+    open_modal(f, &mut app.hits, area, rect);
+    let block = modal_block(vec![
+        Span::styled("fork ", title()),
+        Span::styled(trunc(&form.from, iw.saturating_sub(5)), bold()),
+    ]);
+    let inner = block.inner(rect);
+    f.render_widget(Paragraph::new(lines).block(block), rect);
+    let before: String = form.name.text.chars().take(form.name.cursor).collect();
+    let cx = width(&before).min(iw.saturating_sub(pw + 1)) as u16;
+    if inner.height > 0 {
+        f.set_cursor_position(Position::new(inner.x + pw as u16 + cx, inner.y));
+    }
+}
+
+/// The rewind picker: a clone's checkpoints, newest first; or, after a
+/// refusal, who uses the clone and whether to rewind anyway.
+fn draw_rewind(f: &mut Frame, app: &mut App, area: Rect, v: &RewindView) {
+    let w: u16 = 64;
+    let iw = (w - 6) as usize;
+    let mut lines = vec![];
+    let mut buttons = None;
+    if let Some((id, who)) = &v.busy {
+        let head = format!("! {} is in use, so it can't go back to {id} safely", v.name);
+        for l in fmt::wrap(&head, iw) {
+            lines.push(Line::from(Span::styled(
+                l,
+                fg(AMBER).add_modifier(Modifier::BOLD),
+            )));
+        }
+        if who.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  a shell, editor or dev server has files open in it",
+                muted(),
+            )));
+        }
+        for p in who.iter().take(8) {
+            lines.push(Line::from(Span::raw(format!(
+                "  {}",
+                trunc(p, iw.saturating_sub(2))
+            ))));
+        }
+        if who.len() > 8 {
+            lines.push(Line::from(Span::styled(
+                format!("  and {} more", who.len() - 8),
+                muted(),
+            )));
+        }
+        lines.push(Line::from(""));
+        for l in fmt::wrap(
+            "close them and rewind again, or force it: they lose their open files, and a shell inside needs `cd $PWD`",
+            iw,
+        ) {
+            lines.push(Line::from(Span::styled(l, muted())));
+        }
+        lines.push(Line::from(""));
+        let b1 = button("force rewind", !v.focus_cancel, true);
+        let b2 = button("cancel", v.focus_cancel, false);
+        let (b1w, b2w) = (width(&b1.content) as u16, width(&b2.content) as u16);
+        let bw = (b1w + 2 + b2w) as usize;
+        buttons = Some((lines.len() as u16, b1w, b2w, bw));
+        lines.push(Line::from(vec![
+            Span::raw(" ".repeat(iw.saturating_sub(bw))),
+            b1,
+            Span::raw("  "),
+            b2,
+        ]));
+    } else {
+        for l in fmt::wrap(
+            "puts its files, index and branch back as they were; what it replaces is kept as before-rewind",
+            iw,
+        ) {
+            lines.push(Line::from(Span::styled(l, muted())));
+        }
+        lines.push(Line::from(""));
+        match &v.list {
+            None => lines.push(Line::from(Span::styled(
+                format!("{} reading checkpoints", spinner(app.now_ms)),
+                muted(),
+            ))),
+            Some(Err(e)) => {
+                for l in fmt::wrap(&format!("✗ {e}"), iw) {
+                    lines.push(Line::from(Span::styled(l, fg(RED))));
+                }
+            }
+            Some(Ok(list)) if list.is_empty() => {
+                lines.push(Line::from(Span::styled("no checkpoints: c makes one", muted())))
+            }
+            Some(Ok(list)) => {
+                let (aw, sw) = (8, 7);
+                let idw = list
+                    .iter()
+                    .map(|c| width(&c.meta.id))
+                    .max()
+                    .unwrap_or(4)
+                    .min(iw.saturating_sub(aw + sw + 6));
+                for (i, cp) in list.iter().enumerate() {
+                    let on = i == v.cursor.min(list.len() - 1);
+                    let cursor = if on {
+                        Span::styled("› ", fg(BOTTLE).add_modifier(Modifier::BOLD))
+                    } else {
+                        Span::raw("  ")
+                    };
+                    let age = format!(
+                        "{} ago",
+                        fmt::age(app.now_unix.saturating_sub(cp.meta.created_at))
+                    );
+                    let mut spans = vec![
+                        cursor,
+                        Span::styled(pad(&cp.meta.id, idw), if on { bold() } else { Style::new() }),
+                        Span::styled(format!("  {age:>aw$}"), muted()),
+                        Span::raw(format!("  {:>sw$}", fmt::bytes(cp.own_bytes))),
+                    ];
+                    if cp.meta.auto {
+                        let used = 2 + idw + 2 + aw + 2 + sw;
+                        spans.push(Span::styled(
+                            trunc("  undoes the last rewind", iw.saturating_sub(used)),
+                            muted(),
+                        ));
+                    }
+                    lines.push(Line::from(spans));
+                }
+            }
+        }
+    }
+    let h = lines.len() as u16 + 4;
+    let rect = centered(area, w, h);
+    open_modal(f, &mut app.hits, area, rect);
+    let block = modal_block(vec![
+        Span::styled("rewind ", title()),
+        Span::styled(trunc(&v.name, iw.saturating_sub(7)), bold()),
+    ]);
+    let inner = block.inner(rect);
+    f.render_widget(Paragraph::new(lines).block(block), rect);
+    if let Some((line, b1w, b2w, bw)) = buttons {
+        let bx = inner.x + (iw.saturating_sub(bw)) as u16;
+        let by = inner.y + line;
+        if by < inner.bottom() {
+            app.hits.push((Rect::new(bx, by, b1w, 1), key_hit('y')));
+            app.hits.push((
+                Rect::new(bx + b1w + 2, by, b2w, 1),
+                Hit::Key(KeyCode::Esc, KeyModifiers::NONE),
+            ));
+        }
     }
 }
 

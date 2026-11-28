@@ -296,3 +296,8 @@ mod private_size_tests {
         assert!(super::private_bytes(&b) >= 4 << 20);
     }
 }
+
+/// An env var set to anything but empty or `0`.
+pub fn env_flag(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|v| !v.is_empty() && v != "0")
+}

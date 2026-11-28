@@ -8,12 +8,50 @@ mod launchd;
 mod systemd;
 
 #[cfg(target_os = "macos")]
-pub use launchd::{install, installed, sync, uninstall};
+use launchd as platform;
+pub use platform::installed;
 #[cfg(target_os = "linux")]
-pub use systemd::{install, installed, sync, uninstall};
+use systemd as platform;
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
+
+/// `CLOVE_NO_SERVICE=1`: a dev or demo run (its own `CLOVE_HOME`, a debug
+/// build) must not rewrite the real service, run the installed CLI, or brew.
+pub fn disabled() -> bool {
+    crate::util::env_flag("CLOVE_NO_SERVICE")
+}
+
+fn skip(what: &str) {
+    eprintln!("clove: CLOVE_NO_SERVICE is set, skipping service {what}");
+}
+
+/// Installs (or rewrites) the agents. A no-op under `CLOVE_NO_SERVICE`.
+pub fn install(every: u64) -> Result<Vec<PathBuf>> {
+    if disabled() {
+        skip("install");
+        return Ok(vec![]);
+    }
+    platform::install(every)
+}
+
+/// Rewrites an installed service for the known repos. A no-op under `CLOVE_NO_SERVICE`.
+pub fn sync() -> Result<bool> {
+    if disabled() {
+        skip("sync");
+        return Ok(false);
+    }
+    platform::sync()
+}
+
+/// A no-op under `CLOVE_NO_SERVICE`.
+pub fn uninstall() -> Result<Vec<PathBuf>> {
+    if disabled() {
+        skip("uninstall");
+        return Ok(vec![]);
+    }
+    platform::uninstall()
+}
 
 /// Default fallback poll, for repos nobody fetches in.
 pub const DEFAULT_EVERY: u64 = 4 * 3600;
@@ -29,6 +67,9 @@ pub const AGENTS: &str = if cfg!(target_os = "macos") {
 /// whose binary takes no CLI arguments, it is the CLI on PATH or in the usual
 /// Homebrew and cargo places.
 pub fn cli_exe() -> Result<PathBuf> {
+    if disabled() {
+        anyhow::bail!("CLOVE_NO_SERVICE is set: not running the installed clove CLI");
+    }
     let me = std::env::current_exe()?;
     if me.file_name().is_some_and(|n| n == "clove") {
         return Ok(stable(&me));

@@ -665,3 +665,28 @@ pub async fn clone_diff(root: PathBuf, name: String) -> CmdResult<clove_core::Cl
 pub async fn clone_file(root: PathBuf, name: String, rev: Option<String>, path: String) -> CmdResult<String> {
     block(move || Clove::open(&root)?.file_at(&name, rev.as_deref(), &path)).await
 }
+
+/// A clone's checkpoints, oldest first (`clove checkpoints`).
+#[tauri::command]
+pub async fn list_checkpoints(root: PathBuf, name: String) -> CmdResult<Vec<clove_core::CheckpointInfo>> {
+    block(move || Clove::open(&root)?.checkpoints(&name)).await
+}
+
+/// Freezes a clone as it is now (`clove checkpoint`); takes ~50ms, so no op.
+#[tauri::command]
+pub async fn checkpoint_clone(
+    root: PathBuf,
+    name: String,
+    label: Option<String>,
+) -> CmdResult<clove_core::CheckpointInfo> {
+    block(move || {
+        let label = label.filter(|l| !l.trim().is_empty());
+        Clove::open(&root)?.checkpoint(&name, label.as_deref(), &clove_core::Silent)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn drop_checkpoint(root: PathBuf, name: String, id: String) -> CmdResult<()> {
+    block(move || Clove::open(&root)?.drop_checkpoint(&name, &id)).await
+}

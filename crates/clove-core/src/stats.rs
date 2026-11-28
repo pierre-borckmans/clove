@@ -361,6 +361,7 @@ mod tests {
             total_ms: 1500.0,
             failed_steps: vec![],
             setup_commit: None,
+            forked_from: None,
         };
         c.record_created(&meta);
         // An older clone, made before the log existed, only has its metadata.

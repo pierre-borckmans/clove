@@ -7,6 +7,7 @@ import type {
   AgentsSetResult,
   AppId,
   Check,
+  Checkpoint,
   Cleanup,
   CloneInfo,
   CloveEvent,
@@ -26,10 +27,64 @@ import type {
   UpgradeState,
 } from "@/lib/types";
 import { MOCK_ATTRS, MOCK_PACKAGES, MOCK_PATCH } from "./diff";
-import { CARGO_OUTPUT, type MockRepo, machineChecks, PNPM_OUTPUT, seed, worktreeCheck } from "./fixtures";
+import {
+  CARGO_OUTPUT,
+  type MockRepo,
+  machineChecks,
+  PNPM_OUTPUT,
+  seed,
+  seedCheckpoints,
+  worktreeCheck,
+} from "./fixtures";
 import { mockStats } from "./stats";
 
 const repos = seed();
+const checkpoints = seedCheckpoints();
+const cpKey = (root: string, name: string) => `${root}\0${name}`;
+function cpsOf(root: string, name: string): Checkpoint[] {
+  const k = cpKey(root, name);
+  let list = checkpoints.get(k);
+  if (!list) {
+    list = [];
+    checkpoints.set(k, list);
+  }
+  return list;
+}
+function cloneOf(root: string, name: string): CloneInfo {
+  const c = get(root).clones.find((x) => x.name === name);
+  if (!c) throw new Error(`no clone named \`${name}\``);
+  return c;
+}
+function syncCount(root: string, name: string) {
+  const c = get(root).clones.find((x) => x.name === name);
+  if (c) c.checkpoints = cpsOf(root, name).length;
+}
+/** Freezes a mock clone: like clove, ids default to cp-N. */
+function mockCheckpoint(root: string, name: string, label: string | null, auto = false): Checkpoint {
+  const c = cloneOf(root, name);
+  const list = cpsOf(root, name);
+  const id = label ?? `cp-${Math.max(0, ...list.map((x) => Number(x.id.match(/^cp-(\d+)$/)?.[1] ?? 0))) + 1}`;
+  if (!auto && list.some((x) => x.id === id)) throw new Error(`\`${name}\` already has a checkpoint \`${id}\``);
+  const cp: Checkpoint = {
+    id,
+    clone: name,
+    created_at: now(),
+    created_ms: Date.now() % 1000,
+    head: c.head,
+    branch: c.branch,
+    auto,
+    took_ms: 30 + Math.random() * 40,
+    own_bytes: 0,
+  };
+  const rest = list.filter((x) => x.id !== id);
+  checkpoints.set(cpKey(root, name), [...rest, cp]);
+  syncCount(root, name);
+  return cp;
+}
+/** Processes "holding" a mock clone, so a plain rewind is refused. */
+const MOCK_BUSY: Record<string, string> = {
+  "feat-onboarding-checklist": "zsh (pid 48213), node (pid 48390)",
+};
 let serviceOn = true;
 let agentsState: "installed" | "outdated" | "missing" = "missing";
 let shellOn = false;
@@ -236,6 +291,11 @@ async function runOp(id: string, op: OpRequest): Promise<unknown> {
   switch (op.kind) {
     case "new": {
       const r = get(op.root);
+      // `?createFail=1`: new clones and forks fail, to see the copy shrink back.
+      if (new URLSearchParams(globalThis.location?.search).get("createFail")) {
+        await sleep(900);
+        throw new Error("clone image: no space left on device");
+      }
       const branch = op.detach ? null : op.branch?.trim() || `swift-otter-${Math.floor(Math.random() * 90 + 10)}`;
       const name = op.name?.trim() || sanitize(branch ?? `detached-${Date.now() % 1000}`);
       if (r.clones.some((c) => c.name === name)) {
@@ -385,14 +445,18 @@ async function runOp(id: string, op: OpRequest): Promise<unknown> {
     case "refresh": {
       const r = get(op.root);
       const g = r.status.golden as GoldenStatus;
+      // About 4s, in a few visible steps. `?refreshFail=1` makes it fail after checkout.
       await play(id, [
-        { step: "fetch", ms: 600 },
-        { step: "clone golden", ms: 30 },
-        { step: "mount", ms: 320 },
+        { step: "fetch", ms: 700 },
         { step: "checkout", ms: 900 },
-        ...warmScript(r),
-        { step: "index", ms: 280 },
-        { step: "unmount", ms: 260 },
+      ]);
+      if (new URLSearchParams(globalThis.location?.search).get("refreshFail")) {
+        throw new Error("setup pnpm failed: ERR_PNPM_OUTDATED_LOCKFILE");
+      }
+      await play(id, [
+        { step: "setup pnpm", ms: 1500 },
+        { step: "index", ms: 500 },
+        { step: "unmount", ms: 300 },
       ]);
       emit("op-event", {
         id,
@@ -464,6 +528,87 @@ async function runOp(id: string, op: OpRequest): Promise<unknown> {
       };
       repos.set(op.root, r);
       return r.status.golden;
+    }
+    case "fork": {
+      const r = get(op.root);
+      if (new URLSearchParams(globalThis.location?.search).get("createFail")) {
+        await sleep(900);
+        throw new Error("fork: no space left on device");
+      }
+      const src = cloneOf(op.root, op.from);
+      const free = (n: string, b: string | null) =>
+        !r.clones.some((c) => c.name === n) && !r.refs.some((x) => x.kind === "local" && x.name === b);
+      let name = op.name?.trim() || "";
+      // As clove-core: the name minus the source's `<from>-` prefix.
+      const suffix =
+        name.startsWith(`${op.from}-`) && name.length > op.from.length + 1 ? name.slice(op.from.length + 1) : name;
+      let branch: string | null = name ? (src.branch ? `${src.branch}-${suffix}` : name) : null;
+      if (!name) {
+        for (const s of "abcdefghijklmnopqrstuvwxyz") {
+          const b = src.branch ? `${src.branch}-${s}` : `${op.from}-${s}`;
+          if (free(`${op.from}-${s}`, b)) {
+            name = `${op.from}-${s}`;
+            branch = b;
+            break;
+          }
+        }
+      }
+      if (!name || !free(name, branch)) {
+        await sleep(120);
+        throw new Error(`clone \`${name || op.from}\` already exists`);
+      }
+      await play(id, [
+        { step: "copy image", ms: 40 },
+        { step: "copy git state", ms: 30 },
+        { step: "mount", ms: 650 },
+        { step: "register", ms: 60 },
+      ]);
+      const info: CloneInfo = {
+        ...src,
+        name,
+        branch,
+        path: `${r.status.clone_root}/${name}/${r.status.name}`,
+        mounted: true,
+        own_bytes: 0,
+        created_at: now(),
+        timings: [],
+        forked_from: op.from,
+        checkpoints: 0,
+        status_pending: false,
+      };
+      r.clones.unshift(info);
+      if (branch) r.refs.push({ name: branch, kind: "local", age: 0, subject: "fork" });
+      return info;
+    }
+    case "rewind": {
+      const c = cloneOf(op.root, op.name);
+      const list = cpsOf(op.root, op.name);
+      const target = op.id ? list.find((x) => x.id === op.id) : [...list].reverse().find((x) => !x.auto);
+      if (!target) throw new Error(`\`${op.name}\` has no checkpoint \`${op.id ?? "to rewind to"}\``);
+      const busy = MOCK_BUSY[op.name];
+      if (busy && c.mounted && !op.force) {
+        await sleep(200);
+        throw new Error(`the volume is busy: ${busy}; close it or pass --force`);
+      }
+      await play(id, [
+        { step: "save before-rewind", ms: 60 },
+        { step: "restore image", ms: 1100 },
+        { step: "restore git", ms: 140 },
+      ]);
+      const from = c.head;
+      mockCheckpoint(op.root, op.name, "before-rewind", true);
+      c.head = target.head;
+      c.dirty = target.id === "before-rewind";
+      c.mounted = true;
+      if (op.force) delete MOCK_BUSY[op.name];
+      return {
+        clone: op.name,
+        to: target.id,
+        saved: "before-rewind",
+        branch_moved: c.branch && from !== target.head ? [c.branch, from] : null,
+        timings: [],
+        total_ms: 1300,
+      };
     }
     case "deinit": {
       const r = get(op.root);
@@ -774,6 +919,25 @@ const commands: Record<string, (a: Args) => unknown> = {
     };
   },
   clone_file: () => "",
+  list_checkpoints: (a) => {
+    cloneOf(a.root as string, a.name as string);
+    return cpsOf(a.root as string, a.name as string).map((cp) => ({
+      ...cp,
+      // Grows as the clone drifts away from it.
+      own_bytes: cp.own_bytes || Math.round(((now() - cp.created_at) / 60) * 0.4 * MB),
+    }));
+  },
+  checkpoint_clone: (a) => mockCheckpoint(a.root as string, a.name as string, (a.label as string | null) ?? null),
+  drop_checkpoint: (a) => {
+    const root = a.root as string;
+    const name = a.name as string;
+    checkpoints.set(
+      cpKey(root, name),
+      cpsOf(root, name).filter((x) => x.id !== a.id),
+    );
+    syncCount(root, name);
+    return null;
+  },
 };
 
 // Repos "on disk" the add-repo dialog offers: root, branch, seconds since last use.

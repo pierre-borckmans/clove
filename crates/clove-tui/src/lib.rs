@@ -8,6 +8,7 @@ mod add_repo;
 mod app;
 mod diffview;
 mod fmt;
+mod lineage;
 mod model;
 mod panes;
 mod split;
@@ -213,6 +214,7 @@ fn perform(e: Effect, app: &mut App, tx: &mpsc::Sender<Msg>, term: &mut Term) {
             app.loaded_ms = None;
         }
         Effect::LoadDiff { root, name } => worker::load_diff(tx.clone(), root, name),
+        Effect::LoadCheckpoints { root, name } => worker::load_checkpoints(tx.clone(), root, name),
         Effect::CheckUpgrade { force } => {
             app.upgrade_checked_ms = Some(app.now_ms);
             worker::check_upgrade(tx.clone(), force);

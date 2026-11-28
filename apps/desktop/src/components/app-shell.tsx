@@ -13,6 +13,7 @@ import { CommandPalette } from "./command-palette";
 import { NewCloneDialog } from "./new-clone-dialog";
 import { OpsPanel } from "./ops-panel";
 import { RemoveCloneDialog } from "./remove-clone-dialog";
+import { RewindDialog } from "./rewind-dialog";
 import { RAIL, SIDEBAR, Sidebar } from "./sidebar";
 import { TitleBar } from "./title-bar";
 import { UpgradeDialog } from "./upgrade-dialog";
@@ -92,6 +93,7 @@ export function AppShell() {
       <NewCloneDialog />
       <AddRepoDialog />
       <RemoveCloneDialog />
+      <RewindDialog />
       <RemoveWorktreeDialog />
       <AdoptDialog />
       <UpgradeDialog />

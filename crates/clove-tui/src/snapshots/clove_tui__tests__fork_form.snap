@@ -1,0 +1,32 @@
+---
+source: crates/clove-tui/src/tests.rs
+expression: s
+---
+╭ clove ───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ app  /work/app                                                                                12 clones · 11 mounted │
+│ golden  ● gen 3 · a1b2c3d4e5 · 2h old · ↓4 behind origin/main · 1.3G                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ repos ─────────────╮╭ clones 12 ─────────────────────────────────────────────────────────────────────────────────────╮
+│ ▌ app         12 ● ││   NAME                    BRANCH                     CHANGES       AGE    SIZE  PATH           │
+│   mono         2 ● ││ ● feat-login              feat/login                 dirty ↑2       5m     14M  …eat-login/app │
+│   web       set up ││ ● ├─ feat-login-a         feat/login-a               clean         59m     14M  …t-login-a/app │
+│ + add repo         ││ ● │  └─ feat-login-a-a    feat/login-a-a             clean         59m     14M  …login-a-a/app │
+│                    ││ ● └─ feat-login-b         feat/login-b               clean         59m     14M  …t-login-b/app │
+│                    ││ ● fi╭ fork feat-login ─────────────────────────────────────────────╮3h    230M  …/fix-race/app │
+│                    ││ ○ sp│                                                              │3h     14M  …ike-cache/app │
+│                    ││ ● pi│  name ❯ feat-login-d                                         │4d     14M  …ding-flow/app │
+│                    ││ ● de│                                                              │3h     14M  …/detached/app │
+│                    ││     │  → feat-login-d on new branch feat/login-d · a copy of       │                           │
+│                    ││     │    feat-login, uncommitted files too                         │                           │
+│                    ││     │                                                              │                           │
+│                    ││     ╰──────────────────────────────────────────────────────────────╯                           │
+│                    ││                                                                                                │
+│                    ││                                                                                                │
+│                    ││                                                                                                │
+│ ────────────────── ││                                                                                                │
+│ s settings         ││                                                                                                │
+│ g cleanup          ││                                                                                                │
+│ D doctor           ││                                                                                                │
+│ S service          ││                                                                                                │
+╰────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ⏎ fork  esc cancel

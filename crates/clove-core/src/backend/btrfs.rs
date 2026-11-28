@@ -3,6 +3,7 @@
 //!   .clove-golden/<repo>    the golden worktree (writable subvolume, warmed in place)
 //!   .clove-gens/gen-N       read-only snapshot of .clove-golden per generation
 //!   <clone>/<repo>          a clone: writable snapshot of a generation
+//!   .clove-checkpoints/<clone>/<id>   read-only snapshot of a clone (checkpoint)
 //!
 //! Mounting, in order: an /etc/fstab line (`user` mount at clone_root, no
 //! sudo, works over SSH), udisks (desktop sessions; it picks /run/media/...,
@@ -23,6 +24,8 @@ pub(super) static POOL: Pool = Pool;
 
 const GOLDEN: &str = ".clove-golden";
 const GENS: &str = ".clove-gens";
+/// `.clove-checkpoints/<clone>/<id>`: read-only snapshots of a clone.
+const CHECKPOINTS: &str = ".clove-checkpoints";
 const FSTAB_OPTS: &str = "loop,user,noauto,exec,user_subvol_rm_allowed";
 
 pub(super) fn detect() -> Result<Backend> {
@@ -493,6 +496,10 @@ impl Pool {
         }
     }
 
+    fn checkpoint(c: &Clove, name: &str, id: &str) -> PathBuf {
+        c.clone_root().join(CHECKPOINTS).join(name).join(id)
+    }
+
     fn delete_if_present(path: &Path) -> Result<()> {
         if is_subvolume(path) {
             subvolume_delete(path)?;
@@ -635,6 +642,89 @@ impl Store for Pool {
 
     fn clone_bytes(&self, _c: &Clove, _name: &str, mount: &Path) -> (u64, u64) {
         qgroup_bytes(mount).unwrap_or((0, 0))
+    }
+
+    fn checkpoint_create(&self, c: &Clove, name: &str, mount: &Path, id: &str) -> Result<()> {
+        Self::attach(c)?;
+        let dst = Self::checkpoint(c, name, id);
+        std::fs::create_dir_all(dst.parent().context("checkpoints dir")?)?;
+        // A snapshot flushes the subvolume's pending writes first.
+        snapshot(mount, &dst, true)
+    }
+
+    // Rename the live subvolume aside, snapshot the checkpoint into its place,
+    // delete the old one. Processes inside keep the old files until they
+    // close them; `force` only skips the busy check.
+    fn checkpoint_restore(&self, c: &Clove, name: &str, mount: &Path, id: &str, force: bool) -> Result<()> {
+        Self::attach(c)?;
+        let saved = Self::checkpoint(c, name, id);
+        if !is_subvolume(&saved) {
+            bail!("checkpoint {id} is missing from {}", saved.display());
+        }
+        if !force {
+            let who = users(mount);
+            if !who.is_empty() {
+                bail!("{}", busy_error(&who));
+            }
+        }
+        let aside = Self::checkpoint(c, name, ".rewinding");
+        Self::delete_if_present(&aside)?;
+        std::fs::rename(mount, &aside).with_context(|| format!("move {} aside", mount.display()))?;
+        if let Err(e) = snapshot(&saved, mount, false) {
+            let _ = std::fs::rename(&aside, mount);
+            return Err(e);
+        }
+        let _ = Self::delete_if_present(&aside);
+        Ok(())
+    }
+
+    fn checkpoint_rename(&self, c: &Clove, name: &str, from: &str, to: &str) -> Result<()> {
+        Self::attach(c)?;
+        let to = Self::checkpoint(c, name, to);
+        Self::delete_if_present(&to)?;
+        std::fs::rename(Self::checkpoint(c, name, from), &to)?;
+        Ok(())
+    }
+
+    fn checkpoint_delete(&self, c: &Clove, name: &str, id: &str) -> Result<()> {
+        if image_path(c).exists() {
+            Self::attach(c)?;
+        }
+        let path = Self::checkpoint(c, name, id);
+        Self::delete_if_present(&path)?;
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::remove_dir(dir);
+        }
+        Ok(())
+    }
+
+    fn checkpoint_bytes(&self, c: &Clove, name: &str, id: &str) -> u64 {
+        qgroup_bytes(&Self::checkpoint(c, name, id)).map_or(0, |(_, own)| own)
+    }
+
+    fn clone_fork(
+        &self,
+        c: &Clove,
+        _from: &str,
+        from_mount: &Path,
+        _to: &str,
+        to_mount: &Path,
+    ) -> Result<()> {
+        Self::attach(c)?;
+        if !is_subvolume(from_mount) {
+            bail!("{} is missing from the repo's volume", from_mount.display());
+        }
+        if to_mount.parent() != Some(c.clone_root().as_path()) {
+            bail!(
+                "{} is outside the repo's volume at {}",
+                to_mount.display(),
+                c.clone_root().display()
+            );
+        }
+        if to_mount.is_dir() {
+            std::fs::remove_dir(to_mount)?;
+        }
+        snapshot(from_mount, to_mount, false)
     }
 
     fn unmount_volume(&self, c: &Clove, force: bool) -> Result<bool> {

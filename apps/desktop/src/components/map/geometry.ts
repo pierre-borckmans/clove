@@ -10,12 +10,22 @@ export type LabelSpot = Box & { align: Align };
 export const MAX_AGE = 3;
 export const ageOf = (newest: number, generation: number) => Math.min(Math.max(0, newest - generation), MAX_AGE);
 
-export const LABEL_H = 40;
+/** Space between a label's name line (its descenders) and the state line under it (its caps). */
+export const LABEL_LINE_GAP = 3.5;
+/** Clove label baselines: the 12px name, then the 10.5px state line. 9.6 is the
+ * name's descent plus the state font's cap height. */
+export const LABEL_NAME_Y = 11;
+export const LABEL_STATE_Y = LABEL_NAME_Y + 9.6 + LABEL_LINE_GAP;
+/** The bulb's label: 13px repo name, then the 10px mono gen line (9.7 as above). */
+export const BULB_NAME_Y = -3;
+export const BULB_GEN_Y = BULB_NAME_Y + 9.7 + LABEL_LINE_GAP;
+export const LABEL_H = Math.ceil(LABEL_STATE_Y + 5);
 const LABEL_MAX = 200;
-const SANS = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Helvetica Neue", system-ui, sans-serif';
+export const SANS =
+  '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Helvetica Neue", system-ui, sans-serif';
 
 let measure: CanvasRenderingContext2D | null | undefined;
-function textWidth(text: string, font: string) {
+export function textWidth(text: string, font: string) {
   measure ??= typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
   if (!measure) return text.length * 7;
   measure.font = font;
@@ -54,7 +64,7 @@ export function labelSize(name: string, state: StatePart[]) {
   const stateW =
     state.reduce((n, p) => n + textWidth(p.text, `10.5px ${SANS}`) + (p.arrow ? 10 : 0), 0) +
     8 * (state.length - 1) +
-    6;
+    12;
   return { w: Math.min(LABEL_MAX, Math.ceil(Math.max(nameW, stateW)) + 2), h: LABEL_H };
 }
 
