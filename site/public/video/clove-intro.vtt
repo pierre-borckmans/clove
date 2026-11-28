@@ -221,34 +221,50 @@ full-screen terminal interface, or from the desktop app,
 on macOS and Linux.
 
 56
-00:02:34.160 --> 00:02:36.006
-It brings your clones up to date, with
+00:02:34.100 --> 00:02:36.027
+Checkpoint a clone before you let an agent
 
 57
-00:02:36.006 --> 00:02:38.618
-your coding agent resolving the conflicts.
+00:02:36.027 --> 00:02:37.002
+loose.
 
 58
-00:02:38.618 --> 00:02:41.497
-It cleans up after merged pull requests.
+00:02:37.002 --> 00:02:40.033
+If it wrecks things, rewind in a second.
 
 59
-00:02:41.497 --> 00:02:43.819
-And it teaches your agents to use it,
+00:02:40.033 --> 00:02:42.795
+Or fork it, and let three agents try.
 
 60
-00:02:43.819 --> 00:02:44.995
-so you don't have to.
+00:02:44.893 --> 00:02:46.739
+It brings your clones up to date, with
 
 61
-00:02:47.293 --> 00:02:48.268
-That's clove.
+00:02:46.739 --> 00:02:49.351
+your coding agent resolving the conflicts.
 
 62
-00:02:48.268 --> 00:02:50.239
-Your worktrees, ready in a second.
+00:02:49.351 --> 00:02:52.230
+It cleans up after merged pull requests.
 
 63
-00:02:50.239 --> 00:02:52.153
+00:02:52.230 --> 00:02:54.552
+And it teaches your agents to use it,
+
+64
+00:02:54.552 --> 00:02:55.728
+so you don't have to.
+
+65
+00:02:58.027 --> 00:02:59.002
+That's clove.
+
+66
+00:02:59.002 --> 00:03:00.973
+Your worktrees, ready in a second.
+
+67
+00:03:00.973 --> 00:03:02.887
 Check it out at clove.fast.
 
