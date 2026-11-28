@@ -143,6 +143,7 @@ impl Clove {
         crate::memo::forget_tree(&wt);
         let behind = git::count_commits(&wt, &format!("HEAD..{base}")).unwrap_or(0);
         if behind == 0 {
+            self.adopt_generation(name, &wt)?;
             return Ok(Update::UpToDate { base });
         }
         let strategy = opts.strategy.unwrap_or(self.config.update.strategy);
@@ -220,6 +221,25 @@ impl Clove {
         Ok(())
     }
 
+    /// A clone whose branch now contains the current golden image's commit
+    /// counts as that generation: it has the image's code, and setup reran
+    /// for what changed. `golden_commit` stays, as the clone's disk lineage.
+    fn adopt_generation(&self, name: &str, wt: &Path) -> Result<()> {
+        let Some(golden) = self.golden_meta()? else {
+            return Ok(());
+        };
+        let Some(mut meta) = self.clone_meta(name)? else {
+            return Ok(());
+        };
+        if meta.golden_generation >= golden.generation
+            || !git::ok(wt, &["merge-base", "--is-ancestor", &golden.commit, "HEAD"])
+        {
+            return Ok(());
+        }
+        meta.golden_generation = golden.generation;
+        crate::repo::write_json(&self.clone_dir(name).join("meta.json"), &meta)
+    }
+
     fn after_update(
         &self,
         name: &str,
@@ -240,6 +260,7 @@ impl Clove {
             });
         }
         let info = self.setup_clone(name, false, r)?;
+        self.adopt_generation(name, wt)?;
         let pushed = git::out(
             wt,
             &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],

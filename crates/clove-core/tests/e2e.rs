@@ -628,8 +628,14 @@ fn full_lifecycle() {
             &seed,
             "git pull -q --rebase origin main && echo v-update > lock.txt && git commit -qam lock && git push -q origin main",
         );
+        // A refresh moves the golden image on; the update brings the clone
+        // onto it, so the clone counts as the new generation.
+        let made_from = c.info("feat-up", false).unwrap().golden_generation;
+        let current = c.refresh(&Silent).unwrap().generation;
+        assert!(current > made_from);
         let r = up(&UpdateOptions::default()).unwrap();
         assert!(matches!(r, Update::Updated { commits: Some(1), .. }), "{r:?}");
+        assert_eq!(c.info("feat-up", false).unwrap().golden_generation, current);
         assert_eq!(
             read(u.path.join("deps/installed")),
             "v-update\n",
